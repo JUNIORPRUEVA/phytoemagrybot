@@ -1,0 +1,14 @@
+node_modules
+dist/
+coverage/
+*.tsbuildinfo
+
+# Environment files
+.env
+
+# Flutter/Dart build artifacts
+dashboard_pwa/build/
+dashboard_pwa/.dart_tool/
+dashboard_pwa/.flutter-plugins
+dashboard_pwa/.flutter-plugins-dependencies
+dashboard_pwa/.packages

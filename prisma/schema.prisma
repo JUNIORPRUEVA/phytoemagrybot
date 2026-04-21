@@ -1,0 +1,59 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Client {
+  id             String                  @id @default(cuid())
+  name           String
+  openaiKey      String                  @map("openai_key")
+  elevenlabsKey  String?                 @map("elevenlabs_key")
+  promptBase     String                  @map("prompt_base")
+  configurations Json?
+  createdAt      DateTime                @default(now()) @map("created_at")
+  memories       ConversationMemory[]
+  summaries      ConversationSummary[]
+
+  @@map("clients")
+}
+
+model Config {
+  id             Int      @id
+  openaiKey      String   @map("openai_key")
+  elevenlabsKey  String?  @map("elevenlabs_key")
+  promptBase     String   @map("prompt_base")
+  configurations Json?
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@map("config")
+}
+
+model ConversationMemory {
+  id        String   @id @default(cuid())
+  clientId  String   @map("client_id")
+  contactId String   @map("contact_id")
+  role      String
+  content   String
+  createdAt DateTime @default(now()) @map("created_at")
+  client    Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@index([clientId, contactId, createdAt])
+  @@map("conversation_memory")
+}
+
+model ConversationSummary {
+  id        String   @id @default(cuid())
+  clientId  String   @map("client_id")
+  contactId String   @map("contact_id")
+  summary   String
+  updatedAt DateTime @updatedAt @map("updated_at")
+  client    Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@unique([clientId, contactId])
+  @@map("conversation_summaries")
+}

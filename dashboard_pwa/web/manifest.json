@@ -1,0 +1,9 @@
+{
+  "name": "WhatsApp Bot Dashboard",
+  "short_name": "BotPanel",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#F8FAFC",
+  "theme_color": "#0F172A",
+  "description": "Panel SaaS para configurar bots de WhatsApp"
+}

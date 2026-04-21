@@ -1,0 +1,68 @@
+{
+  "createClientRequest": {
+    "name": "Cliente Demo",
+    "openaiKey": "sk-demo-openai",
+    "elevenlabsKey": "sk-demo-elevenlabs",
+    "promptBase": "Eres el asistente comercial de PhytoEmagry. Responde breve, claro y en espanol.",
+    "configurations": {
+      "whatsapp": {
+        "webhookSecret": "change-me",
+        "apiBaseUrl": "https://evolution.example.com",
+        "apiKey": "evolution-api-key",
+        "instanceName": "demo-instance",
+        "audioVoiceId": "voice-id",
+        "fallbackMessage": "En este momento no pude procesar tu mensaje. Intenta nuevamente en unos minutos."
+      }
+    }
+  },
+  "textMessage": {
+    "event": "messages.upsert",
+    "instance": "demo-instance",
+    "data": {
+      "key": {
+        "remoteJid": "5491112345678@s.whatsapp.net",
+        "fromMe": false,
+        "id": "ABGGFlA5FpafAgo6EhMNN1Q"
+      },
+      "pushName": "Cliente Demo",
+      "message": {
+        "conversation": "Hola, necesito información"
+      },
+      "messageType": "conversation"
+    }
+  },
+  "imageMessage": {
+    "event": "messages.upsert",
+    "instance": "demo-instance",
+    "data": {
+      "key": {
+        "remoteJid": "5491112345678@s.whatsapp.net",
+        "fromMe": false,
+        "id": "ABGGFlA5FpafAgo6EhMNN1R"
+      },
+      "message": {
+        "imageMessage": {
+          "caption": "Te envío esta foto"
+        }
+      },
+      "messageType": "imageMessage"
+    }
+  },
+  "audioMessage": {
+    "event": "messages.upsert",
+    "instance": "demo-instance",
+    "data": {
+      "key": {
+        "remoteJid": "5491112345678@s.whatsapp.net",
+        "fromMe": false,
+        "id": "ABGGFlA5FpafAgo6EhMNN1S"
+      },
+      "message": {
+        "audioMessage": {
+          "mimetype": "audio/ogg; codecs=opus"
+        }
+      },
+      "messageType": "audioMessage"
+    }
+  }
+}
