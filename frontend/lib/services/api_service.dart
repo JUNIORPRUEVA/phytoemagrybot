@@ -350,6 +350,139 @@ class ManagedWhatsAppInstanceData {
   }
 }
 
+class MemoryContactListItemData {
+  const MemoryContactListItemData({
+    required this.contactId,
+    required this.name,
+    required this.interest,
+    required this.lastIntent,
+    required this.summary,
+    required this.lastMessageAt,
+    required this.memoryUpdatedAt,
+    required this.summaryUpdatedAt,
+  });
+
+  final String contactId;
+  final String? name;
+  final String? interest;
+  final String? lastIntent;
+  final String? summary;
+  final DateTime? lastMessageAt;
+  final DateTime? memoryUpdatedAt;
+  final DateTime? summaryUpdatedAt;
+
+  factory MemoryContactListItemData.fromJson(Map<String, dynamic> json) {
+    return MemoryContactListItemData(
+      contactId: (json['contactId'] as String?) ?? '',
+      name: json['name'] as String?,
+      interest: json['interest'] as String?,
+      lastIntent: json['lastIntent'] as String?,
+      summary: json['summary'] as String?,
+      lastMessageAt: _parseDateTime(json['lastMessageAt']),
+      memoryUpdatedAt: _parseDateTime(json['memoryUpdatedAt']),
+      summaryUpdatedAt: _parseDateTime(json['summaryUpdatedAt']),
+    );
+  }
+}
+
+class StoredMessageData {
+  const StoredMessageData({
+    required this.role,
+    required this.content,
+    required this.createdAt,
+  });
+
+  final String role;
+  final String content;
+  final DateTime? createdAt;
+
+  factory StoredMessageData.fromJson(Map<String, dynamic> json) {
+    return StoredMessageData(
+      role: (json['role'] as String?) ?? 'user',
+      content: (json['content'] as String?) ?? '',
+      createdAt: _parseDateTime(json['createdAt']),
+    );
+  }
+}
+
+class ClientMemorySnapshotData {
+  const ClientMemorySnapshotData({
+    required this.contactId,
+    required this.name,
+    required this.interest,
+    required this.lastIntent,
+    required this.notes,
+    required this.updatedAt,
+  });
+
+  final String contactId;
+  final String? name;
+  final String? interest;
+  final String? lastIntent;
+  final String? notes;
+  final DateTime? updatedAt;
+
+  factory ClientMemorySnapshotData.fromJson(Map<String, dynamic> json) {
+    return ClientMemorySnapshotData(
+      contactId: (json['contactId'] as String?) ?? '',
+      name: json['name'] as String?,
+      interest: json['interest'] as String?,
+      lastIntent: json['lastIntent'] as String?,
+      notes: json['notes'] as String?,
+      updatedAt: _parseDateTime(json['updatedAt']),
+    );
+  }
+}
+
+class ConversationSummarySnapshotData {
+  const ConversationSummarySnapshotData({
+    required this.contactId,
+    required this.summary,
+    required this.updatedAt,
+  });
+
+  final String contactId;
+  final String? summary;
+  final DateTime? updatedAt;
+
+  factory ConversationSummarySnapshotData.fromJson(Map<String, dynamic> json) {
+    return ConversationSummarySnapshotData(
+      contactId: (json['contactId'] as String?) ?? '',
+      summary: json['summary'] as String?,
+      updatedAt: _parseDateTime(json['updatedAt']),
+    );
+  }
+}
+
+class ConversationContextData {
+  const ConversationContextData({
+    required this.messages,
+    required this.clientMemory,
+    required this.summary,
+  });
+
+  final List<StoredMessageData> messages;
+  final ClientMemorySnapshotData clientMemory;
+  final ConversationSummarySnapshotData summary;
+
+  factory ConversationContextData.fromJson(Map<String, dynamic> json) {
+    final rawMessages = (json['messages'] as List<dynamic>?) ?? const <dynamic>[];
+
+    return ConversationContextData(
+      messages: rawMessages
+          .whereType<Map<String, dynamic>>()
+          .map(StoredMessageData.fromJson)
+          .toList(),
+      clientMemory: ClientMemorySnapshotData.fromJson(
+        (json['clientMemory'] as Map<String, dynamic>?) ?? <String, dynamic>{},
+      ),
+      summary: ConversationSummarySnapshotData.fromJson(
+        (json['summary'] as Map<String, dynamic>?) ?? <String, dynamic>{},
+      ),
+    );
+  }
+}
+
 class DeleteWhatsAppInstanceResponse {
   const DeleteWhatsAppInstanceResponse({
     required this.message,
@@ -638,6 +771,72 @@ class ApiService {
       spamGroupWindowMs: current.spamGroupWindowMs,
       allowAudioReplies: allowAudioReplies,
     );
+  }
+
+  Future<ClientConfigData> saveMemorySettings({
+    required int aiMemoryWindow,
+  }) async {
+    final current = await getConfig();
+    return saveConfig(
+      evolutionApiUrl: current.evolutionApiUrl,
+      evolutionApiKey: current.evolutionApiKey,
+      instanceName: current.instanceName,
+      webhookSecret: current.webhookSecret,
+      webhookUrl: current.webhookUrl,
+      fallbackMessage: current.fallbackMessage,
+      audioVoiceId: current.audioVoiceId,
+      elevenLabsBaseUrl: current.elevenLabsBaseUrl,
+      aiModelName: current.aiModelName,
+      aiTemperature: current.aiTemperature,
+      aiMemoryWindow: aiMemoryWindow,
+      aiMaxCompletionTokens: current.aiMaxCompletionTokens,
+      responseCacheTtlSeconds: current.responseCacheTtlSeconds,
+      spamGroupWindowMs: current.spamGroupWindowMs,
+      allowAudioReplies: current.allowAudioReplies,
+    );
+  }
+
+  Future<List<MemoryContactListItemData>> getMemoryContacts({String? query}) async {
+    final uri = _buildUri('/memory/contacts').replace(
+      queryParameters: <String, String>{
+        if (query != null && query.trim().isNotEmpty) 'query': query.trim(),
+      },
+    );
+    final response = await _client.get(uri, headers: _headers);
+    final decoded = _decodeListResponse(response);
+    return decoded.map(MemoryContactListItemData.fromJson).toList();
+  }
+
+  Future<ConversationContextData> getMemoryContext(String contactId) async {
+    final response = await _client.get(
+      _buildUri('/memory/${Uri.encodeComponent(contactId)}'),
+      headers: _headers,
+    );
+
+    return ConversationContextData.fromJson(_decodeResponse(response));
+  }
+
+  Future<ConversationContextData> updateMemoryEntry({
+    required String contactId,
+    required String name,
+    required String interest,
+    required String lastIntent,
+    required String notes,
+    required String summary,
+  }) async {
+    final response = await _client.post(
+      _buildUri('/memory/${Uri.encodeComponent(contactId)}'),
+      headers: _headers,
+      body: jsonEncode(<String, dynamic>{
+        'name': name,
+        'interest': interest,
+        'lastIntent': lastIntent,
+        'notes': notes,
+        'summary': summary,
+      }),
+    );
+
+    return ConversationContextData.fromJson(_decodeResponse(response));
   }
 
   Future<WhatsAppChannelData> getWhatsAppChannel() async {

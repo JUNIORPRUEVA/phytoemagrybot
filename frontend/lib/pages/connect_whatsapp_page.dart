@@ -64,8 +64,7 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
       _config.evolutionApiUrl.trim().isNotEmpty &&
       _config.evolutionApiKey.trim().isNotEmpty;
 
-    bool get _hasWebhookBaseConfig =>
-      _config.webhookSecret.trim().isNotEmpty && _config.webhookUrl.trim().isNotEmpty;
+  bool get _hasWebhookBaseConfig => _config.webhookUrl.trim().isNotEmpty;
 
   @override
   void initState() {
@@ -298,8 +297,7 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
   }
 
   Future<ClientConfigData> _ensureChannelConfig(String instanceName) async {
-    final needsPrompt =
-        !_hasEvolutionConfig || _config.webhookSecret.trim().isEmpty || _config.webhookUrl.trim().isEmpty;
+    final needsPrompt = !_hasEvolutionConfig || _config.webhookUrl.trim().isEmpty;
 
     if (!needsPrompt) {
       return _config;
@@ -388,12 +386,8 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
       throw ApiException('Debes completar la configuracion del canal para continuar.');
     }
 
-    if (
-        values.evolutionApiUrl.isEmpty ||
-        values.evolutionApiKey.isEmpty ||
-        values.webhookSecret.isEmpty ||
-        values.webhookUrl.isEmpty) {
-      throw ApiException('Todos los datos del canal y del webhook son obligatorios.');
+    if (values.evolutionApiUrl.isEmpty || values.evolutionApiKey.isEmpty || values.webhookUrl.isEmpty) {
+      throw ApiException('La URL de Evolution, el API key y la URL del webhook son obligatorios.');
     }
 
     final updatedConfig = await widget.apiService.saveChannelSettings(
@@ -687,7 +681,7 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
                         ),
                         _StatusBadge(
                           label: 'Webhook',
-                          value: selectedInstance.webhookReady ? 'Configuracion lista' : 'Pendiente',
+                          value: selectedInstance.webhookReady ? 'Activo en Evolution' : 'Sin verificar',
                           color: selectedInstance.webhookReady
                               ? const Color(0xFF166534)
                               : const Color(0xFFD97706),
@@ -703,8 +697,8 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
                       const SizedBox(height: 8),
                       Text(
                         selectedInstance.webhookReady
-                            ? 'Si quieres confirmar el alta en Evolution, pulsa Configurar webhook para esta instancia.'
-                            : 'Todavia falta configurar el webhook para esta instancia.',
+                            ? 'Evolution confirma que esta instancia tiene el webhook activo con esa URL.'
+                            : 'Hay una URL cargada, pero Evolution todavia no confirma el webhook para esta instancia. Pulsa Configurar webhook para activarlo o revalidarlo.',
                         style: const TextStyle(color: Color(0xFF475569), height: 1.4),
                       ),
                     ],

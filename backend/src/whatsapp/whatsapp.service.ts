@@ -238,11 +238,16 @@ export class WhatsAppService {
         },
       });
 
+      const remoteWebhook = await this.getEvolutionWebhookMetadata(instanceName);
+      const webhookVerified = this.isWebhookVerified(remoteWebhook, resolvedWebhook);
+
       return {
         instanceName,
-        webhook: resolvedWebhook,
-        events: resolvedEvents,
-        message: 'Webhook configurado correctamente.',
+        webhook: remoteWebhook?.url || resolvedWebhook,
+        events: remoteWebhook?.events.length ?? 0 > 0 ? remoteWebhook!.events : resolvedEvents,
+        message: webhookVerified
+          ? 'Webhook configurado y verificado en Evolution.'
+          : 'Webhook enviado a Evolution, pero todavia no se pudo confirmar su activacion.',
       };
     } catch (error) {
       this.handleEvolutionError(error, 'No fue posible configurar el webhook.');
@@ -623,7 +628,14 @@ export class WhatsAppService {
   }
 
   private async toManagedInstance(instance: WhatsAppInstanceRecord): Promise<ManagedWhatsAppInstance> {
-    const webhookConfig = await this.getConfiguredWebhookMetadata();
+    const [webhookConfig, evolutionWebhook] = await Promise.all([
+      this.getConfiguredWebhookMetadata(),
+      this.getEvolutionWebhookMetadata(instance.name),
+    ]);
+    const expectedWebhookUrl =
+      webhookConfig.instanceName === instance.name ? webhookConfig.webhookUrl : '';
+    const webhookTarget = evolutionWebhook?.url || expectedWebhookUrl || null;
+
     return {
       id: instance.id,
       name: instance.name,
@@ -632,9 +644,8 @@ export class WhatsAppService {
       connected: instance.status === 'connected',
       webhookReady:
         webhookConfig.webhookSecretConfigured &&
-        webhookConfig.webhookUrl.length > 0 &&
-        webhookConfig.instanceName == instance.name,
-      webhookTarget: webhookConfig.webhookUrl.length > 0 ? webhookConfig.webhookUrl : null,
+        this.isWebhookVerified(evolutionWebhook, expectedWebhookUrl),
+      webhookTarget,
       createdAt: instance.createdAt.toISOString(),
       updatedAt: instance.updatedAt.toISOString(),
     };
@@ -957,6 +968,74 @@ export class WhatsAppService {
     };
   }
 
+  private async getEvolutionWebhookMetadata(instanceName: string): Promise<{
+    enabled: boolean;
+    url: string;
+    events: string[];
+  } | null> {
+    try {
+      const response = await this.getEvolutionClient().get(`/webhook/find/${instanceName}`);
+      return this.extractEvolutionWebhookMetadata(response.data);
+    } catch (error) {
+      if (axios.isAxiosError(error)) {
+        const status = error.response?.status;
+        if (status === 404 || status === 400) {
+          return null;
+        }
+
+        this.logger.warn(
+          `Webhook lookup failed for ${instanceName}: ${error.message}`,
+        );
+        return null;
+      }
+
+      this.logger.warn(
+        `Webhook lookup failed for ${instanceName}: ${
+          error instanceof Error ? error.message : 'Unknown error'
+        }`,
+      );
+      return null;
+    }
+  }
+
+  private extractEvolutionWebhookMetadata(payload: unknown): {
+    enabled: boolean;
+    url: string;
+    events: string[];
+  } | null {
+    const record = this.asRecord(payload);
+    const webhook = this.asRecord(record.webhook);
+    const source = Object.keys(webhook).length > 0 ? webhook : record;
+    const url = this.asString(source.url) || this.asString(source.webhookUrl) || '';
+    const enabled = this.asBoolean(source.enabled);
+    const events = this.asStringList(source.events);
+
+    if (!enabled && !url && events.length === 0) {
+      return null;
+    }
+
+    return {
+      enabled,
+      url,
+      events,
+    };
+  }
+
+  private isWebhookVerified(
+    webhook: { enabled: boolean; url: string } | null,
+    expectedWebhookUrl: string,
+  ): boolean {
+    if (!webhook?.enabled || !webhook.url) {
+      return false;
+    }
+
+    if (expectedWebhookUrl && webhook.url !== expectedWebhookUrl) {
+      return false;
+    }
+
+    return true;
+  }
+
   private handleEvolutionError(error: unknown, fallbackMessage: string): never {
     if (error instanceof HttpException) {
       throw error;
@@ -978,6 +1057,20 @@ export class WhatsAppService {
 
   private asRecord(value: unknown): JsonRecord {
     return typeof value === 'object' && value !== null ? (value as JsonRecord) : {};
+  }
+
+  private asBoolean(value: unknown): boolean {
+    return value === true;
+  }
+
+  private asStringList(value: unknown): string[] {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+
+    return value
+      .map((item) => this.asString(item))
+      .filter((item): item is string => Boolean(item));
   }
 
   private asString(value: unknown): string | undefined {

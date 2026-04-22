@@ -21,6 +21,25 @@ export interface ConversationSummarySnapshot {
   updatedAt: Date | null;
 }
 
+export interface MemoryContactListItem {
+  contactId: string;
+  name: string | null;
+  interest: string | null;
+  lastIntent: string | null;
+  summary: string | null;
+  lastMessageAt: Date | null;
+  memoryUpdatedAt: Date | null;
+  summaryUpdatedAt: Date | null;
+}
+
+export interface UpdateMemoryEntryInput {
+  name?: string | null;
+  interest?: string | null;
+  lastIntent?: string | null;
+  notes?: string | null;
+  summary?: string | null;
+}
+
 export interface ConversationContextSnapshot {
   messages: StoredMessage[];
   clientMemory: ClientMemorySnapshot;

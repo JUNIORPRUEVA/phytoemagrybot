@@ -13,7 +13,9 @@ import {
   ConversationContextSnapshot,
   ConversationRole,
   ConversationSummarySnapshot,
+  MemoryContactListItem,
   StoredMessage,
+  UpdateMemoryEntryInput,
 } from './memory.types';
 
 @Injectable()
@@ -145,6 +147,155 @@ export class MemoryService {
       messages,
       clientMemory,
       summary,
+    };
+  }
+
+  async listContacts(query?: string): Promise<MemoryContactListItem[]> {
+    const normalizedQuery = query?.trim().toLowerCase() ?? '';
+    const [messageGroups, memories, summaries] = await Promise.all([
+      this.prisma.conversationMessage.groupBy({
+        by: ['contactId'],
+        _max: { createdAt: true },
+        orderBy: {
+          _max: { createdAt: 'desc' },
+        },
+        take: 100,
+      }),
+      this.prisma.clientMemory.findMany({
+        orderBy: { updatedAt: 'desc' },
+        take: 100,
+      }),
+      this.prisma.conversationSummary.findMany({
+        orderBy: { updatedAt: 'desc' },
+        take: 100,
+      }),
+    ]);
+
+    const memoryByContact = new Map(memories.map((item) => [item.contactId, item]));
+    const summaryByContact = new Map(summaries.map((item) => [item.contactId, item]));
+    const messageByContact = new Map(
+      messageGroups.map((item) => [item.contactId, item._max.createdAt ?? null]),
+    );
+
+    const contactIds = new Set<string>([
+      ...messageByContact.keys(),
+      ...memoryByContact.keys(),
+      ...summaryByContact.keys(),
+    ]);
+
+    const items = Array.from(contactIds)
+      .map((contactId) => {
+        const memory = memoryByContact.get(contactId as string) ?? null;
+        const summary = summaryByContact.get(contactId as string) ?? null;
+        const lastMessageAt = messageByContact.get(contactId as string) ?? null;
+
+        return {
+          contactId: contactId as string,
+          name: memory?.name ?? null,
+          interest: memory?.interest ?? null,
+          lastIntent: memory?.lastIntent ?? null,
+          summary: summary?.summary ?? null,
+          lastMessageAt,
+          memoryUpdatedAt: memory?.updatedAt ?? null,
+          summaryUpdatedAt: summary?.updatedAt ?? null,
+        } as MemoryContactListItem;
+      })
+      .filter((item) => {
+        if (!normalizedQuery) {
+          return true;
+        }
+
+        const haystack = [
+          item.contactId,
+          item.name,
+          item.interest,
+          item.lastIntent,
+          item.summary,
+        ]
+          .filter((value): value is string => typeof value === 'string' && value.length > 0)
+          .join(' ')
+          .toLowerCase();
+
+        return haystack.includes(normalizedQuery);
+      });
+
+    items.sort((left, right) => {
+      const leftTime = this.getLatestTimestamp([
+        left.lastMessageAt,
+        left.memoryUpdatedAt,
+        left.summaryUpdatedAt,
+      ]);
+      const rightTime = this.getLatestTimestamp([
+        right.lastMessageAt,
+        right.memoryUpdatedAt,
+        right.summaryUpdatedAt,
+      ]);
+
+      if (leftTime === null && rightTime === null) {
+        return left.contactId.localeCompare(right.contactId);
+      }
+
+      if (leftTime === null) {
+        return 1;
+      }
+
+      if (rightTime === null) {
+        return -1;
+      }
+
+      return rightTime.getTime() - leftTime.getTime();
+    });
+
+    return items;
+  }
+
+  async updateMemoryEntry(
+    contactId: string,
+    input: UpdateMemoryEntryInput,
+  ): Promise<ConversationContextSnapshot> {
+    const normalizedContactId = this.normalizeContactId(contactId);
+
+    const memory = await this.prisma.clientMemory.upsert({
+      where: { contactId: normalizedContactId },
+      create: {
+        contactId: normalizedContactId,
+        name: this.normalizeOptionalText(input.name),
+        interest: this.normalizeOptionalText(input.interest),
+        lastIntent: this.normalizeOptionalText(input.lastIntent),
+        notes: this.normalizeOptionalText(input.notes),
+      },
+      update: {
+        name: this.normalizeOptionalText(input.name),
+        interest: this.normalizeOptionalText(input.interest),
+        lastIntent: this.normalizeOptionalText(input.lastIntent),
+        notes: this.normalizeOptionalText(input.notes),
+      },
+    });
+
+    const summaryText = this.normalizeOptionalText(input.summary);
+    if (summaryText != null) {
+      await this.prisma.conversationSummary.upsert({
+        where: { contactId: normalizedContactId },
+        create: {
+          contactId: normalizedContactId,
+          summary: summaryText,
+        },
+        update: {
+          summary: summaryText,
+        },
+      });
+    }
+
+    if (summaryText == null) {
+      await this.prisma.conversationSummary.deleteMany({
+        where: { contactId: normalizedContactId },
+      });
+    }
+
+    return {
+      messages: await this.getRecentMessages(normalizedContactId),
+      clientMemory: this.toClientMemorySnapshot(normalizedContactId, memory),
+      summary: await this.getSummary(normalizedContactId),
     };
   }
 
@@ -440,5 +591,28 @@ export class MemoryService {
     }
 
     return normalizedContactId;
+  }
+
+  private normalizeOptionalText(value: string | null | undefined): string | null {
+    if (typeof value !== 'string') {
+      return null;
+    }
+
+    const normalized = value.trim();
+    return normalized.length === 0 ? null : normalized;
+  }
+
+  private getLatestTimestamp(values: Array<Date | null>): Date | null {
+    return values.reduce<Date | null>((latest, value) => {
+      if (value === null) {
+        return latest;
+      }
+
+      if (latest === null || value.getTime() > latest.getTime()) {
+        return value;
+      }
+
+      return latest;
+    }, null);
   }
 }

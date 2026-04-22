@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { ConfigService as NestConfigService } from '@nestjs/config';
 import { AiSettings, BotSettings, Config, Prisma, WhatsAppSettings } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { SaveConfigDto } from './dto/save-config.dto';
@@ -16,7 +17,10 @@ export class ClientConfigService {
   private static readonly DEFAULT_RESPONSE_CACHE_TTL_SECONDS = 60;
   private static readonly DEFAULT_SPAM_GROUP_WINDOW_MS = 2000;
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly configService: NestConfigService,
+  ) {}
 
   async getConfig(): Promise<AppConfigRecord> {
     const config = await this.prisma.config.upsert({
@@ -30,11 +34,12 @@ export class ClientConfigService {
       update: {},
     });
 
-    return this.syncStructuredSettings(config);
+    const syncedConfig = await this.syncStructuredSettings(config);
+    return this.applyEnvironmentFallbacks(syncedConfig);
   }
 
   async saveConfig(data: SaveConfigDto): Promise<AppConfigRecord> {
-    const current = await this.getConfig();
+    const current = await this.getStoredConfig();
     const mergedConfigurations = this.mergeRecords(
       this.asRecord(current.configurations),
       this.asRecord(data.configurations),
@@ -63,22 +68,40 @@ export class ClientConfigService {
       },
     });
 
-    return this.syncStructuredSettings(config, mergedConfigurations);
+    const syncedConfig = await this.syncStructuredSettings(config, mergedConfigurations);
+    return this.applyEnvironmentFallbacks(syncedConfig);
   }
 
   toPublicConfig(config: AppConfigRecord) {
+    const effectiveConfig = this.applyEnvironmentFallbacks(config);
+
     return {
-      id: config.id,
-      promptBase: config.promptBase,
+      id: effectiveConfig.id,
+      promptBase: effectiveConfig.promptBase,
       configurations: this.buildConfigurations(
-        this.asRecord(config.configurations),
-        config.aiSettings,
-        config.botSettings,
-        config.whatsappSettings,
+        this.asRecord(effectiveConfig.configurations),
+        effectiveConfig.aiSettings,
+        effectiveConfig.botSettings,
+        effectiveConfig.whatsappSettings,
       ),
-      openaiConfigured: Boolean(config.openaiKey.trim()),
-      elevenlabsConfigured: Boolean(config.elevenlabsKey?.trim()),
+      openaiConfigured: Boolean(effectiveConfig.openaiKey.trim()),
+      elevenlabsConfigured: Boolean(effectiveConfig.elevenlabsKey?.trim()),
     };
+  }
+
+  private async getStoredConfig(): Promise<AppConfigRecord> {
+    const config = await this.prisma.config.upsert({
+      where: { id: ClientConfigService.CONFIG_ID },
+      create: {
+        id: ClientConfigService.CONFIG_ID,
+        openaiKey: '',
+        promptBase: ClientConfigService.DEFAULT_PROMPT,
+        configurations: {} as Prisma.InputJsonValue,
+      },
+      update: {},
+    });
+
+    return this.syncStructuredSettings(config);
   }
 
   private async syncStructuredSettings(
@@ -255,6 +278,39 @@ export class ClientConfigService {
     return next;
   }
 
+  private applyEnvironmentFallbacks(config: AppConfigRecord): AppConfigRecord {
+    const configurations = this.asRecord(config.configurations);
+    const whatsapp = this.asRecord(configurations.whatsapp);
+    const envOpenAiKey = this.readEnv('OPENAI_API_KEY');
+    const envEvolutionUrl = this.readEnv('EVOLUTION_URL');
+    const envEvolutionKey = this.readEnv('AUTHENTICATION_API_KEY');
+    const envWebhookUrl = this.readEnv('WEBHOOK_URL');
+    const envWebhookSecret = this.readEnv('WEBHOOK_SECRET');
+
+    const nextConfigurations = this.mergeRecords(configurations, {
+      whatsapp: {
+        apiBaseUrl: whatsapp['apiBaseUrl'] || envEvolutionUrl,
+        apiKey: whatsapp['apiKey'] || envEvolutionKey,
+        webhookUrl: whatsapp['webhookUrl'] || envWebhookUrl,
+        webhookSecret: whatsapp['webhookSecret'] || envWebhookSecret,
+      },
+    });
+
+    return {
+      ...config,
+      openaiKey: config.openaiKey.trim() || envOpenAiKey,
+      configurations: nextConfigurations as Prisma.JsonValue,
+      whatsappSettings: config.whatsappSettings
+        ? {
+            ...config.whatsappSettings,
+            apiBaseUrl: config.whatsappSettings.apiBaseUrl || envEvolutionUrl,
+            apiKey: config.whatsappSettings.apiKey || envEvolutionKey,
+            webhookSecret: config.whatsappSettings.webhookSecret || envWebhookSecret,
+          }
+        : config.whatsappSettings,
+    };
+  }
+
   private asRecord(value: unknown): Record<string, unknown> {
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
       return {};
@@ -332,5 +388,9 @@ export class ClientConfigService {
     }
 
     return fallback;
+  }
+
+  private readEnv(name: string): string {
+    return this.configService.get<string>(name)?.trim() || '';
   }
 }
