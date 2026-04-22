@@ -472,9 +472,27 @@ export class WhatsAppService {
       'disconnected'
     ).toLowerCase();
 
-    return rawStatus.includes('open') || rawStatus.includes('connect')
-      ? 'connected'
-      : 'disconnected';
+    if (
+      rawStatus === 'open' ||
+      rawStatus === 'opened' ||
+      rawStatus === 'connected' ||
+      rawStatus === 'online'
+    ) {
+      return 'connected';
+    }
+
+    if (
+      rawStatus === 'connecting' ||
+      rawStatus === 'pairing' ||
+      rawStatus === 'qrcode' ||
+      rawStatus === 'qr' ||
+      rawStatus === 'scan qr' ||
+      rawStatus === 'scan_qr'
+    ) {
+      return 'connecting';
+    }
+
+    return 'disconnected';
   }
 
   private readConnectedFlag(data: JsonRecord): boolean {
