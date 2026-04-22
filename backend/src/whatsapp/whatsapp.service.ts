@@ -5,6 +5,7 @@ import {
   Injectable,
   Logger,
 } from '@nestjs/common';
+import { createHash } from 'node:crypto';
 import { ConfigService } from '@nestjs/config';
 import { MediaFile, WhatsAppInstance } from '@prisma/client';
 import axios, { AxiosInstance } from 'axios';
@@ -31,6 +32,12 @@ type InstanceStatus = 'connected' | 'disconnected' | 'connecting';
 
 @Injectable()
 export class WhatsAppService {
+  private static readonly SHORT_AUDIO_MAX_SECONDS = 12;
+  private static readonly MAX_AUDIO_DURATION_SECONDS = 60;
+  private static readonly AUDIO_TRANSCRIPT_CACHE_TTL_SECONDS = 60 * 60 * 6;
+  private static readonly VOICE_PREFERENCE_TTL_SECONDS = 60 * 60 * 24 * 30;
+  private static readonly INBOUND_MESSAGE_DEDUP_TTL_SECONDS = 60 * 10;
+
   private readonly logger = new Logger(WhatsAppService.name);
 
   constructor(
@@ -346,6 +353,11 @@ export class WhatsAppService {
     resolved: ResolvedWhatsAppClient,
     to: string,
     audio: Buffer | string,
+    options?: {
+      fileName?: string;
+      mimetype?: string;
+      ptt?: boolean;
+    },
   ): Promise<void> {
     await this.executeEvolutionRequest(
       resolved,
@@ -354,8 +366,10 @@ export class WhatsAppService {
       {
         number: this.normalizeNumber(to),
         audio: Buffer.isBuffer(audio) ? audio.toString('base64') : audio,
-        fileName: 'reply.mp3',
-        mimetype: 'audio/mpeg',
+        fileName: options?.fileName ?? 'reply.mp3',
+        mimetype: options?.mimetype ?? 'audio/mpeg',
+        ptt: options?.ptt ?? true,
+        encoding: true,
       },
     );
   }
@@ -418,6 +432,18 @@ export class WhatsAppService {
       }),
     );
 
+    if (!(await this.acquireIncomingMessageLock(incoming))) {
+      this.logger.warn(
+        JSON.stringify({
+          event: 'whatsapp_message_duplicate_ignored',
+          contactId: incoming.number,
+          messageId: incoming.messageId,
+          type: incoming.type,
+        }),
+      );
+      return;
+    }
+
     const spamGroupWindowMs = resolved.config.botSettings?.spamGroupWindowMs ?? 2000;
 
     if (incoming.type === 'text') {
@@ -445,6 +471,11 @@ export class WhatsAppService {
       return;
     }
 
+    if (incoming.type === 'audio') {
+      await this.processIncomingAudioMessage(resolved, incoming);
+      return;
+    }
+
     await this.processAndDeliverMessage(resolved, incoming.number, incoming.message, incoming.type);
   }
 
@@ -464,10 +495,15 @@ export class WhatsAppService {
     contactId: string,
     message: string,
     messageType: 'text' | 'image' | 'audio',
+    options?: {
+      preferAudioReply?: boolean;
+    },
   ): Promise<void> {
     const fallbackMessage =
       resolved.whatsapp.fallbackMessage ??
       'En este momento no pude procesar tu mensaje. Intenta nuevamente en unos minutos.';
+    const preferAudioReply =
+      options?.preferAudioReply ?? (await this.hasVoiceReplyPreference(contactId));
 
     let botReply: Awaited<ReturnType<BotService['processIncomingMessage']>>;
     try {
@@ -502,18 +538,23 @@ export class WhatsAppService {
     }
 
     if (
-      botReply.replyType === 'audio' &&
-      (resolved.config.botSettings?.allowAudioReplies ?? true)
+      (resolved.config.botSettings?.allowAudioReplies ?? true) &&
+      (botReply.replyType === 'audio' || preferAudioReply)
     ) {
       try {
-        const audio = await this.voiceService.generateVoice(
-          botReply.reply,
-          resolved.config.elevenlabsKey ?? '',
-          resolved.whatsapp.audioVoiceId,
-          resolved.whatsapp.elevenLabsBaseUrl,
-        );
+        const audio = await this.voiceService.generateVoice({
+          text: botReply.reply,
+          openAiKey: resolved.config.openaiKey,
+          elevenLabsKey: resolved.config.elevenlabsKey ?? undefined,
+          voiceId: resolved.whatsapp.audioVoiceId,
+          baseUrl: resolved.whatsapp.elevenLabsBaseUrl,
+        });
 
-        await this.sendAudio(resolved, contactId, audio);
+        await this.sendAudioWithRetry(resolved, contactId, audio.buffer, {
+          fileName: audio.fileName,
+          mimetype: audio.mimetype,
+          ptt: true,
+        });
         this.logger.log(
           JSON.stringify({
             event: 'whatsapp_reply_sent',
@@ -565,6 +606,316 @@ export class WhatsAppService {
 
       await this.sendImage(resolved, contactId, media.fileUrl, caption);
     }
+  }
+
+  private async processIncomingAudioMessage(
+    resolved: ResolvedWhatsAppClient,
+    incoming: NormalizedIncomingWhatsAppMessage,
+  ): Promise<void> {
+    const durationSeconds = incoming.audio?.seconds;
+
+    try {
+      if (
+        typeof durationSeconds === 'number' &&
+        durationSeconds > WhatsAppService.MAX_AUDIO_DURATION_SECONDS
+      ) {
+        await this.sendText(
+          resolved,
+          incoming.number,
+          'Tu nota de voz supera los 60 segundos. Enviamela mas corta, por favor.',
+        );
+        return;
+      }
+
+      const transcript = await this.getOrCreateAudioTranscript(resolved, incoming);
+      if (!transcript) {
+        await this.sendText(
+          resolved,
+          incoming.number,
+          'No pude entender tu nota de voz. Si puedes, mandamela otra vez o escribeme.',
+        );
+        return;
+      }
+
+      this.logger.log(
+        JSON.stringify({
+          event: 'whatsapp_audio_transcribed',
+          contactId: incoming.number,
+          pushName: incoming.pushName,
+          seconds: durationSeconds ?? null,
+          transcript,
+        }),
+      );
+
+      await this.processAndDeliverMessage(resolved, incoming.number, transcript, 'audio', {
+        preferAudioReply: this.shouldReplyWithVoiceForAudio(incoming),
+      });
+      await this.rememberVoiceReplyPreference(incoming.number);
+    } catch (error) {
+      this.logger.error(
+        JSON.stringify({
+          event: 'audio_processing_failed',
+          contactId: incoming.number,
+          messageId: incoming.messageId,
+        }),
+        error instanceof Error ? error.stack : undefined,
+      );
+
+      await this.sendText(
+        resolved,
+        incoming.number,
+        'No pude procesar tu audio ahora mismo. Si quieres, escribeme el mensaje.',
+      );
+    }
+  }
+
+  private async acquireIncomingMessageLock(
+    incoming: NormalizedIncomingWhatsAppMessage,
+  ): Promise<boolean> {
+    if (!incoming.messageId?.trim()) {
+      return true;
+    }
+
+    try {
+      return await this.redisService.setIfAbsent(
+        this.getIncomingMessageDedupKey(incoming),
+        '1',
+        WhatsAppService.INBOUND_MESSAGE_DEDUP_TTL_SECONDS,
+      );
+    } catch (error) {
+      this.logger.warn(
+        JSON.stringify({
+          event: 'whatsapp_message_dedup_unavailable',
+          contactId: incoming.number,
+          messageId: incoming.messageId,
+          error: error instanceof Error ? error.message : 'Unknown error',
+        }),
+      );
+      return true;
+    }
+  }
+
+  private async getOrCreateAudioTranscript(
+    resolved: ResolvedWhatsAppClient,
+    incoming: NormalizedIncomingWhatsAppMessage,
+  ): Promise<string> {
+    const cacheKey = this.getAudioTranscriptCacheKey(incoming);
+    const cached = await this.redisService.get<string>(cacheKey);
+    if (cached?.trim()) {
+      return cached.trim();
+    }
+
+    const downloadedAudio = await this.downloadMediaMessage(resolved, incoming);
+    const transcript = await this.voiceService.transcribeAudio(
+      downloadedAudio.buffer,
+      resolved.config.openaiKey,
+      downloadedAudio.fileName,
+      downloadedAudio.mimetype,
+    );
+
+    await this.redisService.set(
+      cacheKey,
+      transcript,
+      WhatsAppService.AUDIO_TRANSCRIPT_CACHE_TTL_SECONDS,
+    );
+
+    return transcript;
+  }
+
+  private async downloadMediaMessage(
+    resolved: ResolvedWhatsAppClient,
+    incoming: NormalizedIncomingWhatsAppMessage,
+  ): Promise<{ buffer: Buffer; fileName: string; mimetype: string }> {
+    const audio = incoming.audio;
+    if (!audio) {
+      throw new BadRequestException('Incoming audio metadata is missing');
+    }
+
+    if (audio.base64) {
+      return {
+        buffer: Buffer.from(audio.base64, 'base64'),
+        fileName: this.buildAudioFileName(incoming.messageId, audio.mimetype),
+        mimetype: audio.mimetype || 'audio/ogg',
+      };
+    }
+
+    if (audio.mediaUrl) {
+      return this.downloadAudioFromUrl(audio.mediaUrl, incoming, audio.mimetype);
+    }
+
+    const requestBody = {
+      message: this.buildEvolutionMediaPayload(incoming),
+    };
+
+    try {
+      const response = await this.createEvolutionClient(resolved.whatsapp).post(
+        `/chat/getBase64FromMediaMessage/${resolved.whatsapp.instanceName}`,
+        requestBody,
+      );
+      const payload = this.asRecord(response.data);
+      const nested = this.asRecord(payload.data);
+      const base64 = this.asString(payload.base64) || this.asString(nested.base64);
+
+      if (!base64) {
+        throw new BadRequestException('Evolution did not return audio base64');
+      }
+
+      return {
+        buffer: Buffer.from(base64, 'base64'),
+        fileName:
+          this.asString(payload.fileName) ||
+          this.asString(nested.fileName) ||
+          this.buildAudioFileName(incoming.messageId, audio.mimetype),
+        mimetype:
+          this.asString(payload.mimetype) ||
+          this.asString(nested.mimetype) ||
+          audio.mimetype ||
+          'audio/ogg',
+      };
+    } catch (error) {
+      if (audio.mediaUrl) {
+        return this.downloadAudioFromUrl(audio.mediaUrl, incoming, audio.mimetype);
+      }
+
+      if (error instanceof HttpException) {
+        throw error;
+      }
+
+      throw new HttpException('Audio media download failed', HttpStatus.BAD_GATEWAY);
+    }
+  }
+
+  private async downloadAudioFromUrl(
+    mediaUrl: string,
+    incoming: NormalizedIncomingWhatsAppMessage,
+    mimetype?: string,
+  ): Promise<{ buffer: Buffer; fileName: string; mimetype: string }> {
+    const response = await axios.get(mediaUrl, {
+      responseType: 'arraybuffer',
+      timeout: 45000,
+    });
+
+    return {
+      buffer: Buffer.from(response.data),
+      fileName: this.buildAudioFileName(incoming.messageId, mimetype),
+      mimetype: this.asString(response.headers['content-type']) || mimetype || 'audio/ogg',
+    };
+  }
+
+  private buildEvolutionMediaPayload(
+    incoming: NormalizedIncomingWhatsAppMessage,
+  ): Record<string, unknown> {
+    const data = this.asRecord(this.asRecord(incoming.rawPayload).data);
+    const key = this.asRecord(data.key);
+    const message = this.asRecord(data.message);
+
+    if (!Object.keys(key).length || !Object.keys(message).length) {
+      throw new BadRequestException('Webhook audio payload is incomplete');
+    }
+
+    return {
+      key,
+      message,
+      messageType: this.asString(data.messageType) || 'audioMessage',
+    };
+  }
+
+  private buildAudioFileName(messageId: string | null, mimetype?: string): string {
+    const extension = this.getAudioExtension(mimetype);
+    return `${messageId || 'audio'}.${extension}`;
+  }
+
+  private getAudioExtension(mimetype?: string): string {
+    const normalized = mimetype?.toLowerCase() || '';
+
+    if (normalized.includes('mpeg') || normalized.includes('mp3')) {
+      return 'mp3';
+    }
+
+    if (normalized.includes('wav')) {
+      return 'wav';
+    }
+
+    if (normalized.includes('ogg') || normalized.includes('opus')) {
+      return 'ogg';
+    }
+
+    return 'ogg';
+  }
+
+  private shouldReplyWithVoiceForAudio(
+    incoming: NormalizedIncomingWhatsAppMessage,
+  ): boolean {
+    const durationSeconds = incoming.audio?.seconds;
+
+    if (typeof durationSeconds === 'number') {
+      return durationSeconds > WhatsAppService.SHORT_AUDIO_MAX_SECONDS;
+    }
+
+    return Boolean(incoming.audio?.ptt || incoming.audio);
+  }
+
+  private async sendAudioWithRetry(
+    resolved: ResolvedWhatsAppClient,
+    to: string,
+    audio: Buffer | string,
+    options?: {
+      fileName?: string;
+      mimetype?: string;
+      ptt?: boolean;
+    },
+  ): Promise<void> {
+    try {
+      await this.sendAudio(resolved, to, audio, options);
+    } catch (error) {
+      this.logger.warn(
+        JSON.stringify({
+          event: 'whatsapp_audio_retry',
+          contactId: to,
+          error: error instanceof Error ? error.message : 'Unknown error',
+        }),
+      );
+      await this.sendAudio(resolved, to, audio, options);
+    }
+  }
+
+  private async rememberVoiceReplyPreference(contactId: string): Promise<void> {
+    await this.redisService.set(
+      this.getVoiceReplyPreferenceKey(contactId),
+      '1',
+      WhatsAppService.VOICE_PREFERENCE_TTL_SECONDS,
+    );
+  }
+
+  private async hasVoiceReplyPreference(contactId: string): Promise<boolean> {
+    return (await this.redisService.get<string>(this.getVoiceReplyPreferenceKey(contactId))) === '1';
+  }
+
+  private getVoiceReplyPreferenceKey(contactId: string): string {
+    return `voice-pref:${this.normalizeNumber(contactId)}`;
+  }
+
+  private getIncomingMessageDedupKey(
+    incoming: NormalizedIncomingWhatsAppMessage,
+  ): string {
+    return `wa-inbound:${this.normalizeNumber(incoming.number)}:${incoming.messageId}`;
+  }
+
+  private getAudioTranscriptCacheKey(
+    incoming: NormalizedIncomingWhatsAppMessage,
+  ): string {
+    const parts = [
+      incoming.messageId,
+      incoming.number,
+      incoming.audio?.directPath,
+      incoming.audio?.mediaKey,
+      incoming.audio?.mediaUrl,
+    ].filter((value): value is string => Boolean(value && value.trim()));
+
+    const rawSignature =
+      parts.join(':') || JSON.stringify(this.asRecord(this.asRecord(incoming.rawPayload).data));
+
+    return `audio-stt:${createHash('sha1').update(rawSignature).digest('hex')}`;
   }
 
   private async resolveConfig(): Promise<ResolvedWhatsAppClient> {
@@ -756,6 +1107,7 @@ export class WhatsAppService {
     const key = this.asRecord(data.key);
     const message = this.asRecord(data.message);
     const fromMe = Boolean(key.fromMe ?? data.fromMe);
+    const pushName = this.asString(data.pushName);
 
     if (!Object.keys(message).length || fromMe) {
       return null;
@@ -782,10 +1134,35 @@ export class WhatsAppService {
 
     return {
       number,
+      pushName,
       message: type === 'text' ? text : text || `[${type}]`,
       type,
       messageId: this.asString(key.id) ?? this.asString(data.messageId) ?? null,
+      audio: type === 'audio' ? this.extractAudioMetadata(message) : undefined,
       rawPayload: payload,
+    };
+  }
+
+  private extractAudioMetadata(message: JsonRecord) {
+    const audioMessage = this.asRecord(message.audioMessage);
+    if (!Object.keys(audioMessage).length) {
+      return undefined;
+    }
+
+    return {
+      base64: this.asString(audioMessage.base64) || this.asString(message.base64),
+      mediaUrl:
+        this.asString(audioMessage.mediaUrl) ||
+        this.asString(audioMessage.url) ||
+        this.asString(message.mediaUrl),
+      mediaKey:
+        this.asString(audioMessage.mediaKey) || this.stringifyScalar(audioMessage.mediaKey),
+      directPath: this.asString(audioMessage.directPath),
+      mimetype: this.asString(audioMessage.mimetype) || 'audio/ogg; codecs=opus',
+      seconds: this.asPositiveInteger(
+        audioMessage.seconds ?? audioMessage.duration ?? audioMessage.secondsDuration,
+      ),
+      ptt: this.asBooleanValue(audioMessage.ptt),
     };
   }
 
@@ -1121,5 +1498,44 @@ export class WhatsAppService {
 
   private asString(value: unknown): string | undefined {
     return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+  }
+
+  private asPositiveInteger(value: unknown): number | undefined {
+    if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+      return Math.trunc(value);
+    }
+
+    if (typeof value === 'string') {
+      const parsed = Number(value);
+      if (Number.isFinite(parsed) && parsed > 0) {
+        return Math.trunc(parsed);
+      }
+    }
+
+    return undefined;
+  }
+
+  private asBooleanValue(value: unknown): boolean {
+    if (typeof value === 'boolean') {
+      return value;
+    }
+
+    if (typeof value === 'string') {
+      return ['true', '1', 'yes', 'on'].includes(value.trim().toLowerCase());
+    }
+
+    return false;
+  }
+
+  private stringifyScalar(value: unknown): string | undefined {
+    if (typeof value === 'string' && value.trim()) {
+      return value.trim();
+    }
+
+    if (Array.isArray(value) || (value && typeof value === 'object')) {
+      return JSON.stringify(value);
+    }
+
+    return undefined;
   }
 }

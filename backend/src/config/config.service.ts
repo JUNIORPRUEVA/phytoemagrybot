@@ -281,7 +281,11 @@ export class ClientConfigService {
   private applyEnvironmentFallbacks(config: AppConfigRecord): AppConfigRecord {
     const configurations = this.asRecord(config.configurations);
     const whatsapp = this.asRecord(configurations.whatsapp);
+    const elevenlabs = this.asRecord(configurations.elevenlabs);
     const envOpenAiKey = this.readEnv('OPENAI_API_KEY');
+    const envElevenLabsKey = this.readEnv('ELEVENLABS_API_KEY');
+    const envElevenLabsBaseUrl = this.readEnv('ELEVENLABS_BASE_URL');
+    const envElevenLabsVoiceId = this.readEnv('ELEVENLABS_VOICE_ID');
     const envEvolutionUrl = this.readEnv('EVOLUTION_URL');
     const envEvolutionKey = this.readEnv('AUTHENTICATION_API_KEY');
     const envWebhookUrl = this.readEnv('WEBHOOK_URL');
@@ -291,20 +295,28 @@ export class ClientConfigService {
       whatsapp: {
         apiBaseUrl: whatsapp['apiBaseUrl'] || envEvolutionUrl,
         apiKey: whatsapp['apiKey'] || envEvolutionKey,
+        audioVoiceId: whatsapp['audioVoiceId'] || envElevenLabsVoiceId,
         webhookUrl: whatsapp['webhookUrl'] || envWebhookUrl,
         webhookSecret: whatsapp['webhookSecret'] || envWebhookSecret,
+      },
+      elevenlabs: {
+        baseUrl: elevenlabs['baseUrl'] || envElevenLabsBaseUrl,
       },
     });
 
     return {
       ...config,
       openaiKey: config.openaiKey.trim() || envOpenAiKey,
+      elevenlabsKey: config.elevenlabsKey?.trim() || envElevenLabsKey || null,
       configurations: nextConfigurations as Prisma.JsonValue,
       whatsappSettings: config.whatsappSettings
         ? {
             ...config.whatsappSettings,
             apiBaseUrl: config.whatsappSettings.apiBaseUrl || envEvolutionUrl,
             apiKey: config.whatsappSettings.apiKey || envEvolutionKey,
+            audioVoiceId: config.whatsappSettings.audioVoiceId || envElevenLabsVoiceId,
+            elevenLabsBaseUrl:
+              config.whatsappSettings.elevenLabsBaseUrl || envElevenLabsBaseUrl,
             webhookSecret: config.whatsappSettings.webhookSecret || envWebhookSecret,
           }
         : config.whatsappSettings,

@@ -1,26 +1,115 @@
+import { randomUUID } from 'node:crypto';
+import { createReadStream, promises as fs } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
 import axios from 'axios';
+import OpenAI from 'openai';
+
+export interface GeneratedVoiceAudio {
+  buffer: Buffer;
+  fileName: string;
+  mimetype: string;
+}
 
 @Injectable()
 export class VoiceService {
-  async generateVoice(
-    text: string,
-    apiKey: string,
+  async transcribeAudio(
+    audio: Buffer,
+    openAiKey: string,
+    fileName = 'audio.ogg',
+    mimeType = 'audio/ogg',
+  ): Promise<string> {
+    if (!Buffer.isBuffer(audio) || audio.length === 0) {
+      throw new HttpException('Audio buffer is required', HttpStatus.BAD_REQUEST);
+    }
+
+    if (!openAiKey.trim()) {
+      throw new HttpException('OpenAI API key is required', HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+
+    const tempPath = path.join(os.tmpdir(), `${randomUUID()}-${fileName}`);
+
+    await fs.writeFile(tempPath, audio);
+
+    try {
+      const openai = new OpenAI({ apiKey: openAiKey });
+      const transcription = await openai.audio.transcriptions.create({
+        file: createReadStream(tempPath),
+        model: 'whisper-1',
+        language: 'es',
+        prompt: 'Transcribe en espanol latino, sin muletillas ni ruido.',
+      });
+
+      const text = this.normalizeTranscript(transcription.text);
+      if (!text) {
+        throw new HttpException('OpenAI returned an empty transcription', HttpStatus.BAD_GATEWAY);
+      }
+
+      return text;
+    } catch (error) {
+      if (error instanceof HttpException) {
+        throw error;
+      }
+
+      throw new HttpException('Audio transcription failed', HttpStatus.BAD_GATEWAY);
+    } finally {
+      await fs.unlink(tempPath).catch(() => undefined);
+    }
+  }
+
+  async generateVoice(params: {
+    text: string;
+    openAiKey?: string;
+    elevenLabsKey?: string;
     voiceId?: string,
-    baseUrl = 'https://api.elevenlabs.io',
-  ): Promise<Buffer> {
-    if (!text.trim()) {
+    baseUrl?: string,
+  }): Promise<GeneratedVoiceAudio> {
+    const text = params.text.trim();
+    if (!text) {
       throw new HttpException('Voice text is required', HttpStatus.BAD_REQUEST);
     }
 
-    if (!apiKey) {
-      throw new HttpException('ElevenLabs API key is required', HttpStatus.INTERNAL_SERVER_ERROR);
+    const elevenLabsKey = params.elevenLabsKey?.trim();
+    const voiceId = params.voiceId?.trim();
+    const openAiKey = params.openAiKey?.trim();
+
+    if (elevenLabsKey && voiceId) {
+      const buffer = await this.generateWithElevenLabs(
+        text,
+        elevenLabsKey,
+        voiceId,
+        params.baseUrl,
+      );
+
+      return {
+        buffer,
+        fileName: 'reply.mp3',
+        mimetype: 'audio/mpeg',
+      };
     }
 
-    if (!voiceId) {
-      throw new HttpException('ElevenLabs voiceId is required', HttpStatus.INTERNAL_SERVER_ERROR);
+    if (openAiKey) {
+      const buffer = await this.generateWithOpenAi(text, openAiKey);
+      return {
+        buffer,
+        fileName: 'reply.mp3',
+        mimetype: 'audio/mpeg',
+      };
     }
 
+    throw new HttpException(
+      'No audio generation provider is configured',
+      HttpStatus.INTERNAL_SERVER_ERROR,
+    );
+  }
+
+  private async generateWithElevenLabs(
+    text: string,
+    apiKey: string,
+    voiceId: string,
+    baseUrl = 'https://api.elevenlabs.io',
+  ): Promise<Buffer> {
     const response = await axios.post(
       `${baseUrl.replace(/\/$/, '')}/v1/text-to-speech/${voiceId}`,
       {
@@ -43,5 +132,33 @@ export class VoiceService {
     );
 
     return Buffer.from(response.data);
+  }
+
+  private async generateWithOpenAi(text: string, openAiKey: string): Promise<Buffer> {
+    try {
+      const openai = new OpenAI({ apiKey: openAiKey });
+      const response = await openai.audio.speech.create({
+        model: 'gpt-4o-mini-tts',
+        voice: 'alloy',
+        input: text,
+      });
+
+      return Buffer.from(await response.arrayBuffer());
+    } catch {
+      throw new HttpException('Audio generation failed', HttpStatus.BAD_GATEWAY);
+    }
+  }
+
+  private normalizeTranscript(value: string): string {
+    const normalized = value
+      .replace(/\[[^\]]+\]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    if (!/[A-Za-z0-9ÁÉÍÓÚáéíóúÑñ]/.test(normalized)) {
+      return '';
+    }
+
+    return normalized;
   }
 }

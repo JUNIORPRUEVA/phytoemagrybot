@@ -2,6 +2,16 @@ import { AppConfigRecord } from '../config/config.types';
 
 export type IncomingWhatsAppMessageType = 'text' | 'image' | 'audio';
 
+export interface IncomingAudioMetadata {
+  base64?: string;
+  mediaUrl?: string;
+  mediaKey?: string;
+  directPath?: string;
+  mimetype?: string;
+  seconds?: number;
+  ptt: boolean;
+}
+
 export interface WhatsAppClientConfiguration {
   webhookSecret: string;
   webhookUrl?: string;
@@ -65,9 +75,11 @@ export interface WhatsAppWebhookConfigResponse {
 
 export interface NormalizedIncomingWhatsAppMessage {
   number: string;
+  pushName?: string;
   message: string;
   type: IncomingWhatsAppMessageType;
   messageId: string | null;
+  audio?: IncomingAudioMetadata;
   rawPayload: Record<string, unknown>;
 }
 
