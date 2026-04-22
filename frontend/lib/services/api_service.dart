@@ -246,6 +246,56 @@ class WhatsAppChannelData {
   }
 }
 
+class WhatsAppQrData {
+  const WhatsAppQrData({
+    required this.instanceName,
+    required this.qrCodeBase64,
+    required this.status,
+    required this.message,
+  });
+
+  final String instanceName;
+  final String? qrCodeBase64;
+  final String status;
+  final String message;
+
+  bool get connected => status == 'connected';
+
+  factory WhatsAppQrData.fromJson(Map<String, dynamic> json) {
+    return WhatsAppQrData(
+      instanceName: (json['instanceName'] as String?) ?? '',
+      qrCodeBase64: json['qrCodeBase64'] as String?,
+      status: (json['status'] as String?) ?? 'disconnected',
+      message: (json['message'] as String?) ?? '',
+    );
+  }
+}
+
+class WhatsAppWebhookData {
+  const WhatsAppWebhookData({
+    required this.instanceName,
+    required this.webhook,
+    required this.events,
+    required this.message,
+  });
+
+  final String instanceName;
+  final String webhook;
+  final List<String> events;
+  final String message;
+
+  factory WhatsAppWebhookData.fromJson(Map<String, dynamic> json) {
+    return WhatsAppWebhookData(
+      instanceName: (json['instanceName'] as String?) ?? '',
+      webhook: (json['webhook'] as String?) ?? '',
+      events: ((json['events'] as List<dynamic>?) ?? const <dynamic>[])
+          .map((dynamic item) => item.toString())
+          .toList(),
+      message: (json['message'] as String?) ?? '',
+    );
+  }
+}
+
 class ApiService {
   ApiService({this.baseUrl = defaultBaseUrl, http.Client? client}) : _client = client ?? http.Client();
 
@@ -428,6 +478,48 @@ class ApiService {
 
   Future<WhatsAppChannelData> getWhatsAppChannel() async {
     final response = await _client.get(_buildUri('/whatsapp/channel'), headers: _headers);
+    return WhatsAppChannelData.fromJson(_decodeResponse(response));
+  }
+
+  Future<WhatsAppChannelData> createInstance(String instanceName) async {
+    final response = await _client.post(
+      _buildUri('/whatsapp/create'),
+      headers: _headers,
+      body: jsonEncode(<String, dynamic>{
+        'instanceName': instanceName,
+      }),
+    );
+
+    return WhatsAppChannelData.fromJson(_decodeResponse(response));
+  }
+
+  Future<WhatsAppQrData> getQr(String instanceName) async {
+    final response = await _client.get(
+      _buildUri('/whatsapp/qr/${Uri.encodeComponent(instanceName)}'),
+      headers: _headers,
+    );
+
+    return WhatsAppQrData.fromJson(_decodeResponse(response));
+  }
+
+  Future<WhatsAppWebhookData> setWebhook(String instanceName) async {
+    final response = await _client.post(
+      _buildUri('/whatsapp/webhook/${Uri.encodeComponent(instanceName)}'),
+      headers: _headers,
+      body: jsonEncode(<String, dynamic>{
+        'events': <String>['messages.upsert'],
+      }),
+    );
+
+    return WhatsAppWebhookData.fromJson(_decodeResponse(response));
+  }
+
+  Future<WhatsAppChannelData> getStatus(String instanceName) async {
+    final response = await _client.get(
+      _buildUri('/whatsapp/status/${Uri.encodeComponent(instanceName)}'),
+      headers: _headers,
+    );
+
     return WhatsAppChannelData.fromJson(_decodeResponse(response));
   }
 

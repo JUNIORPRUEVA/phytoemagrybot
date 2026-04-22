@@ -27,6 +27,20 @@ export interface WhatsAppChannelStatus {
   details: Record<string, unknown>;
 }
 
+export interface WhatsAppQrResponse {
+  instanceName: string;
+  qrCodeBase64: string | null;
+  status: 'connected' | 'disconnected';
+  message: string;
+}
+
+export interface WhatsAppWebhookConfigResponse {
+  instanceName: string;
+  webhook: string;
+  events: string[];
+  message: string;
+}
+
 export interface NormalizedIncomingWhatsAppMessage {
   number: string;
   message: string;

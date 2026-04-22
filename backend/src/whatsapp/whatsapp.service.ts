@@ -5,6 +5,7 @@ import {
   Injectable,
   Logger,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import axios, { AxiosError, AxiosInstance } from 'axios';
 import { BotService } from '../bot/bot.service';
 import { ClientConfigService } from '../config/config.service';
@@ -16,6 +17,8 @@ import {
   WebhookProcessingResult,
   WhatsAppChannelStatus,
   WhatsAppClientConfiguration,
+  WhatsAppQrResponse,
+  WhatsAppWebhookConfigResponse,
 } from './whatsapp.types';
 
 type HeaderMap = Record<string, string | string[] | undefined>;
@@ -28,6 +31,7 @@ export class WhatsAppService {
   constructor(
     private readonly botService: BotService,
     private readonly clientConfigService: ClientConfigService,
+    private readonly configService: ConfigService,
     private readonly redisService: RedisService,
     private readonly voiceService: VoiceService,
   ) {}
@@ -51,20 +55,114 @@ export class WhatsAppService {
     return { ok: true, accepted: true };
   }
 
-  async getChannelStatus(): Promise<WhatsAppChannelStatus> {
-    const resolved = await this.resolveConfig();
-    return this.readChannelStatus(resolved, true);
+  async createInstance(instanceName: string): Promise<WhatsAppChannelStatus> {
+    const normalizedInstanceName = this.normalizeInstanceName(instanceName);
+    const client = this.getEvolutionClient();
+
+    try {
+      await client.post('/instance/create', {
+        instanceName: normalizedInstanceName,
+      });
+
+      return await this.getStatus(normalizedInstanceName);
+    } catch (error) {
+      this.handleEvolutionError(error, 'No fue posible crear la instancia de WhatsApp.');
+    }
   }
 
-  async createChannelInstance(): Promise<WhatsAppChannelStatus> {
-    const resolved = await this.resolveConfig();
-    await this.createEvolutionInstance(resolved);
-    return this.readChannelStatus(resolved, true, true);
+  async getQr(instanceName: string): Promise<WhatsAppQrResponse> {
+    const normalizedInstanceName = this.normalizeInstanceName(instanceName);
+    const client = this.getEvolutionClient();
+
+    try {
+      const response = await client.get(`/instance/connect/${normalizedInstanceName}`);
+      const payload = this.asRecord(response.data);
+      const base64 = this.extractQrCodeBase64(payload);
+      const connected = this.readConnectedFlag(payload) || !base64;
+
+      return {
+        instanceName: normalizedInstanceName,
+        qrCodeBase64: base64,
+        status: connected ? 'connected' : 'disconnected',
+        message: connected
+          ? 'La instancia ya se encuentra conectada.'
+          : base64
+            ? 'QR obtenido correctamente.'
+            : 'No hay QR disponible para esta instancia.',
+      };
+    } catch (error) {
+      this.handleEvolutionError(error, 'No fue posible obtener el QR de WhatsApp.');
+    }
   }
 
-  async refreshChannelQr(): Promise<WhatsAppChannelStatus> {
-    const resolved = await this.resolveConfig();
-    return this.readChannelStatus(resolved, true, true);
+  async setWebhook(
+    instanceName: string,
+    webhook?: string,
+    events?: string[],
+  ): Promise<WhatsAppWebhookConfigResponse> {
+    const normalizedInstanceName = this.normalizeInstanceName(instanceName);
+    const client = this.getEvolutionClient();
+    const resolvedWebhook = webhook?.trim() || this.getRequiredEnv('WEBHOOK_URL');
+    const resolvedEvents = events?.length ? events : ['messages.upsert'];
+
+    try {
+      await client.post(`/webhook/set/${normalizedInstanceName}`, {
+        webhook: resolvedWebhook,
+        events: resolvedEvents,
+      });
+
+      return {
+        instanceName: normalizedInstanceName,
+        webhook: resolvedWebhook,
+        events: resolvedEvents,
+        message: 'Webhook configurado correctamente.',
+      };
+    } catch (error) {
+      this.handleEvolutionError(error, 'No fue posible configurar el webhook de WhatsApp.');
+    }
+  }
+
+  async getStatus(instanceName: string): Promise<WhatsAppChannelStatus> {
+    const normalizedInstanceName = this.normalizeInstanceName(instanceName);
+    const client = this.getEvolutionClient();
+
+    try {
+      const response = await client.get('/instance/fetchInstances');
+      const payload = response.data;
+      const instances = this.extractInstances(payload);
+      const instance = instances.find((item) => {
+        const data = this.asRecord(item);
+        return this.readInstanceName(data) === normalizedInstanceName;
+      });
+
+      if (!instance) {
+        throw new HttpException(
+          `La instancia ${normalizedInstanceName} no existe en Evolution.`,
+          HttpStatus.NOT_FOUND,
+        );
+      }
+
+      const details = this.asRecord(instance);
+      const status = this.readInstanceStatus(details);
+      const qrCodeBase64 = this.extractQrCodeBase64(details);
+      const connected = status === 'connected';
+
+      return {
+        provider: 'evolution',
+        instanceName: normalizedInstanceName,
+        status,
+        connected,
+        qrCode: qrCodeBase64,
+        qrCodeBase64,
+        details,
+      };
+    } catch (error) {
+      if (error instanceof HttpException) {
+        throw error;
+      }
+
+      this.handleEvolutionError(error, 'No fue posible consultar el estado de WhatsApp.');
+    }
   }
 
   async sendText(
@@ -275,6 +373,132 @@ export class WhatsAppService {
       config,
       whatsapp: this.extractWhatsAppConfiguration(config),
     };
+  }
+
+  private getEvolutionClient(): AxiosInstance {
+    const baseURL = this.getRequiredEnv('EVOLUTION_URL');
+    const apiKey = this.getRequiredEnv('AUTHENTICATION_API_KEY');
+
+    return axios.create({
+      baseURL: baseURL.replace(/\/+$/, ''),
+      headers: {
+        apikey: apiKey,
+        'Content-Type': 'application/json',
+      },
+      timeout: 15000,
+    });
+  }
+
+  private getRequiredEnv(name: 'EVOLUTION_URL' | 'AUTHENTICATION_API_KEY' | 'WEBHOOK_URL'): string {
+    const value = this.configService.get<string>(name)?.trim();
+
+    if (!value) {
+      throw new HttpException(
+        `La variable de entorno ${name} es obligatoria.`,
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+
+    return value;
+  }
+
+  private normalizeInstanceName(instanceName: string): string {
+    const normalizedInstanceName = instanceName.trim();
+
+    if (!normalizedInstanceName) {
+      throw new BadRequestException('instanceName es obligatorio.');
+    }
+
+    return normalizedInstanceName;
+  }
+
+  private extractInstances(payload: unknown): unknown[] {
+    if (Array.isArray(payload)) {
+      return payload;
+    }
+
+    const data = this.asRecord(payload);
+    const records = data.instances ?? data.data ?? data.response;
+
+    return Array.isArray(records) ? records : [];
+  }
+
+  private readInstanceName(data: JsonRecord): string {
+    const instance = this.asRecord(data.instance);
+    const instanceData = this.asRecord(data.instanceData);
+
+    return (
+      this.asString(data.instanceName) ||
+      this.asString(instance.instanceName) ||
+      this.asString(instance.name) ||
+      this.asString(instanceData.instanceName) ||
+      this.asString(instanceData.name) ||
+      ''
+    );
+  }
+
+  private readInstanceStatus(data: JsonRecord): string {
+    const instance = this.asRecord(data.instance);
+    const instanceData = this.asRecord(data.instanceData);
+    const rawStatus = (
+      this.asString(data.status) ||
+      this.asString(data.connectionStatus) ||
+      this.asString(instance.status) ||
+      this.asString(instance.connectionStatus) ||
+      this.asString(instanceData.status) ||
+      this.asString(instanceData.connectionStatus) ||
+      'disconnected'
+    ).toLowerCase();
+
+    return rawStatus.includes('open') || rawStatus.includes('connect')
+      ? 'connected'
+      : 'disconnected';
+  }
+
+  private readConnectedFlag(data: JsonRecord): boolean {
+    const instance = this.asRecord(data.instance);
+    const base = [
+      data.connected,
+      data.isConnected,
+      data.qrcode === null,
+      instance.connected,
+      instance.isConnected,
+    ];
+
+    return base.some((value) => value === true);
+  }
+
+  private extractQrCodeBase64(payload: JsonRecord): string | null {
+    const qrcode = this.asRecord(payload.qrcode);
+    const base64 =
+      this.asString(payload.base64) ||
+      this.asString(payload.qrCodeBase64) ||
+      this.asString(payload.qrcode) ||
+      this.asString(qrcode.base64) ||
+      this.asString(qrcode.code) ||
+      this.asString(this.asRecord(payload.instance).qrcode) ||
+      this.asString(this.asRecord(payload.instanceData).qrcode);
+
+    return base64?.trim() ? base64.trim() : null;
+  }
+
+  private handleEvolutionError(error: unknown, fallbackMessage: string): never {
+    if (error instanceof HttpException) {
+      throw error;
+    }
+
+    if (axios.isAxiosError(error)) {
+      const responseData = this.asRecord(error.response?.data);
+      const message =
+        this.asString(responseData.message) ||
+        this.asString(responseData.error) ||
+        error.message ||
+        fallbackMessage;
+
+      throw new HttpException(message, error.response?.status ?? HttpStatus.BAD_GATEWAY);
+    }
+
+    throw new HttpException(fallbackMessage, HttpStatus.BAD_GATEWAY);
   }
 
   private extractWhatsAppConfiguration(config: {

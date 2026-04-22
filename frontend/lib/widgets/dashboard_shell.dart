@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../pages/channels_page.dart';
+import '../pages/connect_whatsapp_page.dart';
 import '../pages/config_page.dart';
 import '../pages/prompt_page.dart';
 import '../pages/tools_page.dart';
@@ -39,7 +39,7 @@ class _DashboardShellState extends State<DashboardShell> {
   Widget build(BuildContext context) {
     final pages = <Widget>[
       ConfigPage(apiService: _apiService, onConfigUpdated: _refreshOverview),
-      ChannelsPage(apiService: _apiService, onConfigUpdated: _refreshOverview),
+      ConnectWhatsAppPage(apiService: _apiService, onConfigUpdated: _refreshOverview),
       PromptPage(apiService: _apiService, onConfigUpdated: _refreshOverview),
       ToolsPage(apiService: _apiService, onConfigUpdated: _refreshOverview),
     ];
