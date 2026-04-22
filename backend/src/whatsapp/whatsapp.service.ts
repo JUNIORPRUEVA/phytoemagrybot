@@ -1205,6 +1205,15 @@ export class WhatsAppService {
     path: string,
     body: JsonRecord,
   ): Promise<void> {
+    const instanceName = this.getRequiredInstanceName(resolved.whatsapp);
+    const number = this.getRequiredOutboundNumber(this.asString(body.number) || '');
+    const apiBaseUrl = this.getRequiredWhatsAppConfig(resolved.whatsapp.apiBaseUrl, 'EVOLUTION_URL');
+    const apiKey = this.getRequiredWhatsAppConfig(resolved.whatsapp.apiKey, 'AUTHENTICATION_API_KEY');
+
+    body.number = number;
+    console.log('📤 Enviando a:', number);
+    console.log('📦 Instancia:', instanceName);
+
     return this.createEvolutionClient(resolved.whatsapp).post(path, body).then(
       () => undefined,
       (error: unknown) => {
@@ -1212,10 +1221,12 @@ export class WhatsAppService {
           JSON.stringify({
             event: 'evolution_request_failed',
             action,
-            instanceName: resolved.whatsapp.instanceName,
+            instanceName,
             path,
-            number: this.asString(body.number) || null,
+            number,
             mediatype: this.asString(body.mediatype) || null,
+            hasApiBaseUrl: Boolean(apiBaseUrl),
+            hasApiKey: Boolean(apiKey),
           }),
         );
         this.handleEvolutionError(error, `Evolution API ${action} failed`);
@@ -1224,11 +1235,14 @@ export class WhatsAppService {
   }
 
   private createEvolutionClient(whatsapp: WhatsAppClientConfiguration): AxiosInstance {
+    const apiBaseUrl = this.getRequiredWhatsAppConfig(whatsapp.apiBaseUrl, 'EVOLUTION_URL');
+    const apiKey = this.getRequiredWhatsAppConfig(whatsapp.apiKey, 'AUTHENTICATION_API_KEY');
+
     return axios.create({
-      baseURL: whatsapp.apiBaseUrl.replace(/\/+$/, ''),
+      baseURL: apiBaseUrl.replace(/\/+$/, ''),
       timeout: 20000,
       headers: {
-        apikey: whatsapp.apiKey,
+        apikey: apiKey,
         'Content-Type': 'application/json',
       },
     });
@@ -1381,21 +1395,42 @@ export class WhatsAppService {
   }
 
   private normalizeNumber(raw: string): string {
-    const normalized = raw.trim().toLowerCase();
-    if (!normalized) {
-      return '';
+    return raw
+      .trim()
+      .toLowerCase()
+      .replace('@s.whatsapp.net', '')
+      .replace('@lid', '')
+      .replace(/\D/g, '');
+  }
+
+  private getRequiredInstanceName(whatsapp: WhatsAppClientConfiguration): string {
+    return this.getRequiredWhatsAppConfig(
+      whatsapp.instanceName,
+      'EVOLUTION_INSTANCE_NAME',
+      'Instance name is required',
+    );
+  }
+
+  private getRequiredOutboundNumber(number: string): string {
+    const cleanNumber = this.normalizeNumber(number);
+    if (!cleanNumber) {
+      throw new HttpException('Valid number is required', HttpStatus.BAD_REQUEST);
     }
 
-    if (
-      normalized === 'status@broadcast' ||
-      normalized.includes('@lid') ||
-      normalized.includes('@g.us') ||
-      normalized.includes('@broadcast')
-    ) {
+    return cleanNumber;
+  }
+
+  private getRequiredWhatsAppConfig(
+    value: string | null | undefined,
+    envName: string,
+    message?: string,
+  ): string {
+    const normalized = value?.trim();
+    if (normalized) {
       return normalized;
     }
 
-    return normalized.replace(/@.*/, '').replace(/\D/g, '');
+    throw new HttpException(message || `${envName} is required`, HttpStatus.INTERNAL_SERVER_ERROR);
   }
 
   private normalizeInstanceName(name: string): string {

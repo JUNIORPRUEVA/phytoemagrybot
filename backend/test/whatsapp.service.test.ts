@@ -276,7 +276,7 @@ test('normalizeWebhookPayload prefers remoteJidAlt for lid conversations', () =>
   assert.equal(result?.message, 'hola desde lid');
 });
 
-test('normalizeWebhookPayload preserves group jids for replies', () => {
+test('normalizeWebhookPayload strips non numeric group-like identifiers', () => {
   const service = createService();
 
   const result = service.normalizeWebhookPayload({
@@ -294,19 +294,36 @@ test('normalizeWebhookPayload preserves group jids for replies', () => {
     },
   });
 
-  assert.equal(result?.number, '120363382457717265@g.us');
+  assert.equal(result?.number, '120363382457717265');
   assert.equal(result?.message, 'hola grupo');
 });
 
-test('normalizeNumber preserves special whatsapp jids and digits for direct chats', () => {
+test('normalizeNumber removes lid and non digits', () => {
   const service = createService();
 
-  assert.equal(service.normalizeNumber('69132011749577@lid'), '69132011749577@lid');
-  assert.equal(
-    service.normalizeNumber('120363382457717265@g.us'),
-    '120363382457717265@g.us',
-  );
+  assert.equal(service.normalizeNumber('69132011749577@lid'), '69132011749577');
+  assert.equal(service.normalizeNumber('120363382457717265@g.us'), '120363382457717265');
   assert.equal(service.normalizeNumber('18095551234@s.whatsapp.net'), '18095551234');
+});
+
+test('executeEvolutionRequest requires a configured instance name', async () => {
+  const service = createService();
+
+  await assert.rejects(
+    async () => service.executeEvolutionRequest(
+      {
+        whatsapp: {
+          instanceName: '',
+          apiBaseUrl: 'https://evolution.example.com',
+          apiKey: 'evolution-key',
+        },
+      },
+      'sendText',
+      '/message/sendText/demo',
+      { number: '18095551234', text: 'hola' },
+    ),
+    /Instance name is required/,
+  );
 });
 
 test('processIncomingAudioMessage answers short audios as text', async () => {

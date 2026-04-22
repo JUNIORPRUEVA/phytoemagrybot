@@ -288,13 +288,19 @@ export class ClientConfigService {
     const envElevenLabsVoiceId = this.readEnv('ELEVENLABS_VOICE_ID');
     const envEvolutionUrl = this.readEnv('EVOLUTION_URL');
     const envEvolutionKey = this.readEnv('AUTHENTICATION_API_KEY');
+    const envEvolutionInstanceName = this.readEnv('EVOLUTION_INSTANCE_NAME');
     const envWebhookUrl = this.readEnv('WEBHOOK_URL');
     const envWebhookSecret = this.readEnv('WEBHOOK_SECRET');
+    const envBotEnableAudio = this.readEnv('BOT_ENABLE_AUDIO');
 
     const nextConfigurations = this.mergeRecords(configurations, {
+      bot: {
+        allowAudioReplies: this.asBoolean(envBotEnableAudio, true),
+      },
       whatsapp: {
         apiBaseUrl: whatsapp['apiBaseUrl'] || envEvolutionUrl,
         apiKey: whatsapp['apiKey'] || envEvolutionKey,
+        instanceName: whatsapp['instanceName'] || envEvolutionInstanceName,
         audioVoiceId: whatsapp['audioVoiceId'] || envElevenLabsVoiceId,
         webhookUrl: whatsapp['webhookUrl'] || envWebhookUrl,
         webhookSecret: whatsapp['webhookSecret'] || envWebhookSecret,
@@ -314,12 +320,20 @@ export class ClientConfigService {
             ...config.whatsappSettings,
             apiBaseUrl: config.whatsappSettings.apiBaseUrl || envEvolutionUrl,
             apiKey: config.whatsappSettings.apiKey || envEvolutionKey,
+            instanceName:
+              config.whatsappSettings.instanceName || envEvolutionInstanceName,
             audioVoiceId: config.whatsappSettings.audioVoiceId || envElevenLabsVoiceId,
             elevenLabsBaseUrl:
               config.whatsappSettings.elevenLabsBaseUrl || envElevenLabsBaseUrl,
             webhookSecret: config.whatsappSettings.webhookSecret || envWebhookSecret,
           }
         : config.whatsappSettings,
+      botSettings: config.botSettings
+        ? {
+            ...config.botSettings,
+            allowAudioReplies: this.asBoolean(envBotEnableAudio, config.botSettings.allowAudioReplies),
+          }
+        : config.botSettings,
     };
   }
 
