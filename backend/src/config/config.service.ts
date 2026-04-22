@@ -298,12 +298,12 @@ export class ClientConfigService {
         allowAudioReplies: this.asBoolean(envBotEnableAudio, true),
       },
       whatsapp: {
-        apiBaseUrl: whatsapp['apiBaseUrl'] || envEvolutionUrl,
-        apiKey: whatsapp['apiKey'] || envEvolutionKey,
-        instanceName: whatsapp['instanceName'] || envEvolutionInstanceName,
+        apiBaseUrl: envEvolutionUrl || whatsapp['apiBaseUrl'],
+        apiKey: envEvolutionKey || whatsapp['apiKey'],
+        instanceName: envEvolutionInstanceName || whatsapp['instanceName'],
         audioVoiceId: whatsapp['audioVoiceId'] || envElevenLabsVoiceId,
-        webhookUrl: whatsapp['webhookUrl'] || envWebhookUrl,
-        webhookSecret: whatsapp['webhookSecret'] || envWebhookSecret,
+        webhookUrl: envWebhookUrl || whatsapp['webhookUrl'],
+        webhookSecret: envWebhookSecret || whatsapp['webhookSecret'],
       },
       elevenlabs: {
         baseUrl: elevenlabs['baseUrl'] || envElevenLabsBaseUrl,
@@ -318,14 +318,14 @@ export class ClientConfigService {
       whatsappSettings: config.whatsappSettings
         ? {
             ...config.whatsappSettings,
-            apiBaseUrl: config.whatsappSettings.apiBaseUrl || envEvolutionUrl,
-            apiKey: config.whatsappSettings.apiKey || envEvolutionKey,
+            apiBaseUrl: envEvolutionUrl || config.whatsappSettings.apiBaseUrl,
+            apiKey: envEvolutionKey || config.whatsappSettings.apiKey,
             instanceName:
-              config.whatsappSettings.instanceName || envEvolutionInstanceName,
+              envEvolutionInstanceName || config.whatsappSettings.instanceName,
             audioVoiceId: config.whatsappSettings.audioVoiceId || envElevenLabsVoiceId,
             elevenLabsBaseUrl:
               config.whatsappSettings.elevenLabsBaseUrl || envElevenLabsBaseUrl,
-            webhookSecret: config.whatsappSettings.webhookSecret || envWebhookSecret,
+            webhookSecret: envWebhookSecret || config.whatsappSettings.webhookSecret,
           }
         : config.whatsappSettings,
       botSettings: config.botSettings
