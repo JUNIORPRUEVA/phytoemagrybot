@@ -316,17 +316,16 @@ export class WhatsAppService {
     to: string,
     text: string,
   ): Promise<void> {
+    const instanceName = this.getRequiredInstanceName(resolved.whatsapp);
+
     await this.executeEvolutionRequest(
       resolved,
       'sendText',
-      `/message/sendText/${resolved.whatsapp.instanceName}`,
+      '/message/sendText',
       {
         number: this.normalizeNumber(to),
+        instance: instanceName,
         text,
-        options: {
-          delay: 0,
-          presence: 'composing',
-        },
       },
     );
   }
