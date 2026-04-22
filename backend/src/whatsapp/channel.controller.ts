@@ -1,6 +1,7 @@
-import { Body, Controller, Delete, Get, Param, Post } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post } from '@nestjs/common';
 import { CreateInstanceDto } from './dto/create-instance.dto';
 import { SetWebhookDto } from './dto/set-webhook.dto';
+import { UpdateInstanceDto } from './dto/update-instance.dto';
 import { WhatsAppService } from './whatsapp.service';
 
 @Controller('whatsapp')
@@ -30,6 +31,14 @@ export class WhatsAppChannelController {
   @Delete('delete/:name')
   deleteInstance(@Param('name') name: string) {
     return this.whatsAppService.deleteInstance(name);
+  }
+
+  @Patch('instance/:name')
+  updateInstance(
+    @Param('name') name: string,
+    @Body() body: UpdateInstanceDto,
+  ) {
+    return this.whatsAppService.updateInstanceMetadata(name, body);
   }
 
   @Post('webhook/:name')

@@ -40,17 +40,23 @@ class _DashboardShellState extends State<DashboardShell> {
   @override
   Widget build(BuildContext context) {
     final pages = <Widget>[
-      ConfigPage(apiService: _apiService, onConfigUpdated: _refreshOverview),
       ConnectWhatsAppPage(apiService: _apiService, onConfigUpdated: _refreshOverview),
       MemoryPage(apiService: _apiService, onConfigUpdated: _refreshOverview),
       BotPromptConfigPage(apiService: _apiService, onConfigUpdated: _refreshOverview),
       GalleryPage(apiService: _apiService, onConfigUpdated: _refreshOverview),
       ToolsPage(apiService: _apiService, onConfigUpdated: _refreshOverview),
+      ConfigPage(apiService: _apiService, onConfigUpdated: _refreshOverview),
     ];
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Control Bot PhytoEmagry'),
+        title: FutureBuilder<ClientConfigData>(
+          future: _overviewFuture,
+          builder: (context, snapshot) {
+            final brandName = _resolveBrandName(snapshot.data);
+            return Text('Control Bot $brandName');
+          },
+        ),
         actions: <Widget>[
           Padding(
             padding: const EdgeInsets.only(right: 24),
@@ -69,7 +75,7 @@ class _DashboardShellState extends State<DashboardShell> {
           ),
         ],
       ),
-      bottomNavigationBar: const _AppFooter(),
+      bottomNavigationBar: _AppFooter(overviewFuture: _overviewFuture),
       body: SafeArea(
         child: Row(
           children: <Widget>[
@@ -85,46 +91,51 @@ class _DashboardShellState extends State<DashboardShell> {
               ),
               child: Column(
                 children: <Widget>[
-                  const _SidebarBrandIcon(),
+                  FutureBuilder<ClientConfigData>(
+                    future: _overviewFuture,
+                    builder: (context, snapshot) {
+                      return _SidebarBrandIcon(config: snapshot.data);
+                    },
+                  ),
                   const SizedBox(height: 24),
                   _IconNavButton(
-                    label: 'Configuracion',
-                    icon: Icons.tune_rounded,
+                    label: 'Canales',
+                    icon: Icons.hub_rounded,
                     selected: _selectedIndex == 0,
                     onTap: () => setState(() => _selectedIndex = 0),
                   ),
                   const SizedBox(height: 12),
                   _IconNavButton(
-                    label: 'Canales',
-                    icon: Icons.hub_rounded,
+                    label: 'Memoria',
+                    icon: Icons.psychology_alt_rounded,
                     selected: _selectedIndex == 1,
                     onTap: () => setState(() => _selectedIndex = 1),
                   ),
                   const SizedBox(height: 12),
                   _IconNavButton(
-                    label: 'Memoria',
-                    icon: Icons.psychology_alt_rounded,
+                    label: 'Prompts',
+                    icon: Icons.auto_awesome_rounded,
                     selected: _selectedIndex == 2,
                     onTap: () => setState(() => _selectedIndex = 2),
                   ),
                   const SizedBox(height: 12),
                   _IconNavButton(
-                    label: 'Prompts',
-                    icon: Icons.auto_awesome_rounded,
+                    label: 'Galeria',
+                    icon: Icons.photo_library,
                     selected: _selectedIndex == 3,
                     onTap: () => setState(() => _selectedIndex = 3),
                   ),
                   const SizedBox(height: 12),
                   _IconNavButton(
-                    label: 'Galeria',
-                    icon: Icons.photo_library,
+                    label: 'Herramientas',
+                    icon: Icons.extension_rounded,
                     selected: _selectedIndex == 4,
                     onTap: () => setState(() => _selectedIndex = 4),
                   ),
-                  const SizedBox(height: 12),
+                  const Spacer(),
                   _IconNavButton(
-                    label: 'Herramientas',
-                    icon: Icons.extension_rounded,
+                    label: 'Configuracion',
+                    icon: Icons.settings_rounded,
                     selected: _selectedIndex == 5,
                     onTap: () => setState(() => _selectedIndex = 5),
                   ),
@@ -162,8 +173,13 @@ class _DashboardShellState extends State<DashboardShell> {
                       );
                     },
                   ),
-                  const Spacer(),
-                  const _SidebarFooter(),
+                  const SizedBox(height: 20),
+                  FutureBuilder<ClientConfigData>(
+                    future: _overviewFuture,
+                    builder: (context, snapshot) {
+                      return _SidebarFooter(brandName: _resolveBrandName(snapshot.data));
+                    },
+                  ),
                 ],
               ),
             ),
@@ -180,15 +196,27 @@ class _DashboardShellState extends State<DashboardShell> {
       ),
     );
   }
+
+  String _resolveBrandName(ClientConfigData? config) {
+    final value = config?.companyName.trim() ?? '';
+    return value.isEmpty ? 'PhytoEmagry' : value;
+  }
 }
 
 class _SidebarBrandIcon extends StatelessWidget {
-  const _SidebarBrandIcon();
+  const _SidebarBrandIcon({this.config});
+
+  final ClientConfigData? config;
 
   @override
   Widget build(BuildContext context) {
+    final brandName = (config?.companyName.trim().isNotEmpty ?? false)
+        ? config!.companyName.trim()
+        : 'PhytoEmagry';
+    final logoUrl = config?.companyLogoUrl.trim() ?? '';
+
     return Tooltip(
-      message: 'PhytoEmagry',
+      message: brandName,
       child: Container(
         width: 56,
         height: 56,
@@ -198,7 +226,18 @@ class _SidebarBrandIcon extends StatelessWidget {
             colors: <Color>[Color(0xFF2563EB), Color(0xFF0EA5E9)],
           ),
         ),
-        child: const Icon(Icons.spa_rounded, color: Colors.white, size: 28),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(18),
+          child: logoUrl.isNotEmpty
+              ? Image.network(
+                  logoUrl,
+                  fit: BoxFit.cover,
+                  errorBuilder: (context, error, stackTrace) {
+                    return const Icon(Icons.spa_rounded, color: Colors.white, size: 28);
+                  },
+                )
+              : const Icon(Icons.spa_rounded, color: Colors.white, size: 28),
+        ),
       ),
     );
   }
@@ -274,14 +313,16 @@ class _HeaderStateBadge extends StatelessWidget {
 }
 
 class _SidebarFooter extends StatelessWidget {
-  const _SidebarFooter();
+  const _SidebarFooter({required this.brandName});
+
+  final String brandName;
 
   @override
   Widget build(BuildContext context) {
     return RotatedBox(
       quarterTurns: 3,
       child: Text(
-        'PhytoEmagry  $_appVersionLabel',
+        '$brandName  $_appVersionLabel',
         style: const TextStyle(
           color: Color(0xFF94A3B8),
           fontSize: 11,
@@ -294,7 +335,9 @@ class _SidebarFooter extends StatelessWidget {
 }
 
 class _AppFooter extends StatelessWidget {
-  const _AppFooter();
+  const _AppFooter({required this.overviewFuture});
+
+  final Future<ClientConfigData> overviewFuture;
 
   @override
   Widget build(BuildContext context) {
@@ -305,26 +348,30 @@ class _AppFooter extends StatelessWidget {
         color: Colors.white,
         border: Border(top: BorderSide(color: Color(0xFFE2E8F0))),
       ),
-      child: const Row(
-        children: <Widget>[
-          Text(
-            'PhytoEmagry',
-            style: TextStyle(
-              color: Color(0xFF0F172A),
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          Spacer(),
-          Text(
-            'v1.0.0',
-            style: TextStyle(color: Color(0xFF64748B)),
-          ),
-          SizedBox(width: 16),
-          Text(
-            'Todos los derechos reservados',
-            style: TextStyle(color: Color(0xFF64748B)),
-          ),
-        ],
+      child: FutureBuilder<ClientConfigData>(
+        future: overviewFuture,
+        builder: (context, snapshot) {
+          final brandName = (snapshot.data?.companyName.trim().isNotEmpty ?? false)
+              ? snapshot.data!.companyName.trim()
+              : 'PhytoEmagry';
+
+          return Row(
+            children: <Widget>[
+              Text(
+                brandName,
+                style: const TextStyle(
+                  color: Color(0xFF0F172A),
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const Spacer(),
+              const Text(
+                'v1.0.0',
+                style: TextStyle(color: Color(0xFF64748B)),
+              ),
+            ],
+          );
+        },
       ),
     );
   }

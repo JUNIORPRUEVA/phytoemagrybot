@@ -133,6 +133,7 @@ model ConversationSummary {
 model WhatsAppInstance {
   id        Int      @id @default(autoincrement())
   name      String   @unique
+  displayName String? @map("display_name")
   status    String
   phone     String?
   createdAt DateTime @default(now()) @map("created_at")

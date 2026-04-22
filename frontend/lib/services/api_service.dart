@@ -44,6 +44,9 @@ class ClientConfigData {
     required this.responseCacheTtlSeconds,
     required this.spamGroupWindowMs,
     required this.allowAudioReplies,
+    required this.companyName,
+    required this.companyDetails,
+    required this.companyLogoUrl,
   });
 
   final int id;
@@ -74,6 +77,9 @@ class ClientConfigData {
   final int responseCacheTtlSeconds;
   final int spamGroupWindowMs;
   final bool allowAudioReplies;
+  final String companyName;
+  final String companyDetails;
+  final String companyLogoUrl;
 
   bool get whatsappConfigured =>
       evolutionApiUrl.isNotEmpty &&
@@ -159,6 +165,9 @@ class ClientConfigData {
       responseCacheTtlSeconds: 60,
       spamGroupWindowMs: 2000,
       allowAudioReplies: true,
+      companyName: '',
+      companyDetails: '',
+      companyLogoUrl: '',
     );
   }
 
@@ -174,6 +183,7 @@ class ClientConfigData {
     final elevenlabs =
         (configurations['elevenlabs'] as Map<String, dynamic>?) ?? <String, dynamic>{};
     final prompts = (configurations['prompts'] as Map<String, dynamic>?) ?? <String, dynamic>{};
+    final branding = (configurations['branding'] as Map<String, dynamic>?) ?? <String, dynamic>{};
 
     return ClientConfigData(
       id: (json['id'] as int?) ?? 1,
@@ -204,6 +214,9 @@ class ClientConfigData {
       responseCacheTtlSeconds: (bot['responseCacheTtlSeconds'] as int?) ?? 60,
       spamGroupWindowMs: (bot['spamGroupWindowMs'] as int?) ?? 2000,
       allowAudioReplies: (bot['allowAudioReplies'] as bool?) ?? true,
+      companyName: (branding['companyName'] as String?) ?? '',
+      companyDetails: (branding['companyDetails'] as String?) ?? '',
+      companyLogoUrl: (branding['companyLogoUrl'] as String?) ?? '',
     );
   }
 }
@@ -314,6 +327,7 @@ class ManagedWhatsAppInstanceData {
   const ManagedWhatsAppInstanceData({
     required this.id,
     required this.name,
+    required this.displayName,
     required this.status,
     required this.phone,
     required this.connected,
@@ -325,6 +339,7 @@ class ManagedWhatsAppInstanceData {
 
   final int id;
   final String name;
+  final String? displayName;
   final String status;
   final String? phone;
   final bool connected;
@@ -334,11 +349,13 @@ class ManagedWhatsAppInstanceData {
   final DateTime? updatedAt;
 
   bool get isConnecting => status == 'connecting';
+  String get label => (displayName?.trim().isNotEmpty ?? false) ? displayName!.trim() : name;
 
   factory ManagedWhatsAppInstanceData.fromJson(Map<String, dynamic> json) {
     return ManagedWhatsAppInstanceData(
       id: (json['id'] as num?)?.toInt() ?? 0,
       name: (json['name'] as String?) ?? '',
+      displayName: json['displayName'] as String?,
       status: (json['status'] as String?) ?? 'disconnected',
       phone: json['phone'] as String?,
       connected: (json['connected'] as bool?) ?? false,
@@ -624,6 +641,9 @@ class ApiService {
     required int responseCacheTtlSeconds,
     required int spamGroupWindowMs,
     required bool allowAudioReplies,
+    String? companyName,
+    String? companyDetails,
+    String? companyLogoUrl,
   }) async {
     final payload = <String, dynamic>{
       'configurations': <String, dynamic>{
@@ -650,6 +670,12 @@ class ApiService {
           'spamGroupWindowMs': spamGroupWindowMs,
           'allowAudioReplies': allowAudioReplies,
         },
+        if (companyName != null || companyDetails != null || companyLogoUrl != null)
+          'branding': <String, dynamic>{
+            if (companyName != null) 'companyName': companyName,
+            if (companyDetails != null) 'companyDetails': companyDetails,
+            if (companyLogoUrl != null) 'companyLogoUrl': companyLogoUrl,
+          },
       },
     };
 
@@ -669,6 +695,34 @@ class ApiService {
 
     _decodeResponse(response);
     return getConfig();
+  }
+
+  Future<ClientConfigData> saveBrandingSettings({
+    required String companyName,
+    required String companyDetails,
+    required String companyLogoUrl,
+  }) async {
+    final current = await getConfig();
+    return saveConfig(
+      evolutionApiUrl: current.evolutionApiUrl,
+      evolutionApiKey: current.evolutionApiKey,
+      instanceName: current.instanceName,
+      webhookSecret: current.webhookSecret,
+      webhookUrl: current.webhookUrl,
+      fallbackMessage: current.fallbackMessage,
+      audioVoiceId: current.audioVoiceId,
+      elevenLabsBaseUrl: current.elevenLabsBaseUrl,
+      aiModelName: current.aiModelName,
+      aiTemperature: current.aiTemperature,
+      aiMemoryWindow: current.aiMemoryWindow,
+      aiMaxCompletionTokens: current.aiMaxCompletionTokens,
+      responseCacheTtlSeconds: current.responseCacheTtlSeconds,
+      spamGroupWindowMs: current.spamGroupWindowMs,
+      allowAudioReplies: current.allowAudioReplies,
+      companyName: companyName,
+      companyDetails: companyDetails,
+      companyLogoUrl: companyLogoUrl,
+    );
   }
 
   Future<ClientConfigData> savePrompts({
@@ -890,6 +944,23 @@ class ApiService {
     final response = await _client.get(
       _buildUri('/whatsapp/status/${Uri.encodeComponent(instanceName)}'),
       headers: _headers,
+    );
+
+    return ManagedWhatsAppInstanceData.fromJson(_decodeResponse(response));
+  }
+
+  Future<ManagedWhatsAppInstanceData> updateInstanceMetadata({
+    required String instanceName,
+    required String displayName,
+    required String phone,
+  }) async {
+    final response = await _client.patch(
+      _buildUri('/whatsapp/instance/${Uri.encodeComponent(instanceName)}'),
+      headers: _headers,
+      body: jsonEncode(<String, dynamic>{
+        'displayName': displayName.trim(),
+        'phone': phone.trim(),
+      }),
     );
 
     return ManagedWhatsAppInstanceData.fromJson(_decodeResponse(response));

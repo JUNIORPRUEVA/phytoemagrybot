@@ -41,6 +41,7 @@ export interface WhatsAppChannelStatus {
 export interface WhatsAppInstanceRecord {
   id: number;
   name: string;
+  displayName: string | null;
   status: string;
   phone: string | null;
   createdAt: Date;
@@ -50,6 +51,7 @@ export interface WhatsAppInstanceRecord {
 export interface ManagedWhatsAppInstance {
   id: number;
   name: string;
+  displayName: string | null;
   status: 'connected' | 'disconnected' | 'connecting';
   phone: string | null;
   connected: boolean;

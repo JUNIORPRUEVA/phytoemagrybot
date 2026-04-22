@@ -32,6 +32,8 @@ class ConnectWhatsAppPage extends GestionWhatsAppPage {
 
 class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
   final TextEditingController _instanceNameController = TextEditingController();
+  final TextEditingController _displayNameController = TextEditingController();
+  final TextEditingController _phoneController = TextEditingController();
 
   Timer? _refreshTimer;
   ClientConfigData _config = ClientConfigData.empty();
@@ -43,6 +45,8 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
   bool _isDeleting = false;
   bool _isConfiguringWebhook = false;
   bool _isCheckingWebhook = false;
+  bool _isPersistingInstanceName = false;
+  bool _isEditingInstance = false;
   String? _errorMessage;
   String? _webhookMessage;
 
@@ -80,6 +84,8 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
   void dispose() {
     _refreshTimer?.cancel();
     _instanceNameController.dispose();
+    _displayNameController.dispose();
+    _phoneController.dispose();
     super.dispose();
   }
 
@@ -176,6 +182,10 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
           _errorMessage = null;
         }
       });
+
+      if (nextSelectedName != null) {
+        unawaited(_persistInstanceNameIfNeeded(nextSelectedName));
+      }
     } catch (error) {
       if (!mounted) {
         return;
@@ -228,6 +238,7 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
       _qrCodeBase64 = qr.qrCodeBase64;
       _webhookMessage = webhook.message;
 
+      await _persistInstanceNameIfNeeded(created.name);
       await _loadInstances(showLoader: false, preserveMessage: true);
       widget.onConfigUpdated();
       _showMessage(
@@ -282,6 +293,7 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
         _selectedInstanceName = instanceName;
         _webhookMessage = response.message;
       });
+      await _persistInstanceNameIfNeeded(instanceName);
       await _loadInstances(showLoader: false, preserveMessage: true);
       _showMessage(response.message);
     } catch (error) {
@@ -369,7 +381,7 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
     final needsPrompt = !_hasEvolutionConfig || _config.webhookUrl.trim().isEmpty;
 
     if (!needsPrompt) {
-      return _config;
+      return _persistInstanceNameIfNeeded(instanceName);
     }
 
     final evolutionUrlController = TextEditingController(text: _config.evolutionApiUrl);
@@ -479,6 +491,45 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
     return updatedConfig;
   }
 
+  Future<ClientConfigData> _persistInstanceNameIfNeeded(String instanceName) async {
+    final normalizedInstanceName = instanceName.trim();
+    if (normalizedInstanceName.isEmpty) {
+      return _config;
+    }
+
+    if (_isPersistingInstanceName || _config.instanceName.trim() == normalizedInstanceName) {
+      return _config;
+    }
+
+    if (_config.evolutionApiUrl.trim().isEmpty || _config.evolutionApiKey.trim().isEmpty) {
+      return _config;
+    }
+
+    _isPersistingInstanceName = true;
+
+    try {
+      final updatedConfig = await widget.apiService.saveChannelSettings(
+        evolutionApiUrl: _config.evolutionApiUrl,
+        evolutionApiKey: _config.evolutionApiKey,
+        instanceName: normalizedInstanceName,
+        webhookSecret: _config.webhookSecret,
+        webhookUrl: _config.webhookUrl,
+      );
+
+      if (!mounted) {
+        return updatedConfig;
+      }
+
+      setState(() {
+        _applyConfig(updatedConfig);
+      });
+      widget.onConfigUpdated();
+      return updatedConfig;
+    } finally {
+      _isPersistingInstanceName = false;
+    }
+  }
+
   String _loadedConfigSummary() {
     final parts = <String>[];
 
@@ -500,6 +551,7 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
   Future<void> _showQrFor(String instanceName) async {
     setState(() {
       _selectedInstanceName = instanceName;
+      _instanceNameController.text = instanceName;
       _errorMessage = null;
     });
 
@@ -513,6 +565,9 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
 
       setState(() {
         _selectedInstanceName = status.name;
+        _instanceNameController.text = status.name;
+        _displayNameController.text = status.displayName ?? '';
+        _phoneController.text = status.phone ?? '';
         _qrCodeBase64 = status.connected ? null : qr?.qrCodeBase64;
       });
     } catch (error) {
@@ -525,6 +580,89 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
         _errorMessage = message;
       });
       _showMessage(message, isError: true);
+    }
+  }
+
+  Future<void> _useSelectedInstance() async {
+    final instanceName = _selectedInstanceName?.trim() ?? '';
+    if (instanceName.isEmpty) {
+      _showMessage('Selecciona una instancia para usarla en el bot.', isError: true);
+      return;
+    }
+
+    setState(() {
+      _errorMessage = null;
+    });
+
+    try {
+      await _persistInstanceNameIfNeeded(instanceName);
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _instanceNameController.text = instanceName;
+      });
+      _showMessage('Instancia activa actualizada correctamente.');
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+
+      final message = error.toString().replaceFirst('Exception: ', '');
+      setState(() {
+        _errorMessage = message;
+      });
+      _showMessage(message, isError: true);
+    }
+  }
+
+  Future<void> _saveSelectedInstanceMetadata() async {
+    final selectedInstance = _selectedInstance;
+    if (selectedInstance == null) {
+      _showMessage('Selecciona una instancia para editarla.', isError: true);
+      return;
+    }
+
+    setState(() {
+      _isEditingInstance = true;
+      _errorMessage = null;
+    });
+
+    try {
+      final updated = await widget.apiService.updateInstanceMetadata(
+        instanceName: selectedInstance.name,
+        displayName: _displayNameController.text,
+        phone: _phoneController.text,
+      );
+
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _selectedInstanceName = updated.name;
+        _displayNameController.text = updated.displayName ?? '';
+        _phoneController.text = updated.phone ?? '';
+      });
+      await _loadInstances(showLoader: false, preserveMessage: true);
+      _showMessage('Instancia actualizada correctamente.');
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+
+      final message = error.toString().replaceFirst('Exception: ', '');
+      setState(() {
+        _errorMessage = message;
+      });
+      _showMessage(message, isError: true);
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isEditingInstance = false;
+        });
+      }
     }
   }
 
@@ -741,6 +879,7 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
                               child: _InstanceTile(
                                 instance: instance,
                                 selected: instance.name == _selectedInstanceName,
+                                configured: instance.name == _config.instanceName.trim(),
                                 onShowQr: () => _showQrFor(instance.name),
                                 onDelete: _isDeleting ? null : () => _confirmDelete(instance.name),
                               ),
@@ -771,7 +910,7 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
                         ),
                         _StatusBadge(
                           label: 'Instancia',
-                          value: selectedInstance.name,
+                          value: selectedInstance.label,
                           color: const Color(0xFF1D4ED8),
                         ),
                         _StatusBadge(
@@ -804,6 +943,56 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
                         style: const TextStyle(color: Color(0xFF475569), height: 1.4),
                       ),
                     ],
+                    const SizedBox(height: 24),
+                    SectionCard(
+                      title: 'Editar instancia',
+                      subtitle: 'Puedes cambiar el nombre visible y el telefono sin crear otra instancia.',
+                      child: Wrap(
+                        spacing: 16,
+                        runSpacing: 16,
+                        crossAxisAlignment: WrapCrossAlignment.end,
+                        children: <Widget>[
+                          SizedBox(
+                            width: 280,
+                            child: AppTextField(
+                              label: 'Nombre visible',
+                              controller: _displayNameController,
+                              hintText: selectedInstance.name,
+                              enabled: !_isEditingInstance,
+                            ),
+                          ),
+                          SizedBox(
+                            width: 220,
+                            child: AppTextField(
+                              label: 'Telefono',
+                              controller: _phoneController,
+                              hintText: '8090000000',
+                              enabled: !_isEditingInstance,
+                            ),
+                          ),
+                          FilledButton(
+                            onPressed: _isEditingInstance ? null : _saveSelectedInstanceMetadata,
+                            child: Text(_isEditingInstance ? 'Guardando...' : 'Guardar cambios'),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+                    Wrap(
+                      spacing: 12,
+                      runSpacing: 12,
+                      children: <Widget>[
+                        FilledButton(
+                          onPressed: _isLoading ? null : _useSelectedInstance,
+                          child: const Text('Usar esta instancia'),
+                        ),
+                        if (_config.instanceName.trim() == selectedInstance.name)
+                          const _InlineNotice(
+                            message: 'Esta es la instancia activa del bot.',
+                            color: Color(0xFF166534),
+                          ),
+                      ],
+                    ),
                     const SizedBox(height: 24),
                     if (selectedInstance.connected)
                       const _ConnectedChannelState()
@@ -854,12 +1043,14 @@ class _InstanceTile extends StatelessWidget {
   const _InstanceTile({
     required this.instance,
     required this.selected,
+    required this.configured,
     required this.onShowQr,
     required this.onDelete,
   });
 
   final ManagedWhatsAppInstanceData instance;
   final bool selected;
+  final bool configured;
   final VoidCallback onShowQr;
   final VoidCallback? onDelete;
 
@@ -900,7 +1091,7 @@ class _InstanceTile extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: <Widget>[
                 Text(
-                  instance.name,
+                  instance.label,
                   style: const TextStyle(
                     color: Color(0xFF0F172A),
                     fontSize: 16,
@@ -908,6 +1099,14 @@ class _InstanceTile extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 6),
+                if (instance.displayName?.trim().isNotEmpty == true && instance.displayName!.trim() != instance.name)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 6),
+                    child: Text(
+                      'Instancia tecnica: ${instance.name}',
+                      style: const TextStyle(color: Color(0xFF64748B), fontSize: 12),
+                    ),
+                  ),
                 Wrap(
                   spacing: 8,
                   runSpacing: 8,
@@ -923,6 +1122,21 @@ class _InstanceTile extends StatelessWidget {
                         style: TextStyle(color: statusColor, fontWeight: FontWeight.w700),
                       ),
                     ),
+                    if (configured)
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFDBEAFE),
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        child: const Text(
+                          'activa',
+                          style: TextStyle(
+                            color: Color(0xFF1D4ED8),
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
                     if (instance.phone?.isNotEmpty == true)
                       Text(
                         instance.phone!,

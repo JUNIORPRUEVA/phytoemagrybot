@@ -1,8 +1,8 @@
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
 import '../services/api_service.dart';
 import '../widgets/app_text_field.dart';
-import '../widgets/section_card.dart';
 
 class ConfigPage extends StatefulWidget {
   const ConfigPage({
@@ -19,18 +19,13 @@ class ConfigPage extends StatefulWidget {
 }
 
 class _ConfigPageState extends State<ConfigPage> {
-  final TextEditingController _fallbackMessageController = TextEditingController();
-  final TextEditingController _aiModelController = TextEditingController();
-  final TextEditingController _temperatureController = TextEditingController();
-  final TextEditingController _memoryWindowController = TextEditingController();
-  final TextEditingController _maxTokensController = TextEditingController();
-  final TextEditingController _cacheTtlController = TextEditingController();
-  final TextEditingController _spamWindowController = TextEditingController();
+  final TextEditingController _companyNameController = TextEditingController();
+  final TextEditingController _companyDetailsController = TextEditingController();
 
   bool _isLoading = true;
   bool _isSaving = false;
-  bool _allowAudioReplies = true;
-  ClientConfigData _config = ClientConfigData.empty();
+  bool _isUploadingLogo = false;
+  String _companyLogoUrl = '';
   String? _loadError;
 
   @override
@@ -49,13 +44,8 @@ class _ConfigPageState extends State<ConfigPage> {
 
   @override
   void dispose() {
-    _fallbackMessageController.dispose();
-    _aiModelController.dispose();
-    _temperatureController.dispose();
-    _memoryWindowController.dispose();
-    _maxTokensController.dispose();
-    _cacheTtlController.dispose();
-    _spamWindowController.dispose();
+    _companyNameController.dispose();
+    _companyDetailsController.dispose();
     super.dispose();
   }
 
@@ -75,7 +65,9 @@ class _ConfigPageState extends State<ConfigPage> {
 
       setState(() {
         _loadError = error.toString().replaceFirst('Exception: ', '');
-        _config = ClientConfigData.empty();
+        _companyNameController.clear();
+        _companyDetailsController.clear();
+        _companyLogoUrl = '';
       });
     } finally {
       if (mounted) {
@@ -88,15 +80,9 @@ class _ConfigPageState extends State<ConfigPage> {
 
   void _applyConfig(ClientConfigData config) {
     setState(() {
-      _config = config;
-      _fallbackMessageController.text = config.fallbackMessage;
-      _aiModelController.text = config.aiModelName;
-      _temperatureController.text = config.aiTemperature.toString();
-      _memoryWindowController.text = config.aiMemoryWindow.toString();
-      _maxTokensController.text = config.aiMaxCompletionTokens.toString();
-      _cacheTtlController.text = config.responseCacheTtlSeconds.toString();
-      _spamWindowController.text = config.spamGroupWindowMs.toString();
-      _allowAudioReplies = config.allowAudioReplies;
+      _companyNameController.text = config.companyName;
+      _companyDetailsController.text = config.companyDetails;
+      _companyLogoUrl = config.companyLogoUrl;
     });
   }
 
@@ -106,24 +92,15 @@ class _ConfigPageState extends State<ConfigPage> {
     });
 
     try {
-      final config = await widget.apiService.saveConfig(
-      evolutionApiUrl: _config.evolutionApiUrl,
-      evolutionApiKey: _config.evolutionApiKey,
-      instanceName: _config.instanceName,
-      webhookSecret: _config.webhookSecret,
-      webhookUrl: _config.webhookUrl,
-        fallbackMessage: _fallbackMessageController.text.trim(),
-      audioVoiceId: _config.audioVoiceId,
-      elevenLabsBaseUrl: _config.elevenLabsBaseUrl,
-        aiModelName: _aiModelController.text.trim().isEmpty
-            ? 'gpt-4o-mini'
-            : _aiModelController.text.trim(),
-        aiTemperature: double.tryParse(_temperatureController.text.trim()) ?? 0.4,
-        aiMemoryWindow: int.tryParse(_memoryWindowController.text.trim()) ?? 6,
-        aiMaxCompletionTokens: int.tryParse(_maxTokensController.text.trim()) ?? 180,
-        responseCacheTtlSeconds: int.tryParse(_cacheTtlController.text.trim()) ?? 60,
-        spamGroupWindowMs: int.tryParse(_spamWindowController.text.trim()) ?? 2000,
-        allowAudioReplies: _allowAudioReplies,
+      final normalizedCompanyName = _companyNameController.text.trim();
+      if (normalizedCompanyName.isEmpty) {
+        throw Exception('El nombre de la empresa es obligatorio.');
+      }
+
+      final config = await widget.apiService.saveBrandingSettings(
+        companyName: normalizedCompanyName,
+        companyDetails: _companyDetailsController.text.trim(),
+        companyLogoUrl: _companyLogoUrl.trim(),
       );
 
       if (!mounted) {
@@ -132,7 +109,7 @@ class _ConfigPageState extends State<ConfigPage> {
 
       _applyConfig(config);
       widget.onConfigUpdated();
-      _showMessage('Configuracion guardada correctamente.');
+      _showMessage('Identidad visual guardada.');
     } catch (error) {
       if (!mounted) {
         return;
@@ -142,6 +119,61 @@ class _ConfigPageState extends State<ConfigPage> {
       if (mounted) {
         setState(() {
           _isSaving = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _pickAndUploadLogo() async {
+    setState(() {
+      _isUploadingLogo = true;
+    });
+
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        allowMultiple: false,
+        withData: true,
+        type: FileType.custom,
+        allowedExtensions: const <String>['png', 'jpg', 'jpeg', 'webp', 'svg'],
+      );
+
+      final file = result?.files.single;
+      if (file == null || file.bytes == null) {
+        return;
+      }
+
+      final uploaded = await widget.apiService.uploadMedia(
+        fileBytes: file.bytes!,
+        fileName: file.name,
+        contentType: file.extension == 'png'
+            ? 'image/png'
+            : file.extension == 'webp'
+                ? 'image/webp'
+                : file.extension == 'svg'
+                    ? 'image/svg+xml'
+                    : 'image/jpeg',
+        title: 'Logo ${_companyNameController.text.trim().isEmpty ? 'empresa' : _companyNameController.text.trim()}',
+        description: 'Logo corporativo',
+      );
+
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _companyLogoUrl = uploaded.fileUrl;
+      });
+      widget.onConfigUpdated();
+      _showMessage('Logo cargado correctamente.');
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      _showMessage(error.toString(), isError: true);
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isUploadingLogo = false;
         });
       }
     }
@@ -160,221 +192,222 @@ class _ConfigPageState extends State<ConfigPage> {
 
   @override
   Widget build(BuildContext context) {
-    final isBusy = _isLoading || _isSaving;
+    final isBusy = _isLoading || _isSaving || _isUploadingLogo;
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: <Widget>[
-        Text(
-          'Configuracion',
-          style: Theme.of(context).textTheme.headlineMedium,
-        ),
-        const SizedBox(height: 6),
-        const Text(
-          'Ajusta solo lo esencial del bot sin bloques visuales innecesarios.',
-          style: TextStyle(color: Color(0xFF475569), fontSize: 14),
-        ),
-        const SizedBox(height: 20),
-        _StatusStrip(config: _config, loadError: _loadError),
-        const SizedBox(height: 28),
-        SectionCard(
-          title: 'Configuracion principal',
-          subtitle: 'Solo los datos esenciales para dejar el bot funcionando.',
+    if (_isLoading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    if (_loadError != null) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Text(
+            'Configuracion',
+            style: Theme.of(context).textTheme.headlineMedium,
+          ),
+          const SizedBox(height: 20),
+          Text(
+            _loadError!,
+            style: const TextStyle(color: Color(0xFFB91C1C)),
+          ),
+          const SizedBox(height: 16),
+          OutlinedButton(
+            onPressed: _loadConfig,
+            child: const Text('Reintentar'),
+          ),
+        ],
+      );
+    }
+
+    return Align(
+      alignment: Alignment.topLeft,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 760),
+        child: Container(
+          padding: const EdgeInsets.all(28),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(28),
+            border: Border.all(color: const Color(0xFFE2E8F0)),
+            boxShadow: const <BoxShadow>[
+              BoxShadow(
+                color: Color(0x0F0F172A),
+                blurRadius: 30,
+                offset: Offset(0, 18),
+              ),
+            ],
+          ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
-              Wrap(
-                spacing: 10,
-                runSpacing: 10,
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: <Widget>[
-                  _StatusPill(
-                    title: 'Bot',
-                    value: _config.botLabel,
-                    accent: _config.botReady,
-                  ),
-                  _StatusPill(
-                    title: 'OpenAI',
-                    value: _config.openaiConfigured ? 'Configurado en Herramientas' : 'Pendiente en Herramientas',
-                    accent: _config.openaiConfigured,
-                  ),
-                  _StatusPill(
-                    title: 'WhatsApp',
-                    value: _config.whatsappConfigured ? 'Listo en Canales' : 'Pendiente en Canales',
-                    accent: _config.whatsappConfigured,
-                  ),
-                ],
-              ),
-              const SizedBox(height: 20),
-              const _InlineInfo(
-                message:
-                    'Las credenciales de OpenAI, Evolution, instancia y webhook se gestionan en Herramientas y Canales para mantener esta pantalla limpia.',
-              ),
-              const SizedBox(height: 20),
-              Wrap(
-                spacing: 18,
-                runSpacing: 18,
-                children: <Widget>[
-                  SizedBox(
-                    width: 360,
-                    child: AppTextField(
-                      label: 'Mensaje fallback',
-                      controller: _fallbackMessageController,
-                      hintText: 'Mensaje de respaldo si ocurre un error.',
-                      maxLines: 3,
-                      enabled: !isBusy,
+                  _LogoPreview(logoUrl: _companyLogoUrl),
+                  const SizedBox(width: 20),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: <Widget>[
+                        Text(
+                          'Configuracion',
+                          style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                                fontWeight: FontWeight.w800,
+                              ),
+                        ),
+                        const SizedBox(height: 6),
+                        const Text(
+                          'Marca, nombre y presencia visual.',
+                          style: TextStyle(
+                            color: Color(0xFF475569),
+                            fontSize: 14,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ],
               ),
+              const SizedBox(height: 28),
+              AppTextField(
+                label: 'Nombre de la empresa',
+                controller: _companyNameController,
+                hintText: 'PhytoEmagry',
+                enabled: !isBusy,
+              ),
+              const SizedBox(height: 20),
+              AppTextField(
+                label: 'Informacion relevante',
+                controller: _companyDetailsController,
+                hintText: 'Breve descripcion, propuesta de valor o datos clave.',
+                maxLines: 4,
+                enabled: !isBusy,
+              ),
+              const SizedBox(height: 20),
+              _LogoField(
+                logoUrl: _companyLogoUrl,
+                isUploading: _isUploadingLogo,
+                onUpload: isBusy ? null : _pickAndUploadLogo,
+                onRemove: isBusy || _companyLogoUrl.isEmpty
+                    ? null
+                    : () {
+                        setState(() {
+                          _companyLogoUrl = '';
+                        });
+                      },
+              ),
               const SizedBox(height: 24),
-              Wrap(
-                spacing: 12,
-                runSpacing: 12,
+              Row(
                 children: <Widget>[
                   ElevatedButton(
                     onPressed: isBusy ? null : _saveConfig,
-                    child: Text(_isSaving ? 'Guardando...' : 'Guardar toda la configuracion'),
+                    child: Text(_isSaving ? 'Guardando...' : 'Guardar cambios'),
                   ),
                   const SizedBox(width: 12),
                   OutlinedButton(
                     onPressed: isBusy ? null : _loadConfig,
-                    child: const Text('Recargar estado'),
+                    child: const Text('Recargar'),
                   ),
                 ],
               ),
             ],
           ),
         ),
-      ],
-    );
-  }
-}
-
-class _StatusStrip extends StatelessWidget {
-  const _StatusStrip({required this.config, required this.loadError});
-
-  final ClientConfigData config;
-  final String? loadError;
-
-  @override
-  Widget build(BuildContext context) {
-    final isError = loadError != null;
-
-    final detail = loadError ??
-        (config.issues.isEmpty
-            ? 'Backend online y configuracion principal disponible para operar.'
-            : config.issues.join(' '));
-
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        border: Border(
-          left: BorderSide(
-            color: isError
-                ? const Color(0xFFDC2626)
-                : config.botReady
-                    ? const Color(0xFF2563EB)
-                    : const Color(0xFF94A3B8),
-            width: 3,
-          ),
-        ),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.only(left: 16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            Text(
-              isError ? 'Se detecto una falla al leer configuracion' : config.botLabel,
-              style: const TextStyle(
-                color: Color(0xFF0F172A),
-                fontSize: 17,
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              detail,
-              style: TextStyle(
-                color: isError ? const Color(0xFF64748B) : const Color(0xFF475569),
-                height: 1.45,
-              ),
-            ),
-          ],
-        ),
       ),
     );
   }
 }
 
-class _StatusPill extends StatelessWidget {
-  const _StatusPill({
-    required this.title,
-    required this.value,
-    required this.accent,
-  });
+class _LogoPreview extends StatelessWidget {
+  const _LogoPreview({required this.logoUrl});
 
-  final String title;
-  final String value;
-  final bool accent;
+  final String logoUrl;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      width: 84,
+      height: 84,
       decoration: BoxDecoration(
-        color: accent ? const Color(0xFFEFF6FF) : const Color(0xFFF8FAFC),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(
-          color: accent ? const Color(0xFFBFDBFE) : const Color(0xFFE2E8F0),
+        borderRadius: BorderRadius.circular(24),
+        gradient: const LinearGradient(
+          colors: <Color>[Color(0xFF2563EB), Color(0xFF0EA5E9)],
         ),
+        boxShadow: const <BoxShadow>[
+          BoxShadow(
+            color: Color(0x1A2563EB),
+            blurRadius: 24,
+            offset: Offset(0, 14),
+          ),
+        ],
       ),
-      child: RichText(
-        text: TextSpan(
-          style: const TextStyle(fontSize: 13),
-          children: <InlineSpan>[
-            TextSpan(
-              text: '$title: ',
-              style: const TextStyle(
-                color: Color(0xFF64748B),
-                fontWeight: FontWeight.w600,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(24),
+        child: logoUrl.isEmpty
+            ? const Icon(Icons.spa_rounded, color: Colors.white, size: 34)
+            : Image.network(
+                logoUrl,
+                fit: BoxFit.cover,
+                errorBuilder: (context, error, stackTrace) {
+                  return const Icon(Icons.spa_rounded, color: Colors.white, size: 34);
+                },
               ),
-            ),
-            TextSpan(
-              text: value,
-              style: const TextStyle(
-                color: Color(0xFF0F172A),
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-          ],
-        ),
       ),
     );
   }
 }
 
-class _InlineInfo extends StatelessWidget {
-  const _InlineInfo({required this.message});
+class _LogoField extends StatelessWidget {
+  const _LogoField({
+    required this.logoUrl,
+    required this.isUploading,
+    required this.onUpload,
+    required this.onRemove,
+  });
 
-  final String message;
+  final String logoUrl;
+  final bool isUploading;
+  final VoidCallback? onUpload;
+  final VoidCallback? onRemove;
 
   @override
   Widget build(BuildContext context) {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        color: const Color(0xFFEFF6FF),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: const Color(0xFFBFDBFE)),
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
       ),
-      child: Text(
-        message,
-        style: const TextStyle(
-          color: Color(0xFF1E3A8A),
-          fontWeight: FontWeight.w600,
-          height: 1.45,
-        ),
+      child: Row(
+        children: <Widget>[
+          _LogoPreview(logoUrl: logoUrl),
+          const SizedBox(width: 18),
+          Expanded(
+            child: Text(
+              logoUrl.isEmpty ? 'Logo corporativo' : logoUrl,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: Color(0xFF334155),
+                fontWeight: FontWeight.w600,
+                height: 1.35,
+              ),
+            ),
+          ),
+          const SizedBox(width: 16),
+          OutlinedButton(
+            onPressed: onUpload,
+            child: Text(isUploading ? 'Subiendo...' : 'Subir logo'),
+          ),
+          const SizedBox(width: 10),
+          TextButton(
+            onPressed: onRemove,
+            child: const Text('Quitar'),
+          ),
+        ],
       ),
     );
   }

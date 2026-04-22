@@ -178,6 +178,30 @@ export class WhatsAppService {
     };
   }
 
+  async updateInstanceMetadata(
+    name: string,
+    input: { displayName?: string; phone?: string },
+  ): Promise<ManagedWhatsAppInstance> {
+    const instanceName = this.normalizeInstanceName(name);
+    const existing = await this.prisma.whatsAppInstance.findUnique({
+      where: { name: instanceName },
+    });
+
+    if (!existing) {
+      throw new HttpException('La instancia no existe', HttpStatus.NOT_FOUND);
+    }
+
+    const updated = await this.prisma.whatsAppInstance.update({
+      where: { name: instanceName },
+      data: {
+        displayName: this.normalizeOptionalInstanceField(input.displayName),
+        phone: this.normalizeOptionalInstanceField(input.phone),
+      },
+    });
+
+    return this.toManagedInstance(updated);
+  }
+
   async connectInstance(name: string): Promise<WhatsAppQrResponse> {
     return this.getQr(name);
   }
@@ -1051,6 +1075,7 @@ export class WhatsAppService {
     return {
       id: instance.id,
       name: instance.name,
+      displayName: instance.displayName,
       status: instance.status as InstanceStatus,
       phone: instance.phone,
       connected: instance.status === 'connected',
@@ -1440,6 +1465,11 @@ export class WhatsAppService {
     }
 
     return normalized;
+  }
+
+  private normalizeOptionalInstanceField(value?: string | null): string | null {
+    const normalized = value?.trim();
+    return normalized ? normalized : null;
   }
 
   private getRequiredEnv(name: 'EVOLUTION_URL' | 'AUTHENTICATION_API_KEY'): string {
