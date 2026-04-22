@@ -108,3 +108,14 @@ model WhatsAppInstance {
 
   @@map("whatsapp_instances")
 }
+
+model MediaFile {
+  id          Int      @id @default(autoincrement())
+  title       String
+  description String?
+  fileUrl     String   @map("file_url")
+  fileType    String   @map("file_type")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@map("media_files")
+}

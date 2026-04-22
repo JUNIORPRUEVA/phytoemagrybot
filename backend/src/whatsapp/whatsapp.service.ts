@@ -6,7 +6,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { WhatsAppInstance } from '@prisma/client';
+import { MediaFile, WhatsAppInstance } from '@prisma/client';
 import axios, { AxiosInstance } from 'axios';
 import { BotService } from '../bot/bot.service';
 import { ClientConfigService } from '../config/config.service';
@@ -312,6 +312,27 @@ export class WhatsAppService {
     );
   }
 
+  async sendVideo(
+    resolved: ResolvedWhatsAppClient,
+    to: string,
+    videoUrl: string,
+    caption = '',
+  ): Promise<void> {
+    await this.executeEvolutionRequest(
+      resolved,
+      'sendVideo',
+      `/message/sendMedia/${resolved.whatsapp.instanceName}`,
+      {
+        number: this.normalizeNumber(to),
+        mediatype: 'video',
+        mimetype: 'video/mp4',
+        media: videoUrl,
+        caption,
+        fileName: 'video.mp4',
+      },
+    );
+  }
+
   async sendAudio(
     resolved: ResolvedWhatsAppClient,
     to: string,
@@ -425,7 +446,7 @@ export class WhatsAppService {
       resolved.whatsapp.fallbackMessage ??
       'En este momento no pude procesar tu mensaje. Intenta nuevamente en unos minutos.';
 
-    let botReply: { reply: string; replyType: 'text' | 'audio' };
+    let botReply: Awaited<ReturnType<BotService['processIncomingMessage']>>;
     try {
       botReply = await this.botService.processIncomingMessage(contactId, message);
     } catch (error) {
@@ -439,6 +460,11 @@ export class WhatsAppService {
       );
 
       await this.sendText(resolved, contactId, fallbackMessage);
+      return;
+    }
+
+    if (botReply.mediaFiles.length > 0) {
+      await this.deliverMatchedMedia(resolved, contactId, botReply.mediaFiles, botReply.reply);
       return;
     }
 
@@ -468,6 +494,24 @@ export class WhatsAppService {
     }
 
     await this.sendText(resolved, contactId, botReply.reply);
+  }
+
+  private async deliverMatchedMedia(
+    resolved: ResolvedWhatsAppClient,
+    contactId: string,
+    mediaFiles: MediaFile[],
+    message: string,
+  ): Promise<void> {
+    for (const [index, media] of mediaFiles.entries()) {
+      const caption = index === 0 ? message : media.title;
+
+      if (media.fileType === 'video') {
+        await this.sendVideo(resolved, contactId, media.fileUrl, caption);
+        continue;
+      }
+
+      await this.sendImage(resolved, contactId, media.fileUrl, caption);
+    }
   }
 
   private async resolveConfig(): Promise<ResolvedWhatsAppClient> {
@@ -716,7 +760,7 @@ export class WhatsAppService {
 
   private executeEvolutionRequest(
     resolved: ResolvedWhatsAppClient,
-    action: 'sendText' | 'sendImage' | 'sendAudio',
+    action: 'sendText' | 'sendImage' | 'sendAudio' | 'sendVideo',
     path: string,
     body: JsonRecord,
   ): Promise<void> {

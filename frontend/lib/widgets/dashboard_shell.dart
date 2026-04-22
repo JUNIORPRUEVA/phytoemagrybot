@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../pages/bot_prompt_config_page.dart';
 import '../pages/connect_whatsapp_page.dart';
 import '../pages/config_page.dart';
+import '../pages/gallery_page.dart';
 import '../pages/tools_page.dart';
 import '../services/api_service.dart';
 
@@ -41,6 +42,7 @@ class _DashboardShellState extends State<DashboardShell> {
       ConfigPage(apiService: _apiService, onConfigUpdated: _refreshOverview),
       ConnectWhatsAppPage(apiService: _apiService, onConfigUpdated: _refreshOverview),
       BotPromptConfigPage(apiService: _apiService, onConfigUpdated: _refreshOverview),
+      GalleryPage(apiService: _apiService, onConfigUpdated: _refreshOverview),
       ToolsPage(apiService: _apiService, onConfigUpdated: _refreshOverview),
     ];
 
@@ -105,10 +107,17 @@ class _DashboardShellState extends State<DashboardShell> {
                   ),
                   const SizedBox(height: 12),
                   _IconNavButton(
-                    label: 'Herramientas',
-                    icon: Icons.extension_rounded,
+                    label: 'Galeria',
+                    icon: Icons.photo_library,
                     selected: _selectedIndex == 3,
                     onTap: () => setState(() => _selectedIndex = 3),
+                  ),
+                  const SizedBox(height: 12),
+                  _IconNavButton(
+                    label: 'Herramientas',
+                    icon: Icons.extension_rounded,
+                    selected: _selectedIndex == 4,
+                    onTap: () => setState(() => _selectedIndex = 4),
                   ),
                   const SizedBox(height: 16),
                   FutureBuilder<ClientConfigData>(

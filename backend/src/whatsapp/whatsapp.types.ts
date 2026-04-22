@@ -84,7 +84,7 @@ export interface WebhookProcessingResult {
   ignored?: true;
   buffered?: true;
   fallback?: true;
-  deliveredAs?: 'text' | 'audio';
+  deliveredAs?: 'text' | 'audio' | 'image' | 'video';
   contactId?: string;
   messageType?: IncomingWhatsAppMessageType;
 }

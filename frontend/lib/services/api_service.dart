@@ -1,6 +1,8 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart';
 
 class ApiException implements Exception {
   ApiException(this.message, {this.statusCode});
@@ -390,6 +392,38 @@ class WhatsAppWebhookData {
   }
 }
 
+class MediaFileData {
+  const MediaFileData({
+    required this.id,
+    required this.title,
+    required this.description,
+    required this.fileUrl,
+    required this.fileType,
+    required this.createdAt,
+  });
+
+  final int id;
+  final String title;
+  final String? description;
+  final String fileUrl;
+  final String fileType;
+  final DateTime? createdAt;
+
+  bool get isImage => fileType == 'image';
+  bool get isVideo => fileType == 'video';
+
+  factory MediaFileData.fromJson(Map<String, dynamic> json) {
+    return MediaFileData(
+      id: (json['id'] as num?)?.toInt() ?? 0,
+      title: (json['title'] as String?) ?? '',
+      description: json['description'] as String?,
+      fileUrl: (json['fileUrl'] as String?) ?? '',
+      fileType: (json['fileType'] as String?) ?? 'image',
+      createdAt: _parseDateTime(json['createdAt']),
+    );
+  }
+}
+
 class ApiService {
   ApiService({this.baseUrl = defaultBaseUrl, http.Client? client}) : _client = client ?? http.Client();
 
@@ -679,6 +713,51 @@ class ApiService {
   Future<WhatsAppChannelData> refreshWhatsAppQr() async {
     final response = await _client.post(_buildUri('/whatsapp/channel/qr'), headers: _headers);
     return WhatsAppChannelData.fromJson(_decodeResponse(response));
+  }
+
+  Future<List<MediaFileData>> getMedia() async {
+    final response = await _client.get(_buildUri('/media'), headers: _headers);
+    final decoded = _decodeListResponse(response);
+    return decoded.map((item) => MediaFileData.fromJson(item)).toList();
+  }
+
+  Future<MediaFileData> uploadMedia({
+    required Uint8List fileBytes,
+    required String fileName,
+    required String contentType,
+    required String title,
+    String? description,
+  }) async {
+    final request = http.MultipartRequest('POST', _buildUri('/media/upload'));
+    request.headers['Accept'] = 'application/json';
+    request.fields['title'] = title;
+
+    final normalizedDescription = description?.trim() ?? '';
+    if (normalizedDescription.isNotEmpty) {
+      request.fields['description'] = normalizedDescription;
+    }
+
+    request.files.add(
+      http.MultipartFile.fromBytes(
+        'file',
+        fileBytes,
+        filename: fileName,
+        contentType: MediaType.parse(contentType),
+      ),
+    );
+
+    final streamed = await request.send();
+    final response = await http.Response.fromStream(streamed);
+    return MediaFileData.fromJson(_decodeResponse(response));
+  }
+
+  Future<void> deleteMedia(int id) async {
+    final response = await _client.delete(
+      _buildUri('/media/$id'),
+      headers: _headers,
+    );
+
+    _decodeResponse(response);
   }
 
   Uri _buildUri(String path) {

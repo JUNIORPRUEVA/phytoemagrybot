@@ -1,10 +1,11 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
-import { AssistantReply } from '../ai/ai.types';
 import { AiService } from '../ai/ai.service';
 import { BotConfigService } from '../bot-config/bot-config.service';
 import { ClientConfigService } from '../config/config.service';
+import { MediaService } from '../media/media.service';
 import { MemoryService } from '../memory/memory.service';
 import { RedisService } from '../redis/redis.service';
+import { BotReplyResult } from './bot.types';
 
 @Injectable()
 export class BotService {
@@ -12,14 +13,12 @@ export class BotService {
     private readonly aiService: AiService,
     private readonly botConfigService: BotConfigService,
     private readonly clientConfigService: ClientConfigService,
+    private readonly mediaService: MediaService,
     private readonly memoryService: MemoryService,
     private readonly redisService: RedisService,
   ) {}
 
-  async processIncomingMessage(
-    contactId: string,
-    message: string,
-  ): Promise<{ reply: string; replyType: AssistantReply['type'] }> {
+  async processIncomingMessage(contactId: string, message: string): Promise<BotReplyResult> {
     const normalizedContactId = contactId.trim();
     const normalizedMessage = message.trim();
 
@@ -36,10 +35,8 @@ export class BotService {
     }
 
     const cacheKey = `cache:${normalizedContactId}:${normalizedMessage}`;
-    const cachedReply = await this.redisService.get<{
-      reply: string;
-      replyType: AssistantReply['type'];
-    }>(cacheKey);
+    const cachedReply = await this.redisService.get<BotReplyResult>(cacheKey);
+    const mediaFiles = await this.getMediaByKeyword(normalizedMessage);
 
     if (cachedReply) {
       await this.memoryService.addMessage({
@@ -54,11 +51,14 @@ export class BotService {
         content: cachedReply.reply,
       });
 
-      return cachedReply;
+      return {
+        ...cachedReply,
+        mediaFiles,
+      };
     }
 
     const config = await this.clientConfigService.getConfig();
-  const botConfig = await this.botConfigService.getConfig();
+    const botConfig = await this.botConfigService.getConfig();
     const responseCacheTtlSeconds = config.botSettings?.responseCacheTtlSeconds ?? 60;
     const memoryWindow = config.aiSettings?.memoryWindow ?? 6;
 
@@ -89,10 +89,14 @@ export class BotService {
 
     await this.redisService.set(
       cacheKey,
-      { reply: reply.content, replyType: reply.type },
+      { reply: reply.content, replyType: reply.type, mediaFiles: [] },
       responseCacheTtlSeconds,
     );
 
-    return { reply: reply.content, replyType: reply.type };
+    return { reply: reply.content, replyType: reply.type, mediaFiles };
+  }
+
+  async getMediaByKeyword(text: string) {
+    return this.mediaService.getMediaByKeyword(text);
   }
 }
