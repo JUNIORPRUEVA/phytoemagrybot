@@ -308,7 +308,7 @@ export class MemoryService {
 
     const detectedName = this.extractName(normalizedText) ?? current?.name ?? null;
     const detectedInterest = this.extractInterest(normalizedText) ?? current?.interest ?? null;
-    const detectedIntent = this.extractIntent(normalizedText) ?? current?.lastIntent ?? null;
+    const detectedIntent = this.resolveIntent(current?.lastIntent ?? null, normalizedText);
     const mergedNotes = this.mergeNotes(current?.notes ?? null, this.extractNote(normalizedText));
 
     const memory = await this.prisma.clientMemory.upsert({
@@ -505,9 +505,17 @@ export class MemoryService {
 
   private extractIntent(text: string): string | null {
     const normalized = text.toLowerCase();
+    const hotLeadKeywords = ['lo quiero', 'dame uno', 'como compro', 'cómo compro', 'me interesa', 'lo compro'];
+    if (hotLeadKeywords.some((keyword) => normalized.includes(keyword))) {
+      return 'HOT';
+    }
+
     const intents: Array<{ keywords: string[]; intent: string }> = [
       { keywords: ['precio', 'cuesta', 'vale', 'coste'], intent: 'consulta_precio' },
+      { keywords: ['catalogo', 'catálogo'], intent: 'consulta_catalogo' },
+      { keywords: ['funciona', 'calidad', 'sirve', 'resultado', 'resultados', 'garantia', 'garantía'], intent: 'duda' },
       { keywords: ['comprar', 'pedido', 'ordenar'], intent: 'compra' },
+      { keywords: ['ok', 'perfecto', 'dale', 'esta bien', 'está bien'], intent: 'cierre' },
       { keywords: ['envio', 'delivery', 'entrega'], intent: 'consulta_envio' },
       { keywords: ['info', 'informacion', 'detalles', 'explicame'], intent: 'consulta_informacion' },
       { keywords: ['hola', 'buenas', 'saludos'], intent: 'saludo' },
@@ -522,6 +530,12 @@ export class MemoryService {
   }
 
   private extractNote(text: string): string | null {
+    const normalized = text.toLowerCase();
+    const objectionKeywords = ['funciona', 'calidad', 'sirve', 'resultado', 'resultados', 'garantia', 'garantía'];
+    if (objectionKeywords.some((keyword) => normalized.includes(keyword))) {
+      return `Objecion: ${text.replace(/[.,;!?]+$/, '').trim()}`;
+    }
+
     const patterns = [
       /(?:prefiero|prefiero que sea|me gustaria)\s+([^.,!?\n]{3,140})/i,
       /(?:recuerda que|ten en cuenta que)\s+([^.,!?\n]{3,140})/i,
@@ -549,6 +563,16 @@ export class MemoryService {
     }
 
     return Array.from(new Set(parts)).join(' | ');
+  }
+
+  private resolveIntent(currentIntent: string | null, text: string): string | null {
+    const nextIntent = this.extractIntent(text);
+
+    if (currentIntent === 'HOT' && nextIntent && nextIntent !== 'HOT') {
+      return currentIntent;
+    }
+
+    return nextIntent ?? currentIntent ?? null;
   }
 
   private capitalizeWords(value: string): string {

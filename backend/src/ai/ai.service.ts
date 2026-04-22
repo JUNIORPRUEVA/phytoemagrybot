@@ -137,16 +137,32 @@ export class AiService {
       if (typeof parsed.content === 'string' && parsed.content.trim()) {
         return {
           type: parsed.type === 'audio' ? 'audio' : 'text',
-          content: parsed.content.trim(),
+          content: this.normalizeReplyContent(parsed.content),
         };
       }
     } catch {
       return {
         type: 'text',
-        content: response,
+        content: this.normalizeReplyContent(response),
       };
     }
 
     throw new InternalServerErrorException('OpenAI returned an invalid response payload');
+  }
+
+  private normalizeReplyContent(content: string): string {
+    const compact = content
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0)
+      .slice(0, 2)
+      .join('\n');
+
+    const words = compact.split(/\s+/).filter((word) => word.length > 0);
+    if (words.length <= 15) {
+      return compact;
+    }
+
+    return words.slice(0, 15).join(' ');
   }
 }

@@ -10,4 +10,9 @@ export class BotController {
   process(@Body() dto: ProcessIncomingMessageDto) {
     return this.botService.processIncomingMessage(dto.contactId, dto.message);
   }
+
+  @Post('run-tests')
+  runTests() {
+    return this.botService.runBotTests();
+  }
 }

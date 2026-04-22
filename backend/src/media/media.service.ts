@@ -55,6 +55,13 @@ export class MediaService {
       return [];
     }
 
+    if (this.looksLikeCatalogRequest(normalizedText)) {
+      return this.prisma.mediaFile.findMany({
+        orderBy: { createdAt: 'desc' },
+        take: Math.max(take, 5),
+      });
+    }
+
     const tokens = Array.from(
       new Set(
         normalizedText
@@ -93,11 +100,33 @@ export class MediaService {
       ]),
     ];
 
-    return this.prisma.mediaFile.findMany({
+    const matches = await this.prisma.mediaFile.findMany({
       where: { OR: orConditions },
       orderBy: { createdAt: 'desc' },
       take,
     });
+
+    if (matches.length > 0) {
+      return matches;
+    }
+
+    if (this.looksLikePriceRequest(normalizedText)) {
+      return this.prisma.mediaFile.findMany({
+        where: { fileType: 'image' },
+        orderBy: { createdAt: 'desc' },
+        take: 1,
+      });
+    }
+
+    return matches;
+  }
+
+  private looksLikeCatalogRequest(text: string): boolean {
+    return ['catalogo', 'catálogo', 'catalog'].some((keyword) => text.includes(keyword));
+  }
+
+  private looksLikePriceRequest(text: string): boolean {
+    return ['precio', 'cuesta', 'vale', 'coste'].some((keyword) => text.includes(keyword));
   }
 
   private validateFileType(mimetype: string): void {

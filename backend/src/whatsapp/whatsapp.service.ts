@@ -400,6 +400,15 @@ export class WhatsAppService {
       return;
     }
 
+    this.logger.log(
+      JSON.stringify({
+        event: 'whatsapp_message_received',
+        contactId: incoming.number,
+        type: incoming.type,
+        message: incoming.message,
+      }),
+    );
+
     const spamGroupWindowMs = resolved.config.botSettings?.spamGroupWindowMs ?? 2000;
 
     if (incoming.type === 'text') {
@@ -470,6 +479,16 @@ export class WhatsAppService {
 
     if (botReply.mediaFiles.length > 0) {
       await this.deliverMatchedMedia(resolved, contactId, botReply.mediaFiles, botReply.reply);
+      this.logger.log(
+        JSON.stringify({
+          event: 'whatsapp_reply_sent',
+          contactId,
+          intent: botReply.intent,
+          hotLead: botReply.hotLead,
+          usedGallery: true,
+          replyType: 'media',
+        }),
+      );
       return;
     }
 
@@ -486,6 +505,16 @@ export class WhatsAppService {
         );
 
         await this.sendAudio(resolved, contactId, audio);
+        this.logger.log(
+          JSON.stringify({
+            event: 'whatsapp_reply_sent',
+            contactId,
+            intent: botReply.intent,
+            hotLead: botReply.hotLead,
+            usedGallery: false,
+            replyType: 'audio',
+          }),
+        );
         return;
       } catch (error) {
         this.logger.error(
@@ -499,6 +528,16 @@ export class WhatsAppService {
     }
 
     await this.sendText(resolved, contactId, botReply.reply);
+    this.logger.log(
+      JSON.stringify({
+        event: 'whatsapp_reply_sent',
+        contactId,
+        intent: botReply.intent,
+        hotLead: botReply.hotLead,
+        usedGallery: false,
+        replyType: 'text',
+      }),
+    );
   }
 
   private async deliverMatchedMedia(
