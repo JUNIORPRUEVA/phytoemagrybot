@@ -85,3 +85,14 @@ model ConversationMemory {
   @@index([contactId, createdAt])
   @@map("conversation_memory")
 }
+
+model WhatsAppInstance {
+  id        Int      @id @default(autoincrement())
+  name      String   @unique
+  status    String
+  phone     String?
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("whatsapp_instances")
+}

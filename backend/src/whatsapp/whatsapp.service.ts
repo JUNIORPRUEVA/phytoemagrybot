@@ -6,23 +6,28 @@ import {
   Logger,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import axios, { AxiosError, AxiosInstance } from 'axios';
+import { WhatsAppInstance } from '@prisma/client';
+import axios, { AxiosInstance } from 'axios';
 import { BotService } from '../bot/bot.service';
 import { ClientConfigService } from '../config/config.service';
+import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
 import { VoiceService } from './voice.service';
 import {
+  ManagedWhatsAppInstance,
   NormalizedIncomingWhatsAppMessage,
   ResolvedWhatsAppClient,
   WebhookProcessingResult,
   WhatsAppChannelStatus,
   WhatsAppClientConfiguration,
+  WhatsAppInstanceRecord,
   WhatsAppQrResponse,
   WhatsAppWebhookConfigResponse,
 } from './whatsapp.types';
 
 type HeaderMap = Record<string, string | string[] | undefined>;
 type JsonRecord = Record<string, unknown>;
+type InstanceStatus = 'connected' | 'disconnected' | 'connecting';
 
 @Injectable()
 export class WhatsAppService {
@@ -32,17 +37,25 @@ export class WhatsAppService {
     private readonly botService: BotService,
     private readonly clientConfigService: ClientConfigService,
     private readonly configService: ConfigService,
+    private readonly prisma: PrismaService,
     private readonly redisService: RedisService,
     private readonly voiceService: VoiceService,
   ) {}
 
-  acceptWebhook(
+  async acceptWebhook(
     payload: JsonRecord,
     headers: HeaderMap,
-  ): WebhookProcessingResult {
-    this.validatePayloadShape(payload);
+  ): Promise<WebhookProcessingResult> {
+    const handledConnectionUpdate = await this.processConnectionUpdate(payload);
+    if (handledConnectionUpdate) {
+      return { ok: true, accepted: true };
+    }
 
-    void this.processWebhook(payload, headers).catch((error: unknown) => {
+    if (!this.looksLikeMessageWebhook(payload)) {
+      return { ok: true, ignored: true };
+    }
+
+    void this.processMessageWebhook(payload, headers).catch((error: unknown) => {
       this.logger.error(
         JSON.stringify({
           event: 'whatsapp_async_processing_failed',
@@ -55,42 +68,138 @@ export class WhatsAppService {
     return { ok: true, accepted: true };
   }
 
-  async createInstance(instanceName: string): Promise<WhatsAppChannelStatus> {
-    const normalizedInstanceName = this.normalizeInstanceName(instanceName);
-    const client = this.getEvolutionClient();
+  async createInstance(name: string): Promise<ManagedWhatsAppInstance> {
+    const instanceName = this.normalizeInstanceName(name);
+
+    const existing = await this.prisma.whatsAppInstance.findUnique({
+      where: { name: instanceName },
+    });
+    if (existing) {
+      throw new HttpException('La instancia ya existe', HttpStatus.BAD_REQUEST);
+    }
+
+    const connectedInstance = await this.prisma.whatsAppInstance.findFirst({
+      where: { status: 'connected' },
+    });
+    if (connectedInstance) {
+      throw new HttpException(
+        'Ya existe una instancia conectada',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
 
     try {
-      await client.post('/instance/create', {
-        instanceName: normalizedInstanceName,
+      await this.getEvolutionClient().post('/instance/create', {
+        instanceName,
         integration: 'WHATSAPP-BAILEYS',
         qrcode: true,
       });
-
-      return await this.waitForInstanceStatus(normalizedInstanceName);
     } catch (error) {
-      this.handleEvolutionError(error, 'No fue posible crear la instancia de WhatsApp.');
+      this.handleEvolutionError(error, 'No fue posible crear la instancia en Evolution.');
     }
+
+    await this.prisma.whatsAppInstance.create({
+      data: {
+        name: instanceName,
+        status: 'connecting',
+      },
+    });
+
+    return this.waitForManagedStatus(instanceName);
   }
 
-  async getQr(instanceName: string): Promise<WhatsAppQrResponse> {
-    const normalizedInstanceName = this.normalizeInstanceName(instanceName);
-    const client = this.getEvolutionClient();
+  async getInstances(): Promise<ManagedWhatsAppInstance[]> {
+    await this.syncInstancesFromEvolution();
+
+    const instances = await this.prisma.whatsAppInstance.findMany({
+      orderBy: { createdAt: 'desc' },
+    });
+
+    return instances.map((instance) => this.toManagedInstance(instance));
+  }
+
+  async getInstanceStatus(name: string): Promise<ManagedWhatsAppInstance> {
+    const instanceName = this.normalizeInstanceName(name);
+    const synced = await this.syncInstanceFromEvolution(instanceName);
+
+    if (synced) {
+      return this.toManagedInstance(synced);
+    }
+
+    const existing = await this.prisma.whatsAppInstance.findUnique({
+      where: { name: instanceName },
+    });
+    if (!existing) {
+      throw new HttpException(
+        `La instancia ${instanceName} no existe`,
+        HttpStatus.NOT_FOUND,
+      );
+    }
+
+    const updated = await this.prisma.whatsAppInstance.update({
+      where: { name: instanceName },
+      data: { status: 'disconnected' },
+    });
+
+    return this.toManagedInstance(updated);
+  }
+
+  async deleteInstance(name: string): Promise<{ message: string; name: string }> {
+    const instanceName = this.normalizeInstanceName(name);
+    const existing = await this.prisma.whatsAppInstance.findUnique({
+      where: { name: instanceName },
+    });
+    if (!existing) {
+      throw new HttpException('La instancia no existe', HttpStatus.NOT_FOUND);
+    }
 
     try {
-      const response = await client.get(`/instance/connect/${normalizedInstanceName}`);
+      await this.getEvolutionClient().delete(`/instance/delete/${instanceName}`);
+    } catch (error) {
+      if (!axios.isAxiosError(error) || error.response?.status !== 404) {
+        this.handleEvolutionError(error, 'No fue posible eliminar la instancia en Evolution.');
+      }
+    }
+
+    await this.prisma.whatsAppInstance.delete({
+      where: { name: instanceName },
+    });
+
+    return {
+      message: 'Instancia eliminada correctamente.',
+      name: instanceName,
+    };
+  }
+
+  async connectInstance(name: string): Promise<WhatsAppQrResponse> {
+    return this.getQr(name);
+  }
+
+  async getQr(name: string): Promise<WhatsAppQrResponse> {
+    const instanceName = this.normalizeInstanceName(name);
+    const status = await this.getInstanceStatus(instanceName);
+
+    if (status.connected) {
+      return {
+        instanceName,
+        qrCodeBase64: null,
+        status: 'connected',
+        message: 'La instancia ya se encuentra conectada.',
+      };
+    }
+
+    try {
+      const response = await this.getEvolutionClient().get(`/instance/connect/${instanceName}`);
       const payload = this.asRecord(response.data);
-      const base64 = this.extractQrCodeBase64(payload);
-      const connected = this.readConnectedFlag(payload) || !base64;
+      const qrCodeBase64 = this.extractQrCodeBase64(payload);
 
       return {
-        instanceName: normalizedInstanceName,
-        qrCodeBase64: base64,
-        status: connected ? 'connected' : 'disconnected',
-        message: connected
-          ? 'La instancia ya se encuentra conectada.'
-          : base64
-            ? 'QR obtenido correctamente.'
-            : 'No hay QR disponible para esta instancia.',
+        instanceName,
+        qrCodeBase64,
+        status: 'disconnected',
+        message: qrCodeBase64
+          ? 'QR obtenido correctamente.'
+          : 'No hay QR disponible para esta instancia.',
       };
     } catch (error) {
       this.handleEvolutionError(error, 'No fue posible obtener el QR de WhatsApp.');
@@ -98,17 +207,16 @@ export class WhatsAppService {
   }
 
   async setWebhook(
-    instanceName: string,
+    name: string,
     webhook?: string,
     events?: string[],
   ): Promise<WhatsAppWebhookConfigResponse> {
-    const normalizedInstanceName = this.normalizeInstanceName(instanceName);
-    const client = this.getEvolutionClient();
+    const instanceName = this.normalizeInstanceName(name);
     const resolvedWebhook = webhook?.trim() || this.getRequiredEnv('WEBHOOK_URL');
     const resolvedEvents = this.normalizeWebhookEvents(events);
 
     try {
-      await client.post(`/webhook/set/${normalizedInstanceName}`, {
+      await this.getEvolutionClient().post(`/webhook/set/${instanceName}`, {
         webhook: {
           enabled: true,
           url: resolvedWebhook,
@@ -119,57 +227,36 @@ export class WhatsAppService {
       });
 
       return {
-        instanceName: normalizedInstanceName,
+        instanceName,
         webhook: resolvedWebhook,
         events: resolvedEvents,
         message: 'Webhook configurado correctamente.',
       };
     } catch (error) {
-      this.handleEvolutionError(error, 'No fue posible configurar el webhook de WhatsApp.');
+      this.handleEvolutionError(error, 'No fue posible configurar el webhook.');
     }
   }
 
-  async getStatus(instanceName: string): Promise<WhatsAppChannelStatus> {
-    const normalizedInstanceName = this.normalizeInstanceName(instanceName);
-    const client = this.getEvolutionClient();
+  async getStatus(name: string): Promise<WhatsAppChannelStatus> {
+    const instance = await this.getInstanceStatus(name);
+    const qr = instance.connected
+      ? {
+          qrCodeBase64: null,
+        }
+      : await this.getQr(name);
 
-    try {
-      const response = await client.get('/instance/fetchInstances');
-      const payload = response.data;
-      const instances = this.extractInstances(payload);
-      const instance = instances.find((item) => {
-        const data = this.asRecord(item);
-        return this.readInstanceName(data) === normalizedInstanceName;
-      });
-
-      if (!instance) {
-        throw new HttpException(
-          `La instancia ${normalizedInstanceName} no existe en Evolution.`,
-          HttpStatus.NOT_FOUND,
-        );
-      }
-
-      const details = this.asRecord(instance);
-      const status = this.readInstanceStatus(details);
-      const qrCodeBase64 = this.extractQrCodeBase64(details);
-      const connected = status === 'connected';
-
-      return {
-        provider: 'evolution',
-        instanceName: normalizedInstanceName,
-        status,
-        connected,
-        qrCode: qrCodeBase64,
-        qrCodeBase64,
-        details,
-      };
-    } catch (error) {
-      if (error instanceof HttpException) {
-        throw error;
-      }
-
-      this.handleEvolutionError(error, 'No fue posible consultar el estado de WhatsApp.');
-    }
+    return {
+      provider: 'evolution',
+      instanceName: instance.name,
+      status: instance.status,
+      connected: instance.connected,
+      qrCode: qr.qrCodeBase64,
+      qrCodeBase64: qr.qrCodeBase64,
+      details: {
+        id: instance.id,
+        phone: instance.phone,
+      },
+    };
   }
 
   async sendText(
@@ -231,7 +318,36 @@ export class WhatsAppService {
     );
   }
 
-  private async processWebhook(payload: JsonRecord, headers: HeaderMap): Promise<void> {
+  private async processConnectionUpdate(payload: JsonRecord): Promise<boolean> {
+    const event = this.asString(payload.event)?.toLowerCase();
+    if (event !== 'connection.update') {
+      return false;
+    }
+
+    const eventData = this.asRecord(payload.data);
+    const instanceName = this.readInstanceName(payload) || this.readInstanceName(eventData);
+    if (!instanceName) {
+      return true;
+    }
+
+    await this.upsertInstanceRecord(
+      instanceName,
+      this.readInstanceStatus(eventData),
+      this.extractPhone(eventData),
+    );
+
+    return true;
+  }
+
+  private looksLikeMessageWebhook(payload: JsonRecord): boolean {
+    const data = this.asRecord(payload.data);
+    return (
+      Object.keys(this.asRecord(data.message)).length > 0 ||
+      Boolean(this.asString(payload.sender) || this.asString(payload.from))
+    );
+  }
+
+  private async processMessageWebhook(payload: JsonRecord, headers: HeaderMap): Promise<void> {
     const resolved = await this.resolveConfig();
     this.validateWebhook(headers, resolved.whatsapp);
 
@@ -245,15 +361,6 @@ export class WhatsAppService {
       );
       return;
     }
-
-    this.logger.log(
-      JSON.stringify({
-        event: 'whatsapp_webhook_received',
-        contactId: incoming.number,
-        messageType: incoming.type,
-        messageId: incoming.messageId,
-      }),
-    );
 
     const spamGroupWindowMs = resolved.config.botSettings?.spamGroupWindowMs ?? 2000;
 
@@ -327,50 +434,28 @@ export class WhatsAppService {
       botReply.replyType === 'audio' &&
       (resolved.config.botSettings?.allowAudioReplies ?? true)
     ) {
-      setImmediate(() => {
-        void this.processAudioReply(resolved, contactId, botReply.reply).catch((error: unknown) => {
-          this.logger.error(
-            JSON.stringify({
-              event: 'audio_delivery_failed',
-              contactId,
-              error: error instanceof Error ? error.message : 'Unknown error',
-            }),
-            error instanceof Error ? error.stack : undefined,
-          );
-        });
-      });
+      try {
+        const audio = await this.voiceService.generateVoice(
+          botReply.reply,
+          resolved.config.elevenlabsKey ?? '',
+          resolved.whatsapp.audioVoiceId,
+          resolved.whatsapp.elevenLabsBaseUrl,
+        );
 
-      return;
+        await this.sendAudio(resolved, contactId, audio);
+        return;
+      } catch (error) {
+        this.logger.error(
+          JSON.stringify({
+            event: 'voice_generation_failed',
+            contactId,
+          }),
+          error instanceof Error ? error.stack : undefined,
+        );
+      }
     }
 
     await this.sendText(resolved, contactId, botReply.reply);
-  }
-
-  private async processAudioReply(
-    resolved: ResolvedWhatsAppClient,
-    contactId: string,
-    text: string,
-  ): Promise<void> {
-    try {
-      const audio = await this.voiceService.generateVoice(
-        text,
-        resolved.config.elevenlabsKey ?? '',
-        resolved.whatsapp.audioVoiceId,
-        resolved.whatsapp.elevenLabsBaseUrl,
-      );
-
-      await this.sendAudio(resolved, contactId, audio);
-    } catch (error) {
-      this.logger.error(
-        JSON.stringify({
-          event: 'voice_generation_failed',
-          contactId,
-        }),
-        error instanceof Error ? error.stack : undefined,
-      );
-
-      await this.sendText(resolved, contactId, text);
-    }
   }
 
   private async resolveConfig(): Promise<ResolvedWhatsAppClient> {
@@ -382,194 +467,114 @@ export class WhatsAppService {
     };
   }
 
-  private getEvolutionClient(): AxiosInstance {
-    const baseURL = this.getRequiredEnv('EVOLUTION_URL');
-    const apiKey = this.getRequiredEnv('AUTHENTICATION_API_KEY');
+  private async syncInstancesFromEvolution(): Promise<void> {
+    const remoteInstances = await this.fetchEvolutionInstances();
 
-    return axios.create({
-      baseURL: baseURL.replace(/\/+$/, ''),
-      headers: {
-        apikey: apiKey,
-        'Content-Type': 'application/json',
-      },
-      timeout: 15000,
-    });
-  }
+    for (const remote of remoteInstances) {
+      const remoteData = this.asRecord(remote);
+      const name = this.readInstanceName(remoteData);
+      if (!name) {
+        continue;
+      }
 
-  private getRequiredEnv(name: 'EVOLUTION_URL' | 'AUTHENTICATION_API_KEY' | 'WEBHOOK_URL'): string {
-    const value = this.configService.get<string>(name)?.trim();
-
-    if (!value) {
-      throw new HttpException(
-        `La variable de entorno ${name} es obligatoria.`,
-        HttpStatus.INTERNAL_SERVER_ERROR,
+      await this.upsertInstanceRecord(
+        name,
+        this.readInstanceStatus(remoteData),
+        this.extractPhone(remoteData),
       );
     }
 
-    return value;
+    const remoteNames = new Set(
+      remoteInstances
+        .map((remote) => this.readInstanceName(this.asRecord(remote)))
+        .filter((name) => name.length > 0),
+    );
+
+    const localInstances = await this.prisma.whatsAppInstance.findMany();
+    for (const instance of localInstances) {
+      if (!remoteNames.has(instance.name) && instance.status !== 'disconnected') {
+        await this.prisma.whatsAppInstance.update({
+          where: { id: instance.id },
+          data: { status: 'disconnected' },
+        });
+      }
+    }
   }
 
-  private normalizeInstanceName(instanceName: string): string {
-    const normalizedInstanceName = instanceName.trim();
+  private async syncInstanceFromEvolution(name: string): Promise<WhatsAppInstance | null> {
+    const remoteInstances = await this.fetchEvolutionInstances();
+    const remote = remoteInstances.find(
+      (item) => this.readInstanceName(this.asRecord(item)) === name,
+    );
 
-    if (!normalizedInstanceName) {
-      throw new BadRequestException('instanceName es obligatorio.');
+    if (!remote) {
+      return null;
     }
 
-    return normalizedInstanceName;
-  }
-
-  private extractInstances(payload: unknown): unknown[] {
-    if (Array.isArray(payload)) {
-      return payload;
-    }
-
-    const data = this.asRecord(payload);
-    const records = data.instances ?? data.data ?? data.response;
-
-    return Array.isArray(records) ? records : [];
-  }
-
-  private readInstanceName(data: JsonRecord): string {
-    const instance = this.asRecord(data.instance);
-    const instanceData = this.asRecord(data.instanceData);
-
-    return (
-      this.asString(data.instanceName) ||
-      this.asString(data.name) ||
-      this.asString(instance.instanceName) ||
-      this.asString(instance.name) ||
-      this.asString(instanceData.instanceName) ||
-      this.asString(instanceData.name) ||
-      ''
+    return this.upsertInstanceRecord(
+      name,
+      this.readInstanceStatus(this.asRecord(remote)),
+      this.extractPhone(this.asRecord(remote)),
     );
   }
 
-  private normalizeWebhookEvents(events?: string[]): string[] {
-    const incomingEvents = events?.length ? events : ['messages.upsert'];
+  private async fetchEvolutionInstances(): Promise<unknown[]> {
+    try {
+      const response = await this.getEvolutionClient().get('/instance/fetchInstances');
+      return this.extractInstances(response.data);
+    } catch (error) {
+      this.handleEvolutionError(error, 'No fue posible consultar las instancias en Evolution.');
+    }
+  }
 
-    return incomingEvents.map((event) => {
-      const normalizedEvent = event.trim();
-
-      if (normalizedEvent.toLowerCase() === 'messages.upsert') {
-        return 'MESSAGES_UPSERT';
-      }
-
-      return normalizedEvent;
+  private async upsertInstanceRecord(
+    name: string,
+    status: InstanceStatus,
+    phone: string | null,
+  ): Promise<WhatsAppInstance> {
+    return this.prisma.whatsAppInstance.upsert({
+      where: { name },
+      create: {
+        name,
+        status,
+        phone,
+      },
+      update: {
+        status,
+        phone,
+      },
     });
   }
 
-  private readInstanceStatus(data: JsonRecord): string {
-    const instance = this.asRecord(data.instance);
-    const instanceData = this.asRecord(data.instanceData);
-    const rawStatus = (
-      this.asString(data.status) ||
-      this.asString(data.connectionStatus) ||
-      this.asString(instance.status) ||
-      this.asString(instance.connectionStatus) ||
-      this.asString(instanceData.status) ||
-      this.asString(instanceData.connectionStatus) ||
-      'disconnected'
-    ).toLowerCase();
-
-    if (
-      rawStatus === 'open' ||
-      rawStatus === 'opened' ||
-      rawStatus === 'connected' ||
-      rawStatus === 'online'
-    ) {
-      return 'connected';
-    }
-
-    if (
-      rawStatus === 'connecting' ||
-      rawStatus === 'pairing' ||
-      rawStatus === 'qrcode' ||
-      rawStatus === 'qr' ||
-      rawStatus === 'scan qr' ||
-      rawStatus === 'scan_qr'
-    ) {
-      return 'connecting';
-    }
-
-    return 'disconnected';
-  }
-
-  private readConnectedFlag(data: JsonRecord): boolean {
-    const instance = this.asRecord(data.instance);
-    const base = [
-      data.connected,
-      data.isConnected,
-      data.qrcode === null,
-      instance.connected,
-      instance.isConnected,
-    ];
-
-    return base.some((value) => value === true);
-  }
-
-  private extractQrCodeBase64(payload: JsonRecord): string | null {
-    const qrcode = this.asRecord(payload.qrcode);
-    const base64 =
-      this.asString(payload.base64) ||
-      this.asString(payload.qrCodeBase64) ||
-      this.asString(payload.qrcode) ||
-      this.asString(qrcode.base64) ||
-      this.asString(qrcode.code) ||
-      this.asString(this.asRecord(payload.instance).qrcode) ||
-      this.asString(this.asRecord(payload.instanceData).qrcode);
-
-    return base64?.trim() ? base64.trim() : null;
-  }
-
-  private handleEvolutionError(error: unknown, fallbackMessage: string): never {
-    if (error instanceof HttpException) {
-      throw error;
-    }
-
-    if (axios.isAxiosError(error)) {
-      const responseData = this.asRecord(error.response?.data);
-      const message =
-        this.asString(responseData.message) ||
-        this.asString(responseData.error) ||
-        error.message ||
-        fallbackMessage;
-
-      throw new HttpException(message, error.response?.status ?? HttpStatus.BAD_GATEWAY);
-    }
-
-    throw new HttpException(fallbackMessage, HttpStatus.BAD_GATEWAY);
-  }
-
-  private async waitForInstanceStatus(
-    instanceName: string,
-    attempts = 5,
-  ): Promise<WhatsAppChannelStatus> {
+  private async waitForManagedStatus(name: string, attempts = 5): Promise<ManagedWhatsAppInstance> {
     for (let attempt = 0; attempt < attempts; attempt += 1) {
-      try {
-        return await this.getStatus(instanceName);
-      } catch (error) {
-        const isNotFoundError =
-          error instanceof HttpException && error.getStatus() === HttpStatus.NOT_FOUND;
-
-        if (!isNotFoundError || attempt === attempts - 1) {
-          break;
-        }
-
-        await new Promise((resolve) => setTimeout(resolve, 1500));
+      const synced = await this.syncInstanceFromEvolution(name);
+      if (synced) {
+        return this.toManagedInstance(synced);
       }
+
+      await new Promise((resolve) => setTimeout(resolve, 1500));
     }
 
+    const instance = await this.prisma.whatsAppInstance.findUnique({
+      where: { name },
+    });
+    if (!instance) {
+      throw new HttpException('La instancia no pudo inicializarse.', HttpStatus.BAD_GATEWAY);
+    }
+
+    return this.toManagedInstance(instance);
+  }
+
+  private toManagedInstance(instance: WhatsAppInstanceRecord): ManagedWhatsAppInstance {
     return {
-      provider: 'evolution',
-      instanceName,
-      status: 'pending',
-      connected: false,
-      qrCode: null,
-      qrCodeBase64: null,
-      details: {
-        message: 'La instancia fue creada y Evolution aun la esta inicializando.',
-      },
+      id: instance.id,
+      name: instance.name,
+      status: instance.status as InstanceStatus,
+      phone: instance.phone,
+      connected: instance.status === 'connected',
+      createdAt: instance.createdAt.toISOString(),
+      updatedAt: instance.updatedAt.toISOString(),
     };
   }
 
@@ -591,58 +596,31 @@ export class WhatsAppService {
     const elevenLabs = this.asRecord(configurations.elevenlabs);
     const persisted = config.whatsappSettings;
 
-    const webhookSecret = persisted?.webhookSecret?.trim() || this.asString(whatsapp.webhookSecret);
-    const apiBaseUrl = persisted?.apiBaseUrl?.trim() || this.asString(whatsapp.apiBaseUrl);
-    const apiKey = persisted?.apiKey?.trim() || this.asString(whatsapp.apiKey);
-    const instanceName =
-      persisted?.instanceName?.trim() || this.asString(whatsapp.instanceName);
-
-    if (!webhookSecret || !apiBaseUrl || !apiKey || !instanceName) {
-      throw new HttpException(
-        `Config ${config.id} is missing WhatsApp configuration`,
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
-    }
-
     return {
-      webhookSecret,
-      apiBaseUrl,
-      apiKey,
-      instanceName,
+      webhookSecret:
+        persisted?.webhookSecret?.trim() || this.asString(whatsapp.webhookSecret) || '',
+      apiBaseUrl: persisted?.apiBaseUrl?.trim() || this.asString(whatsapp.apiBaseUrl) || '',
+      apiKey: persisted?.apiKey?.trim() || this.asString(whatsapp.apiKey) || '',
+      instanceName:
+        persisted?.instanceName?.trim() || this.asString(whatsapp.instanceName) || '',
       fallbackMessage:
         persisted?.fallbackMessage?.trim() || this.asString(whatsapp.fallbackMessage),
-      audioVoiceId: persisted?.audioVoiceId?.trim() || this.asString(whatsapp.audioVoiceId),
+      audioVoiceId:
+        persisted?.audioVoiceId?.trim() || this.asString(whatsapp.audioVoiceId),
       elevenLabsBaseUrl:
         persisted?.elevenLabsBaseUrl?.trim() || this.asString(elevenLabs.baseUrl),
     };
   }
 
   private validateWebhook(headers: HeaderMap, whatsapp: WhatsAppClientConfiguration): void {
+    const expectedSecret = whatsapp.webhookSecret?.trim();
+    if (!expectedSecret) {
+      return;
+    }
+
     const providedSecret = this.readHeader(headers, 'x-webhook-secret');
-
-    if (!providedSecret || providedSecret !== whatsapp.webhookSecret) {
+    if (providedSecret && providedSecret !== expectedSecret) {
       throw new HttpException('Invalid webhook secret', HttpStatus.UNAUTHORIZED);
-    }
-  }
-
-  private validatePayloadShape(payload: JsonRecord): void {
-    if (!payload || typeof payload !== 'object') {
-      throw new BadRequestException('Webhook payload must be an object');
-    }
-
-    const data = this.asRecord(payload.data);
-    const key = this.asRecord(data.key);
-    const hasData = Object.keys(data).length > 0;
-    const hasMessageEnvelope =
-      Object.keys(key).length > 0 || Object.keys(this.asRecord(data.message)).length > 0;
-    const hasSender = Boolean(this.asString(payload.sender) || this.asString(payload.from));
-
-    if (!hasData && !hasSender) {
-      throw new BadRequestException('Webhook payload is missing data section');
-    }
-
-    if (hasData && !hasMessageEnvelope && !hasSender) {
-      throw new BadRequestException('Webhook payload is missing sender metadata');
     }
   }
 
@@ -691,10 +669,7 @@ export class WhatsAppService {
     };
   }
 
-  private detectMessageType(
-    message: JsonRecord,
-    messageType?: string,
-  ): 'text' | 'image' | 'audio' {
+  private detectMessageType(message: JsonRecord, messageType?: string): 'text' | 'image' | 'audio' {
     if (messageType === 'audioMessage' || this.hasNestedObject(message, 'audioMessage')) {
       return 'audio';
     }
@@ -710,23 +685,33 @@ export class WhatsAppService {
     const extendedTextMessage = this.asRecord(message.extendedTextMessage);
     const imageMessage = this.asRecord(message.imageMessage);
     const videoMessage = this.asRecord(message.videoMessage);
-    const documentWithCaptionMessage = this.asRecord(message.documentWithCaptionMessage);
-    const documentMessage = this.asRecord(documentWithCaptionMessage.message);
-    const nestedDocument = this.asRecord(documentMessage.documentMessage);
 
     return (
       this.asString(message.conversation) ||
       this.asString(extendedTextMessage.text) ||
       this.asString(imageMessage.caption) ||
       this.asString(videoMessage.caption) ||
-      this.asString(nestedDocument.caption) ||
       ''
+    );
+  }
+
+  private executeEvolutionRequest(
+    resolved: ResolvedWhatsAppClient,
+    action: 'sendText' | 'sendImage' | 'sendAudio',
+    path: string,
+    body: JsonRecord,
+  ): Promise<void> {
+    return this.createEvolutionClient(resolved.whatsapp).post(path, body).then(
+      () => undefined,
+      (error: unknown) => {
+        this.handleEvolutionError(error, `Evolution API ${action} failed`);
+      },
     );
   }
 
   private createEvolutionClient(whatsapp: WhatsAppClientConfiguration): AxiosInstance {
     return axios.create({
-      baseURL: whatsapp.apiBaseUrl.replace(/\/$/, ''),
+      baseURL: whatsapp.apiBaseUrl.replace(/\/+$/, ''),
       timeout: 20000,
       headers: {
         apikey: whatsapp.apiKey,
@@ -735,298 +720,122 @@ export class WhatsAppService {
     });
   }
 
-  private async readChannelStatus(
-    resolved: ResolvedWhatsAppClient,
-    includeQrCode: boolean,
-    preferFreshQr = false,
-  ): Promise<WhatsAppChannelStatus> {
-    const payload = await this.readEvolutionResource(resolved, [
-      { path: `/instance/connectionState/${resolved.whatsapp.instanceName}`, method: 'get' },
-      { path: `/instance/status/${resolved.whatsapp.instanceName}`, method: 'get' },
-    ]);
-
-    const status = this.extractConnectionStatus(payload);
-    const connected = this.extractConnectedFlag(payload, status);
-    let qrCode: string | null = null;
-    let qrCodeBase64: string | null = null;
-
-    if (includeQrCode && !connected) {
-      const qrPayload = await this.readEvolutionResource(
-        resolved,
-        preferFreshQr
-            ? [
-                {
-                  path: `/instance/connect/${resolved.whatsapp.instanceName}`,
-                  method: 'get',
-                },
-                {
-                  path: `/instance/connect/${resolved.whatsapp.instanceName}`,
-                  method: 'post',
-                },
-                {
-                  path: `/instance/qrcode/${resolved.whatsapp.instanceName}`,
-                  method: 'get',
-                },
-              ]
-            : [
-                {
-                  path: `/instance/qrcode/${resolved.whatsapp.instanceName}`,
-                  method: 'get',
-                },
-                {
-                  path: `/instance/connect/${resolved.whatsapp.instanceName}`,
-                  method: 'get',
-                },
-                {
-                  path: `/instance/connect/${resolved.whatsapp.instanceName}`,
-                  method: 'post',
-                },
-              ],
-      );
-
-      const qrData = this.extractQrData(qrPayload);
-      qrCode = qrData.qrCode;
-      qrCodeBase64 = qrData.qrCodeBase64;
-    }
-
-    return {
-      provider: 'evolution',
-      instanceName: resolved.whatsapp.instanceName,
-      status,
-      connected,
-      qrCode,
-      qrCodeBase64,
-      details: this.asRecord(payload),
-    };
+  private getEvolutionClient(): AxiosInstance {
+    return axios.create({
+      baseURL: this.getRequiredEnv('EVOLUTION_URL').replace(/\/+$/, ''),
+      headers: {
+        apikey: this.getRequiredEnv('AUTHENTICATION_API_KEY'),
+        'Content-Type': 'application/json',
+      },
+      timeout: 20000,
+    });
   }
 
-  private async createEvolutionInstance(
-    resolved: ResolvedWhatsAppClient,
-  ): Promise<void> {
-    const client = this.createEvolutionClient(resolved.whatsapp);
-
-    try {
-      await client.post('/instance/create', {
-        instanceName: resolved.whatsapp.instanceName,
-        integration: 'WHATSAPP-BAILEYS',
-        qrcode: true,
-      });
-    } catch (error) {
-      const axiosError = error as AxiosError<unknown>;
-      const responseStatus = axiosError.response?.status;
-      const responseBody = JSON.stringify(axiosError.response?.data ?? {}).toLowerCase();
-      const alreadyExists =
-        responseStatus === 400 ||
-        responseStatus === 409 ||
-        responseBody.includes('already exists') ||
-        responseBody.includes('already exist') ||
-        responseBody.includes('duplicate') ||
-        responseBody.includes('exists');
-
-      if (alreadyExists) {
-        return;
-      }
-
-      this.logger.error(
-        JSON.stringify({
-          event: 'whatsapp_instance_create_failed',
-          configId: resolved.config.id,
-          instanceName: resolved.whatsapp.instanceName,
-          status: responseStatus,
-          response: axiosError.response?.data,
-        }),
-        error instanceof Error ? error.stack : undefined,
-      );
-
-      throw new HttpException(
-        'No se pudo crear la instancia en Evolution API',
-        HttpStatus.BAD_GATEWAY,
-      );
-    }
-  }
-
-  private async readEvolutionResource(
-    resolved: ResolvedWhatsAppClient,
-    attempts: Array<{
-      path: string;
-      method: 'get' | 'post';
-    }>,
-  ): Promise<unknown> {
-    const client = this.createEvolutionClient(resolved.whatsapp);
-    let lastError: AxiosError<unknown> | null = null;
-
-    for (const attempt of attempts) {
-      try {
-        const response = await client.request({
-          method: attempt.method,
-          url: attempt.path,
-        });
-        return response.data;
-      } catch (error) {
-        const axiosError = error as AxiosError<unknown>;
-        lastError = axiosError;
-
-        if (axiosError.response?.status === 404) {
-          continue;
-        }
-      }
+  private extractInstances(payload: unknown): unknown[] {
+    if (Array.isArray(payload)) {
+      return payload;
     }
 
-    this.logger.error(
-      JSON.stringify({
-        event: 'whatsapp_channel_request_failed',
-        configId: resolved.config.id,
-        instanceName: resolved.whatsapp.instanceName,
-        status: lastError?.response?.status,
-        response: lastError?.response?.data,
-      }),
-      lastError instanceof Error ? lastError.stack : undefined,
-    );
-
-    throw new HttpException(
-      'No se pudo consultar la instancia en Evolution API',
-      HttpStatus.BAD_GATEWAY,
-    );
+    const data = this.asRecord(payload);
+    const value = data.value ?? data.instances ?? data.data ?? data.response;
+    return Array.isArray(value) ? value : [];
   }
 
-  private extractConnectionStatus(payload: unknown): string {
-    const record = this.asRecord(payload);
-    const instance = this.asRecord(record.instance);
-    const instanceStatus = this.asRecord(instance.status);
-    const data = this.asRecord(record.data);
-    const dataInstance = this.asRecord(data.instance);
+  private readInstanceName(data: JsonRecord): string {
+    const instance = this.asRecord(data.instance);
+    const instanceData = this.asRecord(data.instanceData);
 
     return (
-      this.pickString([
-        record.status,
-        record.state,
-        record.connectionStatus,
-        instance.state,
-        instance.status,
-        instance.connectionStatus,
-        instanceStatus.status,
-        instanceStatus.state,
-        data.status,
-        data.state,
-        data.connectionStatus,
-        dataInstance.status,
-        dataInstance.state,
-      ]) ?? 'unknown'
+      this.asString(data.instanceName) ||
+      this.asString(data.name) ||
+      this.asString(instance.instanceName) ||
+      this.asString(instance.name) ||
+      this.asString(instanceData.instanceName) ||
+      this.asString(instanceData.name) ||
+      ''
     );
   }
 
-  private extractConnectedFlag(payload: unknown, status: string): boolean {
-    const normalizedStatus = status.toLowerCase();
+  private readInstanceStatus(data: JsonRecord): InstanceStatus {
+    const instance = this.asRecord(data.instance);
+    const instanceData = this.asRecord(data.instanceData);
+    const rawStatus = (
+      this.asString(data.status) ||
+      this.asString(data.connectionStatus) ||
+      this.asString(instance.status) ||
+      this.asString(instance.connectionStatus) ||
+      this.asString(instanceData.status) ||
+      this.asString(instanceData.connectionStatus) ||
+      'disconnected'
+    ).toLowerCase();
+
     if (
-      normalizedStatus.includes('open') ||
-      normalizedStatus.includes('connected') ||
-      normalizedStatus.includes('online')
+      rawStatus === 'open' ||
+      rawStatus === 'opened' ||
+      rawStatus === 'connected' ||
+      rawStatus === 'online'
     ) {
-      return true;
+      return 'connected';
     }
 
-    const record = this.asRecord(payload);
-    const instance = this.asRecord(record.instance);
-    const data = this.asRecord(record.data);
-    const dataInstance = this.asRecord(data.instance);
-
-    return this.pickBoolean([
-      record.connected,
-      record.open,
-      record.isConnected,
-      instance.connected,
-      instance.open,
-      instance.isConnected,
-      data.connected,
-      data.open,
-      data.isConnected,
-      dataInstance.connected,
-      dataInstance.open,
-      dataInstance.isConnected,
-    ]);
-  }
-
-  private extractQrData(payload: unknown): {
-    qrCode: string | null;
-    qrCodeBase64: string | null;
-  } {
-    const record = this.asRecord(payload);
-    const qrcode = this.asRecord(record.qrcode);
-    const qr = this.asRecord(record.qr);
-    const data = this.asRecord(record.data);
-    const dataQrCode = this.asRecord(data.qrcode);
-
-    return {
-      qrCode:
-        this.pickString([
-          record.code,
-          record.qrCode,
-          record.pairingCode,
-          qrcode.code,
-          qrcode.text,
-          qrcode.string,
-          qr.code,
-          qr.text,
-          data.code,
-          data.qrCode,
-          dataQrCode.code,
-          dataQrCode.text,
-        ]) ?? null,
-      qrCodeBase64:
-        this.normalizeBase64(
-          this.pickString([
-            record.base64,
-            record.qrCodeBase64,
-            qrcode.base64,
-            qrcode.image,
-            qrcode.base64Image,
-            qr.base64,
-            qr.image,
-            data.base64,
-            data.qrCodeBase64,
-            dataQrCode.base64,
-            dataQrCode.image,
-          ]),
-        ) ?? null,
-    };
-  }
-
-  private async executeEvolutionRequest(
-    resolved: ResolvedWhatsAppClient,
-    action: 'sendText' | 'sendImage' | 'sendAudio',
-    path: string,
-    body: JsonRecord,
-  ): Promise<void> {
-    try {
-      await this.createEvolutionClient(resolved.whatsapp).post(path, body);
-      this.logger.log(
-        JSON.stringify({
-          event: 'whatsapp_delivery_success',
-          action,
-          configId: resolved.config.id,
-          instanceName: resolved.whatsapp.instanceName,
-        }),
-      );
-    } catch (error) {
-      const axiosError = error as AxiosError<unknown>;
-      this.logger.error(
-        JSON.stringify({
-          event: 'whatsapp_delivery_failure',
-          action,
-          configId: resolved.config.id,
-          instanceName: resolved.whatsapp.instanceName,
-          status: axiosError.response?.status,
-          response: axiosError.response?.data,
-        }),
-        error instanceof Error ? error.stack : undefined,
-      );
-
-      throw new HttpException(`Evolution API ${action} failed`, HttpStatus.BAD_GATEWAY);
+    if (
+      rawStatus === 'connecting' ||
+      rawStatus === 'pairing' ||
+      rawStatus === 'qrcode' ||
+      rawStatus === 'qr' ||
+      rawStatus === 'scan qr' ||
+      rawStatus === 'scan_qr'
+    ) {
+      return 'connecting';
     }
+
+    return 'disconnected';
   }
 
-  private normalizeNumber(raw: string): string {
-    return raw.replace(/@.*/, '').replace(/\D/g, '');
+  private normalizeWebhookEvents(events?: string[]): string[] {
+    const source = events?.length ? events : ['messages.upsert', 'connection.update'];
+
+    return source.map((event) => {
+      const normalized = event.trim();
+      if (normalized.toLowerCase() === 'messages.upsert') {
+        return 'MESSAGES_UPSERT';
+      }
+
+      if (normalized.toLowerCase() === 'connection.update') {
+        return 'CONNECTION_UPDATE';
+      }
+
+      return normalized;
+    });
+  }
+
+  private extractPhone(data: JsonRecord): string | null {
+    const instance = this.asRecord(data.instance);
+    const instanceData = this.asRecord(data.instanceData);
+
+    return (
+      this.asString(data.number) ||
+      this.asString(data.phone) ||
+      this.asString(instance.number) ||
+      this.asString(instance.phone) ||
+      this.asString(instanceData.number) ||
+      this.asString(instanceData.phone) ||
+      null
+    );
+  }
+
+  private extractQrCodeBase64(payload: JsonRecord): string | null {
+    const qrcode = this.asRecord(payload.qrcode);
+    const qr = this.asRecord(payload.qr);
+    const base64 =
+      this.asString(payload.base64) ||
+      this.asString(payload.qrCodeBase64) ||
+      this.asString(qrcode.base64) ||
+      this.asString(qrcode.image) ||
+      this.asString(qr.base64) ||
+      this.asString(qr.image);
+
+    return base64?.trim() ? base64.trim() : null;
   }
 
   private readHeader(headers: HeaderMap, headerName: string): string | undefined {
@@ -1038,38 +847,48 @@ export class WhatsAppService {
     return typeof record[key] === 'object' && record[key] !== null;
   }
 
-  private normalizeBase64(value?: string): string | undefined {
+  private normalizeNumber(raw: string): string {
+    return raw.replace(/@.*/, '').replace(/\D/g, '');
+  }
+
+  private normalizeInstanceName(name: string): string {
+    const normalized = name.trim();
+    if (!normalized) {
+      throw new BadRequestException('El nombre de la instancia es obligatorio.');
+    }
+
+    return normalized;
+  }
+
+  private getRequiredEnv(name: 'EVOLUTION_URL' | 'AUTHENTICATION_API_KEY' | 'WEBHOOK_URL'): string {
+    const value = this.configService.get<string>(name)?.trim();
     if (!value) {
-      return undefined;
+      throw new HttpException(
+        `La variable de entorno ${name} es obligatoria.`,
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
     }
 
-    if (!value.includes(',')) {
-      return value.trim();
-    }
-
-    const parts = value.split(',');
-    return parts[parts.length - 1]?.trim();
+    return value;
   }
 
-  private pickString(values: unknown[]): string | undefined {
-    for (const value of values) {
-      const next = this.asString(value);
-      if (next) {
-        return next;
-      }
+  private handleEvolutionError(error: unknown, fallbackMessage: string): never {
+    if (error instanceof HttpException) {
+      throw error;
     }
 
-    return undefined;
-  }
+    if (axios.isAxiosError(error)) {
+      const payload = this.asRecord(error.response?.data);
+      const message =
+        this.asString(payload.message) ||
+        this.asString(payload.error) ||
+        error.message ||
+        fallbackMessage;
 
-  private pickBoolean(values: unknown[]): boolean {
-    for (const value of values) {
-      if (typeof value === 'boolean') {
-        return value;
-      }
+      throw new HttpException(message, error.response?.status ?? HttpStatus.BAD_GATEWAY);
     }
 
-    return false;
+    throw new HttpException(fallbackMessage, HttpStatus.BAD_GATEWAY);
   }
 
   private asRecord(value: unknown): JsonRecord {

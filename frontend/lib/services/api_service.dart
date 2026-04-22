@@ -3,9 +3,10 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 class ApiException implements Exception {
-  ApiException(this.message);
+  ApiException(this.message, {this.statusCode});
 
   final String message;
+  final int? statusCode;
 
   @override
   String toString() => message;
@@ -271,6 +272,57 @@ class WhatsAppQrData {
   }
 }
 
+class ManagedWhatsAppInstanceData {
+  const ManagedWhatsAppInstanceData({
+    required this.id,
+    required this.name,
+    required this.status,
+    required this.phone,
+    required this.connected,
+    required this.createdAt,
+    required this.updatedAt,
+  });
+
+  final int id;
+  final String name;
+  final String status;
+  final String? phone;
+  final bool connected;
+  final DateTime? createdAt;
+  final DateTime? updatedAt;
+
+  bool get isConnecting => status == 'connecting';
+
+  factory ManagedWhatsAppInstanceData.fromJson(Map<String, dynamic> json) {
+    return ManagedWhatsAppInstanceData(
+      id: (json['id'] as num?)?.toInt() ?? 0,
+      name: (json['name'] as String?) ?? '',
+      status: (json['status'] as String?) ?? 'disconnected',
+      phone: json['phone'] as String?,
+      connected: (json['connected'] as bool?) ?? false,
+      createdAt: _parseDateTime(json['createdAt']),
+      updatedAt: _parseDateTime(json['updatedAt']),
+    );
+  }
+}
+
+class DeleteWhatsAppInstanceResponse {
+  const DeleteWhatsAppInstanceResponse({
+    required this.message,
+    required this.name,
+  });
+
+  final String message;
+  final String name;
+
+  factory DeleteWhatsAppInstanceResponse.fromJson(Map<String, dynamic> json) {
+    return DeleteWhatsAppInstanceResponse(
+      message: (json['message'] as String?) ?? '',
+      name: (json['name'] as String?) ?? '',
+    );
+  }
+}
+
 class WhatsAppWebhookData {
   const WhatsAppWebhookData({
     required this.instanceName,
@@ -481,7 +533,7 @@ class ApiService {
     return WhatsAppChannelData.fromJson(_decodeResponse(response));
   }
 
-  Future<WhatsAppChannelData> createInstance(String instanceName) async {
+  Future<ManagedWhatsAppInstanceData> createInstance(String instanceName) async {
     final response = await _client.post(
       _buildUri('/whatsapp/create'),
       headers: _headers,
@@ -490,7 +542,15 @@ class ApiService {
       }),
     );
 
-    return WhatsAppChannelData.fromJson(_decodeResponse(response));
+    return ManagedWhatsAppInstanceData.fromJson(_decodeResponse(response));
+  }
+
+  Future<List<ManagedWhatsAppInstanceData>> getInstances() async {
+    final response = await _client.get(_buildUri('/whatsapp/list'), headers: _headers);
+    final decoded = _decodeListResponse(response);
+    return decoded
+        .map((Map<String, dynamic> item) => ManagedWhatsAppInstanceData.fromJson(item))
+        .toList();
   }
 
   Future<WhatsAppQrData> getQr(String instanceName) async {
@@ -514,13 +574,22 @@ class ApiService {
     return WhatsAppWebhookData.fromJson(_decodeResponse(response));
   }
 
-  Future<WhatsAppChannelData> getStatus(String instanceName) async {
+  Future<ManagedWhatsAppInstanceData> getStatus(String instanceName) async {
     final response = await _client.get(
       _buildUri('/whatsapp/status/${Uri.encodeComponent(instanceName)}'),
       headers: _headers,
     );
 
-    return WhatsAppChannelData.fromJson(_decodeResponse(response));
+    return ManagedWhatsAppInstanceData.fromJson(_decodeResponse(response));
+  }
+
+  Future<DeleteWhatsAppInstanceResponse> deleteInstance(String instanceName) async {
+    final response = await _client.delete(
+      _buildUri('/whatsapp/delete/${Uri.encodeComponent(instanceName)}'),
+      headers: _headers,
+    );
+
+    return DeleteWhatsAppInstanceResponse.fromJson(_decodeResponse(response));
   }
 
   Future<WhatsAppChannelData> createWhatsAppInstance() async {
@@ -555,13 +624,46 @@ class ApiService {
     final message = decoded['message'];
 
     if (message is List && message.isNotEmpty) {
-      throw ApiException(message.join(', '));
+      throw ApiException(message.join(', '), statusCode: response.statusCode);
     }
 
     if (message is String && message.isNotEmpty) {
-      throw ApiException(message);
+      throw ApiException(message, statusCode: response.statusCode);
     }
 
-    throw ApiException('La solicitud falló con código ${response.statusCode}.');
+    throw ApiException(
+      'La solicitud falló con código ${response.statusCode}.',
+      statusCode: response.statusCode,
+    );
   }
+
+  List<Map<String, dynamic>> _decodeListResponse(http.Response response) {
+    final decoded = response.body.isEmpty ? <dynamic>[] : jsonDecode(response.body) as List<dynamic>;
+
+    if (response.statusCode >= 200 && response.statusCode < 300) {
+      return decoded.whereType<Map<String, dynamic>>().toList();
+    }
+
+    final first = decoded.isNotEmpty && decoded.first is Map<String, dynamic>
+        ? decoded.first as Map<String, dynamic>
+        : <String, dynamic>{};
+    final message = first['message'];
+
+    if (message is String && message.isNotEmpty) {
+      throw ApiException(message, statusCode: response.statusCode);
+    }
+
+    throw ApiException(
+      'La solicitud falló con código ${response.statusCode}.',
+      statusCode: response.statusCode,
+    );
+  }
+}
+
+DateTime? _parseDateTime(Object? value) {
+  if (value is! String || value.trim().isEmpty) {
+    return null;
+  }
+
+  return DateTime.tryParse(value);
 }

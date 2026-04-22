@@ -8,8 +8,8 @@ import '../services/api_service.dart';
 import '../widgets/app_text_field.dart';
 import '../widgets/section_card.dart';
 
-class ConnectWhatsAppPage extends StatefulWidget {
-  const ConnectWhatsAppPage({
+class GestionWhatsAppPage extends StatefulWidget {
+  const GestionWhatsAppPage({
     super.key,
     required this.apiService,
     required this.onConfigUpdated,
@@ -19,54 +19,118 @@ class ConnectWhatsAppPage extends StatefulWidget {
   final VoidCallback onConfigUpdated;
 
   @override
-  State<ConnectWhatsAppPage> createState() => _ConnectWhatsAppPageState();
+  State<GestionWhatsAppPage> createState() => _GestionWhatsAppPageState();
 }
 
-class _ConnectWhatsAppPageState extends State<ConnectWhatsAppPage> {
+class ConnectWhatsAppPage extends GestionWhatsAppPage {
+  const ConnectWhatsAppPage({
+    super.key,
+    required super.apiService,
+    required super.onConfigUpdated,
+  });
+}
+
+class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
   final TextEditingController _instanceNameController = TextEditingController();
 
-  Timer? _statusTimer;
-  bool _isLoading = true;
-  bool _isSubmitting = false;
-  String? _errorMessage;
-  String _statusLabel = 'desconectado';
+  Timer? _refreshTimer;
+  List<ManagedWhatsAppInstanceData> _instances = const <ManagedWhatsAppInstanceData>[];
+  String? _selectedInstanceName;
   String? _qrCodeBase64;
-  String? _currentInstanceName;
+  bool _isLoading = true;
+  bool _isCreating = false;
+  bool _isRefreshing = false;
+  bool _isDeleting = false;
+  String? _errorMessage;
 
-  bool get _connected => _statusLabel == 'connected';
+  ManagedWhatsAppInstanceData? get _selectedInstance {
+    final selectedName = _selectedInstanceName;
+    if (selectedName == null) {
+      return null;
+    }
+
+    for (final instance in _instances) {
+      if (instance.name == selectedName) {
+        return instance;
+      }
+    }
+
+    return null;
+  }
 
   @override
   void initState() {
     super.initState();
-    _loadInitialState();
+    _loadInstances();
+    _refreshTimer = Timer.periodic(const Duration(seconds: 5), (_) {
+      unawaited(_loadInstances(showLoader: false, preserveMessage: true));
+    });
   }
 
   @override
   void dispose() {
-    _statusTimer?.cancel();
+    _refreshTimer?.cancel();
     _instanceNameController.dispose();
     super.dispose();
   }
 
-  Future<void> _loadInitialState() async {
-    setState(() {
-      _isLoading = true;
-      _errorMessage = null;
-    });
+  Future<void> _loadInstances({
+    bool showLoader = true,
+    bool preserveMessage = false,
+  }) async {
+    if (showLoader) {
+      setState(() {
+        _isLoading = true;
+        if (!preserveMessage) {
+          _errorMessage = null;
+        }
+      });
+    } else {
+      _isRefreshing = true;
+    }
 
     try {
-      final config = await widget.apiService.getConfig();
-      final configuredInstanceName = config.instanceName.trim();
+      final instances = await widget.apiService.getInstances();
+      ManagedWhatsAppInstanceData? selected;
+
+      if (_selectedInstanceName != null) {
+        for (final item in instances) {
+          if (item.name == _selectedInstanceName) {
+            selected = item;
+            break;
+          }
+        }
+      }
+
+      selected ??= instances.isNotEmpty ? instances.first : null;
+      final nextSelectedName = selected?.name;
+      String? nextQrCodeBase64 = _qrCodeBase64;
+
+      if (selected == null) {
+        nextQrCodeBase64 = null;
+      } else if (selected.connected) {
+        nextQrCodeBase64 = null;
+      } else if (
+        nextSelectedName != _selectedInstanceName ||
+        nextQrCodeBase64 == null ||
+        nextQrCodeBase64.isEmpty
+      ) {
+        final qr = await widget.apiService.getQr(selected.name);
+        nextQrCodeBase64 = qr.qrCodeBase64;
+      }
 
       if (!mounted) {
         return;
       }
 
-      if (configuredInstanceName.isNotEmpty) {
-        _instanceNameController.text = configuredInstanceName;
-        _currentInstanceName = configuredInstanceName;
-        await _refreshStatus(showErrors: false);
-      }
+      setState(() {
+        _instances = instances;
+        _selectedInstanceName = nextSelectedName;
+        _qrCodeBase64 = nextQrCodeBase64;
+        if (!preserveMessage) {
+          _errorMessage = null;
+        }
+      });
     } catch (error) {
       if (!mounted) {
         return;
@@ -76,15 +140,18 @@ class _ConnectWhatsAppPageState extends State<ConnectWhatsAppPage> {
         _errorMessage = error.toString().replaceFirst('Exception: ', '');
       });
     } finally {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
+      if (!mounted) {
+        return;
       }
+
+      setState(() {
+        _isLoading = false;
+        _isRefreshing = false;
+      });
     }
   }
 
-  Future<void> _connectWhatsApp() async {
+  Future<void> _createInstance() async {
     final instanceName = _instanceNameController.text.trim();
     if (instanceName.isEmpty) {
       _showMessage('Ingresa un nombre de instancia.', isError: true);
@@ -92,126 +159,30 @@ class _ConnectWhatsAppPageState extends State<ConnectWhatsAppPage> {
     }
 
     setState(() {
-      _isSubmitting = true;
+      _isCreating = true;
       _errorMessage = null;
     });
 
     try {
-      final status = await widget.apiService.createInstance(instanceName);
-      await widget.apiService.setWebhook(instanceName);
-      final qr = await widget.apiService.getQr(instanceName);
+      final created = await widget.apiService.createInstance(instanceName);
+      await widget.apiService.setWebhook(created.name);
+      final qr = await widget.apiService.getQr(created.name);
 
       if (!mounted) {
         return;
       }
 
-      setState(() {
-        _currentInstanceName = instanceName;
-        _statusLabel = status.status;
-        _qrCodeBase64 = qr.qrCodeBase64;
-      });
+      _instanceNameController.clear();
+      _selectedInstanceName = created.name;
+      _qrCodeBase64 = qr.qrCodeBase64;
 
+      await _loadInstances(showLoader: false, preserveMessage: true);
       widget.onConfigUpdated();
-      _startStatusPolling();
-      _showMessage(qr.message.isEmpty ? 'Instancia creada y webhook configurado.' : qr.message);
+      _showMessage(
+        qr.message.isEmpty ? 'Instancia creada correctamente.' : qr.message,
+      );
     } catch (error) {
       if (!mounted) {
-        return;
-      }
-
-      setState(() {
-        _errorMessage = error.toString().replaceFirst('Exception: ', '');
-      });
-
-      _showMessage(_errorMessage!, isError: true);
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isSubmitting = false;
-        });
-      }
-    }
-  }
-
-  Future<void> _updateQr() async {
-    final instanceName = _resolveInstanceName();
-    if (instanceName == null) {
-      _showMessage('Ingresa un nombre de instancia.', isError: true);
-      return;
-    }
-
-    setState(() {
-      _isSubmitting = true;
-      _errorMessage = null;
-    });
-
-    try {
-      final qr = await widget.apiService.getQr(instanceName);
-      final status = await widget.apiService.getStatus(instanceName);
-
-      if (!mounted) {
-        return;
-      }
-
-      setState(() {
-        _currentInstanceName = instanceName;
-        _statusLabel = status.status;
-        _qrCodeBase64 = qr.qrCodeBase64;
-      });
-
-      _startStatusPolling();
-    } catch (error) {
-      if (!mounted) {
-        return;
-      }
-
-      setState(() {
-        _errorMessage = error.toString().replaceFirst('Exception: ', '');
-      });
-
-      _showMessage(_errorMessage!, isError: true);
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isSubmitting = false;
-        });
-      }
-    }
-  }
-
-  Future<void> _refreshStatus({bool showErrors = true}) async {
-    final instanceName = _resolveInstanceName();
-    if (instanceName == null) {
-      return;
-    }
-
-    try {
-      final status = await widget.apiService.getStatus(instanceName);
-
-      if (!mounted) {
-        return;
-      }
-
-      setState(() {
-        _currentInstanceName = instanceName;
-        _statusLabel = status.status;
-        if (status.connected) {
-          _qrCodeBase64 = null;
-        }
-      });
-
-      if (!status.connected && (_qrCodeBase64 == null || _qrCodeBase64!.isEmpty)) {
-        final qr = await widget.apiService.getQr(instanceName);
-        if (!mounted) {
-          return;
-        }
-
-        setState(() {
-          _qrCodeBase64 = qr.qrCodeBase64;
-        });
-      }
-    } catch (error) {
-      if (!showErrors || !mounted) {
         return;
       }
 
@@ -219,27 +190,115 @@ class _ConnectWhatsAppPageState extends State<ConnectWhatsAppPage> {
       setState(() {
         _errorMessage = message;
       });
+      _showMessage(message, isError: true);
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isCreating = false;
+        });
+      }
     }
   }
 
-  void _startStatusPolling() {
-    _statusTimer?.cancel();
-    _statusTimer = Timer.periodic(const Duration(seconds: 5), (_) {
-      unawaited(_refreshStatus(showErrors: false));
+  Future<void> _showQrFor(String instanceName) async {
+    setState(() {
+      _selectedInstanceName = instanceName;
+      _errorMessage = null;
     });
+
+    try {
+      final status = await widget.apiService.getStatus(instanceName);
+      final qr = status.connected ? null : await widget.apiService.getQr(instanceName);
+
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _selectedInstanceName = status.name;
+        _qrCodeBase64 = status.connected ? null : qr?.qrCodeBase64;
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+
+      final message = error.toString().replaceFirst('Exception: ', '');
+      setState(() {
+        _errorMessage = message;
+      });
+      _showMessage(message, isError: true);
+    }
   }
 
-  String? _resolveInstanceName() {
-    final instanceName = _instanceNameController.text.trim();
-    if (instanceName.isNotEmpty) {
-      return instanceName;
-    }
+  Future<void> _deleteInstance(String instanceName) async {
+    setState(() {
+      _isDeleting = true;
+      _errorMessage = null;
+    });
 
-    if (_currentInstanceName != null && _currentInstanceName!.isNotEmpty) {
-      return _currentInstanceName;
-    }
+    try {
+      final response = await widget.apiService.deleteInstance(instanceName);
 
-    return null;
+      if (!mounted) {
+        return;
+      }
+
+      if (_selectedInstanceName == instanceName) {
+        _selectedInstanceName = null;
+        _qrCodeBase64 = null;
+      }
+
+      await _loadInstances(showLoader: false, preserveMessage: true);
+      widget.onConfigUpdated();
+      _showMessage(
+        response.message.isEmpty ? 'Instancia eliminada correctamente.' : response.message,
+      );
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+
+      final message = error.toString().replaceFirst('Exception: ', '');
+      setState(() {
+        _errorMessage = message;
+      });
+      _showMessage(message, isError: true);
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isDeleting = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _confirmDelete(String instanceName) async {
+    final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (BuildContext context) {
+            return AlertDialog(
+              title: const Text('Eliminar instancia'),
+              content: Text('Se eliminará la instancia $instanceName de Evolution y de la base de datos.'),
+              actions: <Widget>[
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(false),
+                  child: const Text('Cancelar'),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.of(context).pop(true),
+                  style: FilledButton.styleFrom(backgroundColor: const Color(0xFFB91C1C)),
+                  child: const Text('Eliminar'),
+                ),
+              ],
+            );
+          },
+        ) ??
+        false;
+
+    if (confirmed) {
+      await _deleteInstance(instanceName);
+    }
   }
 
   Uint8List? _decodeQrImage(String? value) {
@@ -268,15 +327,16 @@ class _ConnectWhatsAppPageState extends State<ConnectWhatsAppPage> {
 
   @override
   Widget build(BuildContext context) {
+    final selectedInstance = _selectedInstance;
     final qrImageBytes = _decodeQrImage(_qrCodeBase64);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        Text('Conectar WhatsApp', style: Theme.of(context).textTheme.headlineMedium),
+        Text('Gestion WhatsApp', style: Theme.of(context).textTheme.headlineMedium),
         const SizedBox(height: 6),
         const Text(
-          'Crea la instancia en Evolution desde el backend, configura el webhook y escanea el QR.',
+          'Crea, monitorea y elimina instancias desde el backend con estado sincronizado en base de datos.',
           style: TextStyle(color: Color(0xFF475569), fontSize: 14),
         ),
         const SizedBox(height: 20),
@@ -285,74 +345,243 @@ class _ConnectWhatsAppPageState extends State<ConnectWhatsAppPage> {
           const SizedBox(height: 20),
         ],
         SectionCard(
-          title: 'Instancia',
-          subtitle: 'Todo el flujo pasa por el backend. El frontend nunca llama Evolution directo.',
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          title: 'Nueva instancia',
+          subtitle: 'La creacion configura webhook y deja listo el QR para escaneo.',
+          child: Wrap(
+            spacing: 16,
+            runSpacing: 16,
+            crossAxisAlignment: WrapCrossAlignment.end,
             children: <Widget>[
-              Wrap(
-                spacing: 10,
-                runSpacing: 10,
-                children: <Widget>[
-                  _StatusBadge(
-                    label: 'Estado',
-                    value: _connected ? 'Conectado' : 'Escanea el QR',
-                    accent: _connected,
-                  ),
-                  _StatusBadge(
-                    label: 'Instancia',
-                    value: _resolveInstanceName() ?? 'Pendiente',
-                    accent: (_resolveInstanceName() ?? '').isNotEmpty,
-                  ),
-                ],
-              ),
-              const SizedBox(height: 24),
               SizedBox(
-                width: 380,
+                width: 360,
                 child: AppTextField(
-                  label: 'Nombre de la instancia',
+                  label: 'Nombre de instancia',
                   controller: _instanceNameController,
                   hintText: 'phytoemagry-main',
-                  enabled: !_isLoading && !_isSubmitting,
+                  enabled: !_isCreating && !_isDeleting,
                 ),
               ),
-              const SizedBox(height: 24),
-              Wrap(
-                spacing: 12,
-                runSpacing: 12,
-                children: <Widget>[
-                  ElevatedButton(
-                    onPressed: _isLoading || _isSubmitting ? null : _connectWhatsApp,
-                    child: Text(_isSubmitting ? 'Conectando...' : 'Conectar WhatsApp'),
-                  ),
-                  OutlinedButton(
-                    onPressed: _isLoading || _isSubmitting ? null : _updateQr,
-                    child: const Text('Actualizar QR'),
-                  ),
-                ],
+              ElevatedButton(
+                onPressed: _isLoading || _isCreating || _isDeleting ? null : _createInstance,
+                child: Text(_isCreating ? 'Creando...' : 'Crear instancia'),
+              ),
+              OutlinedButton(
+                onPressed: _isLoading || _isCreating || _isDeleting
+                    ? null
+                    : () => _loadInstances(showLoader: false),
+                child: Text(_isRefreshing ? 'Actualizando...' : 'Actualizar lista'),
               ),
             ],
           ),
         ),
         SectionCard(
-          title: 'Codigo QR',
-          subtitle: 'El estado se refresca automaticamente cada 5 segundos.',
-          child: _connected
-              ? const _ConnectedChannelState()
-              : qrImageBytes != null
-                  ? Center(
-                      child: Container(
-                        padding: const EdgeInsets.all(16),
-                        color: Colors.white,
-                        child: Image.memory(qrImageBytes, width: 260, height: 260),
-                      ),
-                    )
-                  : const Text(
-                      'Todavia no hay un QR disponible para esta instancia.',
+          title: 'Instancias registradas',
+          subtitle: 'El estado se refresca automaticamente cada 5 segundos desde Evolution.',
+          child: _isLoading
+              ? const Center(
+                  child: Padding(
+                    padding: EdgeInsets.all(24),
+                    child: CircularProgressIndicator(),
+                  ),
+                )
+              : _instances.isEmpty
+                  ? const Text(
+                      'Todavia no hay instancias registradas.',
                       style: TextStyle(color: Color(0xFF475569), height: 1.5),
+                    )
+                  : Column(
+                      children: _instances
+                          .map(
+                            (ManagedWhatsAppInstanceData instance) => Padding(
+                              padding: const EdgeInsets.only(bottom: 14),
+                              child: _InstanceTile(
+                                instance: instance,
+                                selected: instance.name == _selectedInstanceName,
+                                onShowQr: () => _showQrFor(instance.name),
+                                onDelete: _isDeleting ? null : () => _confirmDelete(instance.name),
+                              ),
+                            ),
+                          )
+                          .toList(),
                     ),
         ),
+        SectionCard(
+          title: 'QR y detalle',
+          subtitle: 'Selecciona una instancia para ver su estado actual y el QR si sigue pendiente.',
+          child: selectedInstance == null
+              ? const Text(
+                  'Selecciona una instancia de la lista para ver su QR.',
+                  style: TextStyle(color: Color(0xFF475569), height: 1.5),
+                )
+              : Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Wrap(
+                      spacing: 10,
+                      runSpacing: 10,
+                      children: <Widget>[
+                        _StatusBadge(
+                          label: 'Estado',
+                          value: _statusLabel(selectedInstance),
+                          color: _statusColor(selectedInstance.status),
+                        ),
+                        _StatusBadge(
+                          label: 'Instancia',
+                          value: selectedInstance.name,
+                          color: const Color(0xFF1D4ED8),
+                        ),
+                        _StatusBadge(
+                          label: 'Telefono',
+                          value: selectedInstance.phone?.isNotEmpty == true
+                              ? selectedInstance.phone!
+                              : 'Sin detectar',
+                          color: const Color(0xFF475569),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 24),
+                    if (selectedInstance.connected)
+                      const _ConnectedChannelState()
+                    else if (qrImageBytes != null)
+                      Center(
+                        child: Container(
+                          padding: const EdgeInsets.all(16),
+                          color: Colors.white,
+                          child: Image.memory(qrImageBytes, width: 260, height: 260),
+                        ),
+                      )
+                    else
+                      const Text(
+                        'Todavia no hay un QR disponible para esta instancia.',
+                        style: TextStyle(color: Color(0xFF475569), height: 1.5),
+                      ),
+                  ],
+                ),
+        ),
       ],
+    );
+  }
+
+  String _statusLabel(ManagedWhatsAppInstanceData instance) {
+    switch (instance.status) {
+      case 'connected':
+        return 'Conectado';
+      case 'connecting':
+        return 'Esperando QR';
+      default:
+        return 'Desconectado';
+    }
+  }
+
+  Color _statusColor(String status) {
+    switch (status) {
+      case 'connected':
+        return const Color(0xFF166534);
+      case 'connecting':
+        return const Color(0xFFD97706);
+      default:
+        return const Color(0xFF475569);
+    }
+  }
+}
+
+class _InstanceTile extends StatelessWidget {
+  const _InstanceTile({
+    required this.instance,
+    required this.selected,
+    required this.onShowQr,
+    required this.onDelete,
+  });
+
+  final ManagedWhatsAppInstanceData instance;
+  final bool selected;
+  final VoidCallback onShowQr;
+  final VoidCallback? onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    final Color accent = switch (instance.status) {
+      'connected' => const Color(0xFFDCFCE7),
+      'connecting' => const Color(0xFFFEF3C7),
+      _ => const Color(0xFFF1F5F9),
+    };
+    final Color border = selected ? const Color(0xFF2563EB) : const Color(0xFFE2E8F0);
+    final Color statusColor = switch (instance.status) {
+      'connected' => const Color(0xFF166534),
+      'connecting' => const Color(0xFFB45309),
+      _ => const Color(0xFF475569),
+    };
+
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: border, width: selected ? 1.5 : 1),
+      ),
+      child: Row(
+        children: <Widget>[
+          Container(
+            width: 12,
+            height: 12,
+            decoration: BoxDecoration(
+              color: statusColor,
+              shape: BoxShape.circle,
+            ),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Text(
+                  instance.name,
+                  style: const TextStyle(
+                    color: Color(0xFF0F172A),
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: <Widget>[
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: accent,
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: Text(
+                        instance.status,
+                        style: TextStyle(color: statusColor, fontWeight: FontWeight.w700),
+                      ),
+                    ),
+                    if (instance.phone?.isNotEmpty == true)
+                      Text(
+                        instance.phone!,
+                        style: const TextStyle(color: Color(0xFF475569)),
+                      ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          OutlinedButton(
+            onPressed: onShowQr,
+            child: Text(instance.connected ? 'Ver estado' : 'Ver QR'),
+          ),
+          const SizedBox(width: 8),
+          IconButton(
+            onPressed: onDelete,
+            icon: const Icon(Icons.delete_outline_rounded),
+            color: const Color(0xFFB91C1C),
+            tooltip: 'Eliminar instancia',
+          ),
+        ],
+      ),
     );
   }
 }
@@ -361,44 +590,72 @@ class _StatusBadge extends StatelessWidget {
   const _StatusBadge({
     required this.label,
     required this.value,
-    required this.accent,
+    required this.color,
   });
 
   final String label;
   final String value;
-  final bool accent;
+  final Color color;
 
   @override
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: BoxDecoration(
-        color: accent ? const Color(0xFFEFF6FF) : const Color(0xFFF8FAFC),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(
-          color: accent ? const Color(0xFFBFDBFE) : const Color(0xFFE2E8F0),
-        ),
+        color: color.withAlpha(25),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: color.withAlpha(50)),
       ),
-      child: RichText(
-        text: TextSpan(
-          style: const TextStyle(fontSize: 13),
-          children: <InlineSpan>[
-            TextSpan(
-              text: '$label: ',
-              style: const TextStyle(
-                color: Color(0xFF64748B),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Text(
+            label,
+            style: const TextStyle(
+              color: Color(0xFF64748B),
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            value,
+            style: TextStyle(color: color, fontWeight: FontWeight.w700),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ConnectedChannelState extends StatelessWidget {
+  const _ConnectedChannelState();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: const Color(0xFFECFDF5),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: const Color(0xFFBBF7D0)),
+      ),
+      child: const Row(
+        children: <Widget>[
+          Icon(Icons.check_circle_rounded, color: Color(0xFF16A34A), size: 28),
+          SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              'La instancia ya se encuentra conectada y lista para recibir mensajes.',
+              style: TextStyle(
+                color: Color(0xFF166534),
                 fontWeight: FontWeight.w600,
+                height: 1.4,
               ),
             ),
-            TextSpan(
-              text: value,
-              style: const TextStyle(
-                color: Color(0xFF0F172A),
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
@@ -412,37 +669,18 @@ class _InlineNotice extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return DecoratedBox(
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        border: Border(left: BorderSide(color: color, width: 3)),
+        color: color.withAlpha(20),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: color.withAlpha(56)),
       ),
-      child: Padding(
-        padding: const EdgeInsets.only(left: 14),
-        child: Text(
-          message,
-          style: const TextStyle(color: Color(0xFF475569), height: 1.5),
-        ),
+      child: Text(
+        message,
+        style: TextStyle(color: color, fontWeight: FontWeight.w600),
       ),
-    );
-  }
-}
-
-class _ConnectedChannelState extends StatelessWidget {
-  const _ConnectedChannelState();
-
-  @override
-  Widget build(BuildContext context) {
-    return const Row(
-      children: <Widget>[
-        Icon(Icons.check_circle_rounded, color: Color(0xFF16A34A), size: 22),
-        SizedBox(width: 10),
-        Expanded(
-          child: Text(
-            'La instancia ya aparece conectada. No necesitas volver a escanear el codigo QR.',
-            style: TextStyle(color: Color(0xFF475569), height: 1.5),
-          ),
-        ),
-      ],
     );
   }
 }

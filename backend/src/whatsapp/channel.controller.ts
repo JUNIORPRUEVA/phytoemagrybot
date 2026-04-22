@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Post } from '@nestjs/common';
 import { CreateInstanceDto } from './dto/create-instance.dto';
 import { SetWebhookDto } from './dto/set-webhook.dto';
 import { WhatsAppService } from './whatsapp.service';
@@ -12,21 +12,31 @@ export class WhatsAppChannelController {
     return this.whatsAppService.createInstance(body.instanceName);
   }
 
-  @Get('qr/:instanceName')
-  getQr(@Param('instanceName') instanceName: string) {
-    return this.whatsAppService.getQr(instanceName);
+  @Get('list')
+  getInstances() {
+    return this.whatsAppService.getInstances();
   }
 
-  @Post('webhook/:instanceName')
+  @Get('qr/:name')
+  getQr(@Param('name') name: string) {
+    return this.whatsAppService.connectInstance(name);
+  }
+
+  @Get('status/:name')
+  getStatus(@Param('name') name: string) {
+    return this.whatsAppService.getInstanceStatus(name);
+  }
+
+  @Delete('delete/:name')
+  deleteInstance(@Param('name') name: string) {
+    return this.whatsAppService.deleteInstance(name);
+  }
+
+  @Post('webhook/:name')
   setWebhook(
-    @Param('instanceName') instanceName: string,
+    @Param('name') name: string,
     @Body() body: SetWebhookDto,
   ) {
-    return this.whatsAppService.setWebhook(instanceName, body.webhook, body.events);
-  }
-
-  @Get('status/:instanceName')
-  getStatus(@Param('instanceName') instanceName: string) {
-    return this.whatsAppService.getStatus(instanceName);
+    return this.whatsAppService.setWebhook(name, body.webhook, body.events);
   }
 }

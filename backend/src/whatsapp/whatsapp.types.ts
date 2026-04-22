@@ -27,6 +27,25 @@ export interface WhatsAppChannelStatus {
   details: Record<string, unknown>;
 }
 
+export interface WhatsAppInstanceRecord {
+  id: number;
+  name: string;
+  status: string;
+  phone: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface ManagedWhatsAppInstance {
+  id: number;
+  name: string;
+  status: 'connected' | 'disconnected' | 'connecting';
+  phone: string | null;
+  connected: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface WhatsAppQrResponse {
   instanceName: string;
   qrCodeBase64: string | null;
