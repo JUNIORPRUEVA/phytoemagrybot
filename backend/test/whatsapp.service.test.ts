@@ -326,6 +326,48 @@ test('executeEvolutionRequest requires a configured instance name', async () => 
   );
 });
 
+test('sendText falls back to instance endpoint when generic jid payload fails', async () => {
+  const service = createService();
+  const calls: Array<{ path: string; body: Record<string, unknown> }> = [];
+
+  service.createEvolutionClient = () => ({
+    post: async (path: string, body: Record<string, unknown>) => {
+      calls.push({ path, body });
+
+      if (calls.length === 1) {
+        const error = new Error('Bad request') as Error & {
+          isAxiosError: boolean;
+          response: { status: number; data: Record<string, unknown> };
+        };
+        error.isAxiosError = true;
+        error.response = {
+          status: 400,
+          data: { message: 'invalid payload' },
+        };
+        throw error;
+      }
+
+      return { data: { ok: true } };
+    },
+  });
+
+  await service.sendText(createResolvedConfig(), '18095551234', 'hola');
+
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0]?.path, '/message/sendText');
+  assert.deepEqual(calls[0]?.body, {
+    jid: '18095551234@s.whatsapp.net',
+    message: {
+      text: 'hola',
+    },
+  });
+  assert.equal(calls[1]?.path, '/message/sendText/demo');
+  assert.deepEqual(calls[1]?.body, {
+    number: '18095551234@s.whatsapp.net',
+    text: 'hola',
+  });
+});
+
 test('processIncomingAudioMessage answers short audios as text', async () => {
   const { service, sentTexts, sentAudios } = createAudioFlowService();
 

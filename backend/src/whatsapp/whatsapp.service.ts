@@ -316,35 +316,84 @@ export class WhatsAppService {
     to: string,
     text: string,
   ): Promise<void> {
+    const instanceName = this.getRequiredInstanceName(resolved.whatsapp);
     const number = this.getRequiredOutboundNumber(to);
     const jid = `${number}@s.whatsapp.net`;
+    const client = this.createEvolutionClient(resolved.whatsapp);
+    const attempts: Array<{ path: string; payloadType: string; status: number | null; data: unknown }> = [];
 
-    console.log('📤 Enviando a:', jid);
-
-    await this.createEvolutionClient(resolved.whatsapp)
-      .post('/message/sendText', {
-        jid,
-        message: {
+    const variants: Array<{ path: string; body: JsonRecord; payloadType: string }> = [
+      {
+        path: '/message/sendText',
+        body: {
+          jid,
+          message: {
+            text,
+          },
+        },
+        payloadType: 'jid-message',
+      },
+      {
+        path: `/message/sendText/${instanceName}`,
+        body: {
+          number: jid,
           text,
         },
-      })
-      .then(
-        () => undefined,
-        (error: unknown) => {
-          this.logger.error(
-            JSON.stringify({
-              event: 'evolution_request_failed',
-              action: 'sendText',
-              path: '/message/sendText',
-              jid,
-              mediatype: null,
-              hasApiBaseUrl: Boolean(resolved.whatsapp.apiBaseUrl?.trim()),
-              hasApiKey: Boolean(resolved.whatsapp.apiKey?.trim()),
-            }),
-          );
-          this.handleEvolutionError(error, 'Evolution API sendText failed');
+        payloadType: 'instance-number-jid',
+      },
+      {
+        path: `/message/sendText/${instanceName}`,
+        body: {
+          number,
+          text,
         },
-      );
+        payloadType: 'instance-number-text',
+      },
+      {
+        path: '/message/sendText',
+        body: {
+          instance: instanceName,
+          number,
+          text,
+        },
+        payloadType: 'body-instance-number-text',
+      },
+    ];
+
+    console.log('📤 Enviando a:', jid);
+    console.log('📦 Instancia:', instanceName);
+
+    let lastError: unknown;
+    for (const variant of variants) {
+      try {
+        await client.post(variant.path, variant.body);
+        return;
+      } catch (error) {
+        lastError = error;
+        attempts.push({
+          path: variant.path,
+          payloadType: variant.payloadType,
+          status: axios.isAxiosError(error) ? error.response?.status ?? null : null,
+          data: axios.isAxiosError(error) ? error.response?.data ?? null : null,
+        });
+      }
+    }
+
+    this.logger.error(
+      JSON.stringify({
+        event: 'evolution_request_failed',
+        action: 'sendText',
+        instanceName,
+        path: '/message/sendText',
+        jid,
+        mediatype: null,
+        hasApiBaseUrl: Boolean(resolved.whatsapp.apiBaseUrl?.trim()),
+        hasApiKey: Boolean(resolved.whatsapp.apiKey?.trim()),
+        attempts,
+      }),
+    );
+
+    this.handleEvolutionError(lastError, 'Evolution API sendText failed');
   }
 
   async sendImage(
