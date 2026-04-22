@@ -1,4 +1,4 @@
-import { Config } from '@prisma/client';
+import { AppConfigRecord } from '../config/config.types';
 import { StoredMessage } from '../memory/memory.types';
 
 export type AssistantReplyType = 'text' | 'audio';
@@ -9,7 +9,7 @@ export interface AssistantReply {
 }
 
 export interface GenerateReplyParams {
-  config: Config;
+  config: AppConfigRecord;
   contactId: string;
   message: string;
   history: StoredMessage[];

@@ -27,8 +27,52 @@ model Config {
   configurations Json?
   createdAt      DateTime @default(now()) @map("created_at")
   updatedAt      DateTime @updatedAt @map("updated_at")
+  aiSettings     AiSettings?
+  botSettings    BotSettings?
+  whatsappSettings WhatsAppSettings?
 
   @@map("config")
+}
+
+model AiSettings {
+  configId             Int      @id @map("config_id")
+  modelName            String   @default("gpt-4o-mini") @map("model_name")
+  temperature          Float    @default(0.4)
+  maxCompletionTokens  Int      @default(180) @map("max_completion_tokens")
+  memoryWindow         Int      @default(6) @map("memory_window")
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @updatedAt @map("updated_at")
+  config               Config   @relation(fields: [configId], references: [id], onDelete: Cascade)
+
+  @@map("ai_settings")
+}
+
+model BotSettings {
+  configId                Int      @id @map("config_id")
+  responseCacheTtlSeconds Int      @default(60) @map("response_cache_ttl_seconds")
+  spamGroupWindowMs       Int      @default(2000) @map("spam_group_window_ms")
+  allowAudioReplies       Boolean  @default(true) @map("allow_audio_replies")
+  createdAt               DateTime @default(now()) @map("created_at")
+  updatedAt               DateTime @updatedAt @map("updated_at")
+  config                  Config   @relation(fields: [configId], references: [id], onDelete: Cascade)
+
+  @@map("bot_settings")
+}
+
+model WhatsAppSettings {
+  configId           Int      @id @map("config_id")
+  webhookSecret      String   @default("") @map("webhook_secret")
+  apiBaseUrl         String   @default("") @map("api_base_url")
+  apiKey             String   @default("") @map("api_key")
+  instanceName       String   @default("") @map("instance_name")
+  fallbackMessage    String?  @map("fallback_message")
+  audioVoiceId       String?  @map("audio_voice_id")
+  elevenLabsBaseUrl  String?  @map("elevenlabs_base_url")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+  config             Config   @relation(fields: [configId], references: [id], onDelete: Cascade)
+
+  @@map("whatsapp_settings")
 }
 
 model ConversationMemory {

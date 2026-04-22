@@ -10,6 +10,11 @@ import { AssistantReply, GenerateReplyParams } from './ai.types';
 export class AiService {
   async generateReply(params: GenerateReplyParams): Promise<AssistantReply> {
     const { config, contactId, history, message } = params;
+    const aiSettings = config.aiSettings;
+    const modelName = aiSettings?.modelName || 'gpt-4o-mini';
+    const temperature = aiSettings?.temperature ?? 0.4;
+    const maxCompletionTokens = aiSettings?.maxCompletionTokens ?? 180;
+    const memoryWindow = aiSettings?.memoryWindow ?? 6;
 
     if (!config.openaiKey.trim()) {
       throw new InternalServerErrorException('OpenAI API key is not configured');
@@ -19,15 +24,15 @@ export class AiService {
       const openai = new OpenAI({ apiKey: config.openaiKey });
 
       const completion = await openai.chat.completions.create({
-        model: 'gpt-4o-mini',
-        temperature: 0.4,
-        max_completion_tokens: 180,
+        model: modelName,
+        temperature,
+        max_completion_tokens: maxCompletionTokens,
         messages: [
           {
             role: 'system',
             content: this.buildSystemPrompt(config.promptBase, contactId),
           },
-          ...history.slice(-6).map((item) => ({
+          ...history.slice(-memoryWindow).map((item) => ({
             role: item.role,
             content: item.content.slice(0, 500),
           })),

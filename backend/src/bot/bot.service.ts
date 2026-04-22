@@ -5,8 +5,6 @@ import { ClientConfigService } from '../config/config.service';
 import { MemoryService } from '../memory/memory.service';
 import { RedisService } from '../redis/redis.service';
 
-const RESPONSE_CACHE_TTL_SECONDS = 60;
-
 @Injectable()
 export class BotService {
   constructor(
@@ -58,6 +56,8 @@ export class BotService {
     }
 
     const config = await this.clientConfigService.getConfig();
+    const responseCacheTtlSeconds = config.botSettings?.responseCacheTtlSeconds ?? 60;
+    const memoryWindow = config.aiSettings?.memoryWindow ?? 6;
 
     await this.memoryService.addMessage({
       contactId: normalizedContactId,
@@ -65,7 +65,10 @@ export class BotService {
       content: normalizedMessage,
     });
 
-    const history = await this.memoryService.getRecentMessages(normalizedContactId, 6);
+    const history = await this.memoryService.getRecentMessages(
+      normalizedContactId,
+      memoryWindow,
+    );
 
     const reply = await this.aiService.generateReply({
       config,
@@ -83,7 +86,7 @@ export class BotService {
     await this.redisService.set(
       cacheKey,
       { reply: reply.content, replyType: reply.type },
-      RESPONSE_CACHE_TTL_SECONDS,
+      responseCacheTtlSeconds,
     );
 
     return { reply: reply.content, replyType: reply.type };

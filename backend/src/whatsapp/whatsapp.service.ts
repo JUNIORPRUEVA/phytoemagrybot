@@ -20,8 +20,6 @@ import {
 type HeaderMap = Record<string, string | string[] | undefined>;
 type JsonRecord = Record<string, unknown>;
 
-const SPAM_GROUP_WINDOW_MS = 2000;
-
 @Injectable()
 export class WhatsAppService {
   private readonly logger = new Logger(WhatsAppService.name);
@@ -135,11 +133,13 @@ export class WhatsAppService {
       }),
     );
 
+    const spamGroupWindowMs = resolved.config.botSettings?.spamGroupWindowMs ?? 2000;
+
     if (incoming.type === 'text') {
       const shouldScheduleFlush = await this.redisService.appendGroupedMessage(
         incoming.number,
         incoming.message,
-        SPAM_GROUP_WINDOW_MS,
+        spamGroupWindowMs,
       );
 
       if (shouldScheduleFlush) {
@@ -154,7 +154,7 @@ export class WhatsAppService {
               error instanceof Error ? error.stack : undefined,
             );
           });
-        }, SPAM_GROUP_WINDOW_MS);
+        }, spamGroupWindowMs);
       }
 
       return;
@@ -201,7 +201,10 @@ export class WhatsAppService {
       return;
     }
 
-    if (botReply.replyType === 'audio') {
+    if (
+      botReply.replyType === 'audio' &&
+      (resolved.config.botSettings?.allowAudioReplies ?? true)
+    ) {
       setImmediate(() => {
         void this.processAudioReply(resolved, contactId, botReply.reply).catch((error: unknown) => {
           this.logger.error(
@@ -260,15 +263,26 @@ export class WhatsAppService {
   private extractWhatsAppConfiguration(config: {
     configurations: unknown;
     id: number;
+    whatsappSettings?: {
+      webhookSecret: string;
+      apiBaseUrl: string;
+      apiKey: string;
+      instanceName: string;
+      fallbackMessage: string | null;
+      audioVoiceId: string | null;
+      elevenLabsBaseUrl: string | null;
+    } | null;
   }): WhatsAppClientConfiguration {
     const configurations = this.asRecord(config.configurations);
     const whatsapp = this.asRecord(configurations.whatsapp);
     const elevenLabs = this.asRecord(configurations.elevenlabs);
+    const persisted = config.whatsappSettings;
 
-    const webhookSecret = this.asString(whatsapp.webhookSecret);
-    const apiBaseUrl = this.asString(whatsapp.apiBaseUrl);
-    const apiKey = this.asString(whatsapp.apiKey);
-    const instanceName = this.asString(whatsapp.instanceName);
+    const webhookSecret = persisted?.webhookSecret?.trim() || this.asString(whatsapp.webhookSecret);
+    const apiBaseUrl = persisted?.apiBaseUrl?.trim() || this.asString(whatsapp.apiBaseUrl);
+    const apiKey = persisted?.apiKey?.trim() || this.asString(whatsapp.apiKey);
+    const instanceName =
+      persisted?.instanceName?.trim() || this.asString(whatsapp.instanceName);
 
     if (!webhookSecret || !apiBaseUrl || !apiKey || !instanceName) {
       throw new HttpException(
@@ -282,9 +296,11 @@ export class WhatsAppService {
       apiBaseUrl,
       apiKey,
       instanceName,
-      fallbackMessage: this.asString(whatsapp.fallbackMessage),
-      audioVoiceId: this.asString(whatsapp.audioVoiceId),
-      elevenLabsBaseUrl: this.asString(elevenLabs.baseUrl),
+      fallbackMessage:
+        persisted?.fallbackMessage?.trim() || this.asString(whatsapp.fallbackMessage),
+      audioVoiceId: persisted?.audioVoiceId?.trim() || this.asString(whatsapp.audioVoiceId),
+      elevenLabsBaseUrl:
+        persisted?.elevenLabsBaseUrl?.trim() || this.asString(elevenLabs.baseUrl),
     };
   }
 

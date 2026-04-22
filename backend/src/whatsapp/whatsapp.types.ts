@@ -1,4 +1,4 @@
-import { Config } from '@prisma/client';
+import { AppConfigRecord } from '../config/config.types';
 
 export type IncomingWhatsAppMessageType = 'text' | 'image' | 'audio';
 
@@ -13,7 +13,7 @@ export interface WhatsAppClientConfiguration {
 }
 
 export interface ResolvedWhatsAppClient {
-  config: Config;
+  config: AppConfigRecord;
   whatsapp: WhatsAppClientConfiguration;
 }
 
