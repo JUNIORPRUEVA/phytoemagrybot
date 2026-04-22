@@ -105,12 +105,17 @@ export class WhatsAppService {
     const normalizedInstanceName = this.normalizeInstanceName(instanceName);
     const client = this.getEvolutionClient();
     const resolvedWebhook = webhook?.trim() || this.getRequiredEnv('WEBHOOK_URL');
-    const resolvedEvents = events?.length ? events : ['messages.upsert'];
+    const resolvedEvents = this.normalizeWebhookEvents(events);
 
     try {
       await client.post(`/webhook/set/${normalizedInstanceName}`, {
-        webhook: resolvedWebhook,
-        events: resolvedEvents,
+        webhook: {
+          enabled: true,
+          url: resolvedWebhook,
+          events: resolvedEvents,
+          webhookByEvents: false,
+          webhookBase64: false,
+        },
       });
 
       return {
@@ -431,12 +436,27 @@ export class WhatsAppService {
 
     return (
       this.asString(data.instanceName) ||
+      this.asString(data.name) ||
       this.asString(instance.instanceName) ||
       this.asString(instance.name) ||
       this.asString(instanceData.instanceName) ||
       this.asString(instanceData.name) ||
       ''
     );
+  }
+
+  private normalizeWebhookEvents(events?: string[]): string[] {
+    const incomingEvents = events?.length ? events : ['messages.upsert'];
+
+    return incomingEvents.map((event) => {
+      const normalizedEvent = event.trim();
+
+      if (normalizedEvent.toLowerCase() === 'messages.upsert') {
+        return 'MESSAGES_UPSERT';
+      }
+
+      return normalizedEvent;
+    });
   }
 
   private readInstanceStatus(data: JsonRecord): string {
