@@ -1,6 +1,7 @@
 import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import Redis, { RedisOptions } from 'ioredis';
+import { StoredMessage } from '../memory/memory.types';
 
 @Injectable()
 export class RedisService implements OnModuleDestroy {
@@ -78,13 +79,63 @@ export class RedisService implements OnModuleDestroy {
     await this.client.del(key);
   }
 
+  async appendConversationMessage(
+    contactId: string,
+    message: StoredMessage,
+    limit = 10,
+    ttlSeconds = 60 * 60 * 24,
+  ): Promise<StoredMessage[]> {
+    const bufferKey = this.getConversationBufferKey(contactId);
+    const cacheKey = this.getConversationCacheKey(contactId);
+
+    await this.client.lpush(bufferKey, this.serialize(message));
+    await this.client.ltrim(bufferKey, 0, Math.max(limit - 1, 0));
+    await this.client.expire(bufferKey, ttlSeconds);
+
+    const messages = await this.getConversationMessages(contactId, limit);
+    await this.client.set(cacheKey, this.serialize(messages), 'EX', ttlSeconds);
+    return messages;
+  }
+
+  async setConversationMessages(
+    contactId: string,
+    messages: StoredMessage[],
+    ttlSeconds = 60 * 60 * 24,
+  ): Promise<void> {
+    const bufferKey = this.getConversationBufferKey(contactId);
+    const cacheKey = this.getConversationCacheKey(contactId);
+
+    const pipeline = this.client.pipeline();
+    pipeline.del(bufferKey);
+
+    const recent = messages.slice(-10);
+    for (const message of recent) {
+      pipeline.rpush(bufferKey, this.serialize(message));
+    }
+
+    pipeline.expire(bufferKey, ttlSeconds);
+    pipeline.set(cacheKey, this.serialize(recent), 'EX', ttlSeconds);
+    await pipeline.exec();
+  }
+
+  async getConversationMessages(contactId: string, limit = 10): Promise<StoredMessage[]> {
+    const cacheKey = this.getConversationCacheKey(contactId);
+    const cached = await this.get<StoredMessage[]>(cacheKey);
+    if (Array.isArray(cached) && cached.length > 0) {
+      return cached.slice(-limit);
+    }
+
+    const values = await this.client.lrange(this.getConversationBufferKey(contactId), 0, limit - 1);
+    return values.reverse().map((value) => this.deserialize<StoredMessage>(value));
+  }
+
   async appendGroupedMessage(
     contactId: string,
     message: string,
     windowMs: number,
   ): Promise<boolean> {
-    const bufferKey = this.getBufferKey(contactId);
-    const timerKey = this.getTimerKey(contactId);
+    const bufferKey = this.getGroupedBufferKey(contactId);
+    const timerKey = this.getGroupedTimerKey(contactId);
     const current = await this.client.get(bufferKey);
     const nextMessage = current ? `${current}\n${message}` : message;
 
@@ -95,7 +146,7 @@ export class RedisService implements OnModuleDestroy {
   }
 
   async consumeGroupedMessage(contactId: string): Promise<string | null> {
-    const bufferKey = this.getBufferKey(contactId);
+    const bufferKey = this.getGroupedBufferKey(contactId);
     const value = await this.client.get(bufferKey);
 
     if (value === null) {
@@ -126,12 +177,20 @@ export class RedisService implements OnModuleDestroy {
     }
   }
 
-  private getBufferKey(contactId: string): string {
+  private getConversationBufferKey(contactId: string): string {
     return `buffer:${contactId}`;
   }
 
-  private getTimerKey(contactId: string): string {
-    return `buffer:timer:${contactId}`;
+  private getConversationCacheKey(contactId: string): string {
+    return `cache:${contactId}`;
+  }
+
+  private getGroupedBufferKey(contactId: string): string {
+    return `grouped-buffer:${contactId}`;
+  }
+
+  private getGroupedTimerKey(contactId: string): string {
+    return `grouped-buffer:timer:${contactId}`;
   }
 
   private parseBoolean(value: string | undefined): boolean {

@@ -8,6 +8,8 @@ import '../services/api_service.dart';
 import '../widgets/app_text_field.dart';
 import '../widgets/section_card.dart';
 
+enum _MediaUploadKind { image, video }
+
 class GalleryPage extends StatefulWidget {
   const GalleryPage({
     super.key,
@@ -35,6 +37,7 @@ class _GalleryPageState extends State<GalleryPage> {
   String? _selectedFileName;
   String? _selectedContentType;
   String? _selectedExtension;
+  _MediaUploadKind? _selectedKind;
 
   bool get _hasSelectedFile =>
       _selectedBytes != null &&
@@ -88,23 +91,12 @@ class _GalleryPageState extends State<GalleryPage> {
     }
   }
 
-  Future<void> _pickFile() async {
+  Future<void> _pickFile(_MediaUploadKind kind) async {
     final result = await FilePicker.platform.pickFiles(
       allowMultiple: false,
       withData: true,
       type: FileType.custom,
-      allowedExtensions: const <String>[
-        'png',
-        'jpg',
-        'jpeg',
-        'gif',
-        'webp',
-        'mp4',
-        'mov',
-        'avi',
-        'webm',
-        'm4v',
-      ],
+      allowedExtensions: _allowedExtensionsFor(kind),
     );
 
     final picked = result?.files.single;
@@ -122,6 +114,16 @@ class _GalleryPageState extends State<GalleryPage> {
       return;
     }
 
+    if (!_matchesSelectedKind(kind, contentType)) {
+      _showMessage(
+        kind == _MediaUploadKind.image
+            ? 'Seleccionaste el modo imagen, pero el archivo no es una imagen.'
+            : 'Seleccionaste el modo video, pero el archivo no es un video.',
+        isError: true,
+      );
+      return;
+    }
+
     if (picked.size > 20 * 1024 * 1024) {
       _showMessage('El archivo supera el limite de 20MB.', isError: true);
       return;
@@ -132,6 +134,7 @@ class _GalleryPageState extends State<GalleryPage> {
       _selectedFileName = picked.name;
       _selectedContentType = contentType;
       _selectedExtension = picked.extension;
+      _selectedKind = kind;
       if (_titleController.text.trim().isEmpty) {
         _titleController.text = _humanizeDefaultTitle(picked.name);
       }
@@ -173,6 +176,7 @@ class _GalleryPageState extends State<GalleryPage> {
         _selectedFileName = null;
         _selectedContentType = null;
         _selectedExtension = null;
+        _selectedKind = null;
         _titleController.clear();
         _descriptionController.clear();
       });
@@ -300,9 +304,14 @@ class _GalleryPageState extends State<GalleryPage> {
                 crossAxisAlignment: WrapCrossAlignment.center,
                 children: <Widget>[
                   ElevatedButton.icon(
-                    onPressed: isBusy ? null : _pickFile,
-                    icon: const Icon(Icons.upload_file_rounded),
-                    label: const Text('Subir archivo'),
+                    onPressed: isBusy ? null : () => _pickFile(_MediaUploadKind.image),
+                    icon: const Icon(Icons.image_rounded),
+                    label: const Text('Seleccionar imagen'),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: isBusy ? null : () => _pickFile(_MediaUploadKind.video),
+                    icon: const Icon(Icons.movie_creation_rounded),
+                    label: const Text('Seleccionar video'),
                   ),
                   if (_selectedFileName != null)
                     Container(
@@ -323,7 +332,7 @@ class _GalleryPageState extends State<GalleryPage> {
                           ConstrainedBox(
                             constraints: const BoxConstraints(maxWidth: 280),
                             child: Text(
-                              _selectedFileName!,
+                              '${_selectedKind == _MediaUploadKind.video ? 'Video' : 'Imagen'}: ${_selectedFileName!}',
                               overflow: TextOverflow.ellipsis,
                             ),
                           ),
@@ -381,6 +390,24 @@ class _GalleryPageState extends State<GalleryPage> {
     };
 
     return imageTypes[normalized] ?? videoTypes[normalized] ?? _resolveContentTypeFromName(fileName);
+  }
+
+  List<String> _allowedExtensionsFor(_MediaUploadKind kind) {
+    switch (kind) {
+      case _MediaUploadKind.image:
+        return const <String>['png', 'jpg', 'jpeg', 'gif', 'webp'];
+      case _MediaUploadKind.video:
+        return const <String>['mp4', 'mov', 'avi', 'webm', 'm4v'];
+    }
+  }
+
+  bool _matchesSelectedKind(_MediaUploadKind kind, String contentType) {
+    switch (kind) {
+      case _MediaUploadKind.image:
+        return contentType.startsWith('image/');
+      case _MediaUploadKind.video:
+        return contentType.startsWith('video/');
+    }
   }
 
   String? _resolveContentTypeFromName(String fileName) {

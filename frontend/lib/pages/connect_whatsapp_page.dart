@@ -60,6 +60,13 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
     return null;
   }
 
+  bool get _hasEvolutionConfig =>
+      _config.evolutionApiUrl.trim().isNotEmpty &&
+      _config.evolutionApiKey.trim().isNotEmpty;
+
+    bool get _hasWebhookBaseConfig =>
+      _config.webhookSecret.trim().isNotEmpty && _config.webhookUrl.trim().isNotEmpty;
+
   @override
   void initState() {
     super.initState();
@@ -201,10 +208,11 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
     });
 
     try {
+      final preparedConfig = await _ensureChannelConfig(instanceName);
       final created = await widget.apiService.createInstance(instanceName);
       final webhook = await widget.apiService.setWebhook(
         created.name,
-        webhookUrl: _config.webhookUrl,
+        webhookUrl: preparedConfig.webhookUrl,
       );
       final qr = await widget.apiService.getQr(created.name);
 
@@ -254,9 +262,10 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
     });
 
     try {
+      final preparedConfig = await _ensureChannelConfig(instanceName);
       final response = await widget.apiService.setWebhook(
         instanceName,
-        webhookUrl: _config.webhookUrl,
+        webhookUrl: preparedConfig.webhookUrl,
       );
 
       if (!mounted) {
@@ -286,6 +295,125 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
         });
       }
     }
+  }
+
+  Future<ClientConfigData> _ensureChannelConfig(String instanceName) async {
+    final needsPrompt =
+        !_hasEvolutionConfig || _config.webhookSecret.trim().isEmpty || _config.webhookUrl.trim().isEmpty;
+
+    if (!needsPrompt) {
+      return _config;
+    }
+
+    final evolutionUrlController = TextEditingController(text: _config.evolutionApiUrl);
+    final evolutionApiKeyController = TextEditingController(text: _config.evolutionApiKey);
+    final webhookSecretController = TextEditingController(text: _config.webhookSecret);
+    final webhookUrlController = TextEditingController(text: _config.webhookUrl);
+
+    final values = await showDialog<_ChannelConfigValues>(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('Completar canal y webhook'),
+          content: SizedBox(
+            width: 520,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  const Text(
+                    'Para activar el webhook desde aqui, primero necesito los datos base del canal.',
+                    style: TextStyle(color: Color(0xFF475569), height: 1.4),
+                  ),
+                  const SizedBox(height: 16),
+                  AppTextField(
+                    label: 'Evolution API URL',
+                    controller: evolutionUrlController,
+                    hintText: 'https://evolution.midominio.com',
+                  ),
+                  const SizedBox(height: 14),
+                  AppTextField(
+                    label: 'Evolution API key',
+                    controller: evolutionApiKeyController,
+                    hintText: 'apikey-super-segura',
+                    obscureText: true,
+                  ),
+                  const SizedBox(height: 14),
+                  AppTextField(
+                    label: 'Webhook secret',
+                    controller: webhookSecretController,
+                    hintText: 'secreto-del-webhook',
+                    obscureText: true,
+                  ),
+                  const SizedBox(height: 14),
+                  AppTextField(
+                    label: 'Webhook URL',
+                    controller: webhookUrlController,
+                    hintText: 'https://tu-backend.com/webhook/whatsapp',
+                  ),
+                ],
+              ),
+            ),
+          ),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancelar'),
+            ),
+            FilledButton(
+              onPressed: () {
+                Navigator.of(context).pop(
+                  _ChannelConfigValues(
+                    evolutionApiUrl: evolutionUrlController.text.trim(),
+                    evolutionApiKey: evolutionApiKeyController.text.trim(),
+                    webhookSecret: webhookSecretController.text.trim(),
+                    webhookUrl: webhookUrlController.text.trim(),
+                  ),
+                );
+              },
+              child: const Text('Guardar y continuar'),
+            ),
+          ],
+        );
+      },
+    );
+
+    evolutionUrlController.dispose();
+    evolutionApiKeyController.dispose();
+    webhookSecretController.dispose();
+    webhookUrlController.dispose();
+
+    if (values == null) {
+      throw ApiException('Debes completar la configuracion del canal para continuar.');
+    }
+
+    if (
+        values.evolutionApiUrl.isEmpty ||
+        values.evolutionApiKey.isEmpty ||
+        values.webhookSecret.isEmpty ||
+        values.webhookUrl.isEmpty) {
+      throw ApiException('Todos los datos del canal y del webhook son obligatorios.');
+    }
+
+    final updatedConfig = await widget.apiService.saveChannelSettings(
+      evolutionApiUrl: values.evolutionApiUrl,
+      evolutionApiKey: values.evolutionApiKey,
+      instanceName: instanceName,
+      webhookSecret: values.webhookSecret,
+      webhookUrl: values.webhookUrl,
+    );
+
+    if (!mounted) {
+      return updatedConfig;
+    }
+
+    setState(() {
+      _applyConfig(updatedConfig);
+    });
+    widget.onConfigUpdated();
+
+    return updatedConfig;
   }
 
   Future<void> _showQrFor(String instanceName) async {
@@ -428,18 +556,26 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
           style: TextStyle(color: Color(0xFF475569), fontSize: 14),
         ),
         const SizedBox(height: 20),
-        if (!_config.whatsappConfigured) ...<Widget>[
+        if (!_hasEvolutionConfig || !_hasWebhookBaseConfig) ...<Widget>[
           const _InlineNotice(
             message:
-                'La configuracion tecnica de Evolution y webhook ya no se edita aqui. Primero completa esos datos en la configuracion del canal y luego usa esta pantalla solo para gestionar instancias.',
+                'Si falta algun dato de Evolution o del webhook, al pulsar Crear instancia o Configurar webhook se abrira un formulario para completarlo aqui mismo.',
             color: Color(0xFFD97706),
           ),
           const SizedBox(height: 20),
         ],
-        if (_config.whatsappConfigured && _webhookMessage == null) ...<Widget>[
+        if (_hasEvolutionConfig && _config.webhookUrl.trim().isEmpty && _webhookMessage == null) ...<Widget>[
           const _InlineNotice(
             message:
-                'La URL del webhook ya esta cargada. Para activar el webhook en una instancia, usa el boton Configurar webhook.',
+                'Todavia falta indicar la URL del webhook. Al pulsar Configurar webhook se te pedira esa URL y se activara para la instancia.',
+            color: Color(0xFF1D4ED8),
+          ),
+          const SizedBox(height: 20),
+        ],
+        if (_hasEvolutionConfig && _config.webhookUrl.trim().isNotEmpty && _webhookMessage == null) ...<Widget>[
+          const _InlineNotice(
+            message:
+                'La URL del webhook ya esta cargada. Ahora pulsa Configurar webhook para activarlo en la instancia seleccionada.',
             color: Color(0xFF1D4ED8),
           ),
           const SizedBox(height: 20),
@@ -466,13 +602,13 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
                 ),
               ),
               ElevatedButton(
-                onPressed: _isLoading || _isCreating || _isDeleting || !_config.whatsappConfigured
+                onPressed: _isLoading || _isCreating || _isDeleting
                     ? null
                     : _createInstance,
                 child: Text(_isCreating ? 'Creando...' : 'Crear instancia'),
               ),
               OutlinedButton(
-                onPressed: _isLoading || _isConfiguringWebhook || !_config.whatsappConfigured
+                onPressed: _isLoading || _isConfiguringWebhook
                     ? null
                     : _configureWebhook,
                 child: Text(
@@ -816,4 +952,18 @@ class _InlineNotice extends StatelessWidget {
       ),
     );
   }
+}
+
+class _ChannelConfigValues {
+  const _ChannelConfigValues({
+    required this.evolutionApiUrl,
+    required this.evolutionApiKey,
+    required this.webhookSecret,
+    required this.webhookUrl,
+  });
+
+  final String evolutionApiUrl;
+  final String evolutionApiKey;
+  final String webhookSecret;
+  final String webhookUrl;
 }

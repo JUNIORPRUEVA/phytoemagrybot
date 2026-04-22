@@ -5,10 +5,13 @@ import { MemoryService } from './memory.service';
 export class MemoryController {
   constructor(private readonly memoryService: MemoryService) {}
 
+  @Get('summary/:contactId')
+  async getSummary(@Param('contactId') contactId: string) {
+    return this.memoryService.getSummary(contactId);
+  }
+
   @Get(':contactId')
   async getConversationSnapshot(@Param('contactId') contactId: string) {
-    return {
-      messages: await this.memoryService.getRecentMessages(contactId),
-    };
+    return this.memoryService.getConversationContext(contactId);
   }
 }

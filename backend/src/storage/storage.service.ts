@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Injectable,
   InternalServerErrorException,
+  Logger,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { DeleteObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
@@ -11,21 +12,26 @@ import { StoredFileResult, UploadableStorageFile } from './storage.types';
 @Injectable()
 export class StorageService {
   private client: S3Client | null = null;
+  private readonly logger = new Logger(StorageService.name);
 
   constructor(private readonly configService: ConfigService) {}
 
   async uploadFile(file: UploadableStorageFile): Promise<StoredFileResult> {
     const key = this.buildObjectKey(file.originalname);
 
-    await this.getClient().send(
-      new PutObjectCommand({
-        Bucket: this.getBucketName(),
-        Key: key,
-        Body: file.buffer,
-        ContentType: file.mimetype,
-        CacheControl: 'public, max-age=31536000, immutable',
-      }),
-    );
+    try {
+      await this.getClient().send(
+        new PutObjectCommand({
+          Bucket: this.getBucketName(),
+          Key: key,
+          Body: file.buffer,
+          ContentType: file.mimetype,
+          CacheControl: 'public, max-age=31536000, immutable',
+        }),
+      );
+    } catch (error) {
+      this.handleStorageError(error, 'upload');
+    }
 
     return {
       key,
@@ -37,12 +43,16 @@ export class StorageService {
   async deleteFile(fileUrl: string): Promise<void> {
     const key = this.extractObjectKey(fileUrl);
 
-    await this.getClient().send(
-      new DeleteObjectCommand({
-        Bucket: this.getBucketName(),
-        Key: key,
-      }),
-    );
+    try {
+      await this.getClient().send(
+        new DeleteObjectCommand({
+          Bucket: this.getBucketName(),
+          Key: key,
+        }),
+      );
+    } catch (error) {
+      this.handleStorageError(error, 'delete');
+    }
   }
 
   private getClient(): S3Client {
@@ -111,5 +121,40 @@ export class StorageService {
     }
 
     return value;
+  }
+
+  private handleStorageError(error: unknown, operation: 'upload' | 'delete'): never {
+    const message = error instanceof Error ? error.message : 'Unknown storage error';
+
+    this.logger.error(
+      `Storage ${operation} failed: ${message}`,
+      error instanceof Error ? error.stack : undefined,
+    );
+
+    if (this.isSignatureMismatchError(error)) {
+      throw new InternalServerErrorException(
+        'Las credenciales de Cloudflare R2 no son validas. Revisa STORAGE_ENDPOINT, STORAGE_ACCESS_KEY y STORAGE_SECRET_KEY.',
+      );
+    }
+
+    throw new InternalServerErrorException(
+      `No fue posible ${operation === 'upload' ? 'subir' : 'eliminar'} el archivo en storage.`,
+    );
+  }
+
+  private isSignatureMismatchError(error: unknown): boolean {
+    if (!error || typeof error !== 'object') {
+      return false;
+    }
+
+    const candidate = error as { name?: string; Code?: string; message?: string };
+    const message = candidate.message?.toLowerCase() ?? '';
+
+    return (
+      candidate.name === 'SignatureDoesNotMatch' ||
+      candidate.Code === 'SignatureDoesNotMatch' ||
+      message.includes('signaturedoesnotmatch') ||
+      message.includes('request signature we calculated does not match')
+    );
   }
 }

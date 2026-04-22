@@ -5,6 +5,8 @@ services:
       context: ./backend
       dockerfile: dockerfile
     container_name: phytoemagrybot-backend
+    env_file:
+      - ./backend/.env
     depends_on:
       postgres:
         condition: service_healthy

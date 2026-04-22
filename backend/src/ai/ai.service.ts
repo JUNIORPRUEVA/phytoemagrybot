@@ -10,7 +10,7 @@ import { AssistantReply, GenerateReplyParams } from './ai.types';
 @Injectable()
 export class AiService {
   async generateReply(params: GenerateReplyParams): Promise<AssistantReply> {
-    const { config, fullPrompt, contactId, history, message } = params;
+    const { config, fullPrompt, contactId, history, message, context } = params;
     const aiSettings = config.aiSettings;
     const modelName = aiSettings?.modelName || 'gpt-4o-mini';
     const temperature = aiSettings?.temperature ?? 0.4;
@@ -37,6 +37,14 @@ export class AiService {
               config,
             }),
           },
+          ...(context.trim()
+            ? [
+                {
+                  role: 'system' as const,
+                  content: context,
+                },
+              ]
+            : []),
           ...history.slice(-memoryWindow).map((item) => ({
             role: item.role,
             content: item.content.slice(0, 500),

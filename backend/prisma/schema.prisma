@@ -98,6 +98,38 @@ model ConversationMemory {
   @@map("conversation_memory")
 }
 
+model ConversationMessage {
+  id        Int      @id @default(autoincrement())
+  contactId String   @map("contact_id")
+  role      String
+  content   String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([contactId, createdAt])
+  @@map("conversation_messages")
+}
+
+model ClientMemory {
+  id         Int      @id @default(autoincrement())
+  contactId  String   @unique @map("contact_id")
+  name       String?
+  interest   String?
+  lastIntent String?  @map("last_intent")
+  notes      String?
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  @@map("client_memory")
+}
+
+model ConversationSummary {
+  id         Int      @id @default(autoincrement())
+  contactId  String   @unique @map("contact_id")
+  summary    String
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  @@map("conversation_summaries")
+}
+
 model WhatsAppInstance {
   id        Int      @id @default(autoincrement())
   name      String   @unique

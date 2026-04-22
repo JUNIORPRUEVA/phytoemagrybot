@@ -14,4 +14,5 @@ export interface GenerateReplyParams {
   contactId: string;
   message: string;
   history: StoredMessage[];
+  context: string;
 }

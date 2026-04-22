@@ -4,7 +4,6 @@ import { BotConfigService } from '../bot-config/bot-config.service';
 import { ClientConfigService } from '../config/config.service';
 import { MediaService } from '../media/media.service';
 import { MemoryService } from '../memory/memory.service';
-import { RedisService } from '../redis/redis.service';
 import { BotReplyResult } from './bot.types';
 
 @Injectable()
@@ -15,7 +14,6 @@ export class BotService {
     private readonly clientConfigService: ClientConfigService,
     private readonly mediaService: MediaService,
     private readonly memoryService: MemoryService,
-    private readonly redisService: RedisService,
   ) {}
 
   async processIncomingMessage(contactId: string, message: string): Promise<BotReplyResult> {
@@ -34,43 +32,25 @@ export class BotService {
       throw new BadRequestException('message is required');
     }
 
-    const cacheKey = `cache:${normalizedContactId}:${normalizedMessage}`;
-    const cachedReply = await this.redisService.get<BotReplyResult>(cacheKey);
     const mediaFiles = await this.getMediaByKeyword(normalizedMessage);
-
-    if (cachedReply) {
-      await this.memoryService.addMessage({
-        contactId: normalizedContactId,
-        role: 'user',
-        content: normalizedMessage,
-      });
-
-      await this.memoryService.addMessage({
-        contactId: normalizedContactId,
-        role: 'assistant',
-        content: cachedReply.reply,
-      });
-
-      return {
-        ...cachedReply,
-        mediaFiles,
-      };
-    }
 
     const config = await this.clientConfigService.getConfig();
     const botConfig = await this.botConfigService.getConfig();
-    const responseCacheTtlSeconds = config.botSettings?.responseCacheTtlSeconds ?? 60;
     const memoryWindow = config.aiSettings?.memoryWindow ?? 6;
 
-    await this.memoryService.addMessage({
+    await this.memoryService.saveMessage({
       contactId: normalizedContactId,
       role: 'user',
       content: normalizedMessage,
     });
 
-    const history = await this.memoryService.getRecentMessages(
+    const memoryContext = await this.memoryService.getConversationContext(
       normalizedContactId,
       memoryWindow,
+    );
+    const history = this.excludeCurrentUserMessage(
+      memoryContext.messages,
+      normalizedMessage,
     );
 
     const reply = await this.aiService.generateReply({
@@ -79,24 +59,73 @@ export class BotService {
       contactId: normalizedContactId,
       message: normalizedMessage,
       history,
+      context: this.buildConversationContext(memoryContext),
     });
 
-    await this.memoryService.addMessage({
+    await this.memoryService.saveMessage({
       contactId: normalizedContactId,
       role: 'assistant',
       content: reply.content,
     });
-
-    await this.redisService.set(
-      cacheKey,
-      { reply: reply.content, replyType: reply.type, mediaFiles: [] },
-      responseCacheTtlSeconds,
-    );
 
     return { reply: reply.content, replyType: reply.type, mediaFiles };
   }
 
   async getMediaByKeyword(text: string) {
     return this.mediaService.getMediaByKeyword(text);
+  }
+
+  private buildConversationContext(
+    memoryContext: Awaited<ReturnType<MemoryService['getConversationContext']>>,
+  ): string {
+    const sections: string[] = [];
+
+    if (memoryContext.summary.summary?.trim()) {
+      sections.push(`Resumen de la conversacion:\n${memoryContext.summary.summary.trim()}`);
+    }
+
+    const memoryLines = [
+      memoryContext.clientMemory.name
+        ? `Nombre del cliente: ${memoryContext.clientMemory.name}`
+        : null,
+      memoryContext.clientMemory.interest
+        ? `Interes detectado: ${memoryContext.clientMemory.interest}`
+        : null,
+      memoryContext.clientMemory.lastIntent
+        ? `Ultima intencion detectada: ${memoryContext.clientMemory.lastIntent}`
+        : null,
+      memoryContext.clientMemory.notes
+        ? `Notas importantes: ${memoryContext.clientMemory.notes}`
+        : null,
+    ].filter((value): value is string => Boolean(value));
+
+    if (memoryLines.length > 0) {
+      sections.push(`Memoria persistente:\n${memoryLines.join('\n')}`);
+    }
+
+    sections.push(
+      'Usa esta memoria para continuar la conversacion de forma natural, recordar datos del cliente y evitar repetir preguntas ya resueltas.',
+    );
+
+    return sections.join('\n\n');
+  }
+
+  private excludeCurrentUserMessage(
+    history: Awaited<ReturnType<MemoryService['getRecentMessages']>>,
+    currentMessage: string,
+  ) {
+    if (history.length === 0) {
+      return history;
+    }
+
+    const lastMessage = history[history.length - 1];
+    if (
+      lastMessage.role === 'user' &&
+      lastMessage.content.trim() === currentMessage.trim()
+    ) {
+      return history.slice(0, -1);
+    }
+
+    return history;
   }
 }
