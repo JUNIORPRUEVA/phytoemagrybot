@@ -66,7 +66,7 @@ export class WhatsAppService {
         qrcode: true,
       });
 
-      return await this.getStatus(normalizedInstanceName);
+      return await this.waitForInstanceStatus(normalizedInstanceName);
     } catch (error) {
       this.handleEvolutionError(error, 'No fue posible crear la instancia de WhatsApp.');
     }
@@ -501,6 +501,38 @@ export class WhatsAppService {
     }
 
     throw new HttpException(fallbackMessage, HttpStatus.BAD_GATEWAY);
+  }
+
+  private async waitForInstanceStatus(
+    instanceName: string,
+    attempts = 5,
+  ): Promise<WhatsAppChannelStatus> {
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      try {
+        return await this.getStatus(instanceName);
+      } catch (error) {
+        const isNotFoundError =
+          error instanceof HttpException && error.getStatus() === HttpStatus.NOT_FOUND;
+
+        if (!isNotFoundError || attempt === attempts - 1) {
+          break;
+        }
+
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+      }
+    }
+
+    return {
+      provider: 'evolution',
+      instanceName,
+      status: 'pending',
+      connected: false,
+      qrCode: null,
+      qrCodeBase64: null,
+      details: {
+        message: 'La instancia fue creada y Evolution aun la esta inicializando.',
+      },
+    };
   }
 
   private extractWhatsAppConfiguration(config: {
