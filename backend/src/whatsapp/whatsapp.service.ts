@@ -317,17 +317,34 @@ export class WhatsAppService {
     text: string,
   ): Promise<void> {
     const instanceName = this.getRequiredInstanceName(resolved.whatsapp);
+    const number = this.getRequiredOutboundNumber(to);
 
-    await this.executeEvolutionRequest(
-      resolved,
-      'sendText',
-      '/message/sendText',
-      {
-        number: this.normalizeNumber(to),
-        instance: instanceName,
+    console.log('📤 Enviando a:', `${number}@s.whatsapp.net`);
+    console.log('📦 Instancia:', instanceName);
+
+    await this.createEvolutionClient(resolved.whatsapp)
+      .post(`/message/sendText/${instanceName}`, {
+        number: `${number}@s.whatsapp.net`,
         text,
-      },
-    );
+      })
+      .then(
+        () => undefined,
+        (error: unknown) => {
+          this.logger.error(
+            JSON.stringify({
+              event: 'evolution_request_failed',
+              action: 'sendText',
+              instanceName,
+              path: `/message/sendText/${instanceName}`,
+              number: `${number}@s.whatsapp.net`,
+              mediatype: null,
+              hasApiBaseUrl: Boolean(resolved.whatsapp.apiBaseUrl?.trim()),
+              hasApiKey: Boolean(resolved.whatsapp.apiKey?.trim()),
+            }),
+          );
+          this.handleEvolutionError(error, 'Evolution API sendText failed');
+        },
+      );
   }
 
   async sendImage(
