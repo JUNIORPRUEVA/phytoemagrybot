@@ -10,17 +10,21 @@ export class RedisService implements OnModuleDestroy {
   private readonly client: Redis;
 
   constructor(private readonly configService: ConfigService) {
+    const redisUrl = this.configService.get<string>('REDIS_URL')?.trim();
     const host = this.configService.get<string>('REDIS_HOST') ?? '127.0.0.1';
     const port = Number(this.configService.get<string>('REDIS_PORT') ?? 6379);
     const password = this.configService.get<string>('REDIS_PASSWORD')?.trim();
     const tlsEnabled = this.parseBoolean(this.configService.get<string>('REDIS_TLS'));
 
     const options: RedisOptions = {
-      host,
-      port,
       maxRetriesPerRequest: null,
       lazyConnect: false,
     };
+
+    if (!redisUrl) {
+      options.host = host;
+      options.port = port;
+    }
 
     if (password) {
       options.password = password;
@@ -30,10 +34,10 @@ export class RedisService implements OnModuleDestroy {
       options.tls = {};
     }
 
-    this.client = new Redis(options);
+    this.client = redisUrl ? new Redis(redisUrl, options) : new Redis(options);
 
     this.client.on('ready', () => {
-      this.logger.log(`Redis ready at ${host}:${port}`);
+      this.logger.log(redisUrl ? `Redis ready at ${redisUrl}` : `Redis ready at ${host}:${port}`);
     });
 
     this.client.on('error', (error) => {

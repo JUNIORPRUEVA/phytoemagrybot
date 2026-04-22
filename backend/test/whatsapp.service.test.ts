@@ -154,6 +154,29 @@ test('normalizeWebhookPayload extracts contactId and text from messages.upsert',
   assert.equal(result?.type, 'text');
 });
 
+test('normalizeWebhookPayload accepts direct webhook payload shape', () => {
+  const service = createService();
+
+  const result = service.normalizeWebhookPayload({
+    event: 'messages.upsert',
+    key: {
+      remoteJid: '18095551234@s.whatsapp.net',
+      fromMe: false,
+      id: 'direct-123',
+    },
+    message: {
+      extendedTextMessage: {
+        text: 'quiero info',
+      },
+    },
+    messageType: 'extendedTextMessage',
+  });
+
+  assert.equal(result?.number, '18095551234');
+  assert.equal(result?.message, 'quiero info');
+  assert.equal(result?.type, 'text');
+});
+
 test('normalizeWebhookPayload ignores outbound and unsupported events', () => {
   const service = createService();
 

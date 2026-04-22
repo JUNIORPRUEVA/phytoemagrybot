@@ -401,7 +401,7 @@ export class WhatsAppService {
       return false;
     }
 
-    const data = this.asRecord(payload.data);
+    const data = this.getWebhookMessageData(payload);
     return (
       Object.keys(this.asRecord(data.message)).length > 0 ||
       Boolean(this.asString(payload.sender) || this.asString(payload.from))
@@ -805,7 +805,7 @@ export class WhatsAppService {
   private buildEvolutionMediaPayload(
     incoming: NormalizedIncomingWhatsAppMessage,
   ): Record<string, unknown> {
-    const data = this.asRecord(this.asRecord(incoming.rawPayload).data);
+    const data = this.getWebhookMessageData(this.asRecord(incoming.rawPayload));
     const key = this.asRecord(data.key);
     const message = this.asRecord(data.message);
 
@@ -818,6 +818,19 @@ export class WhatsAppService {
       message,
       messageType: this.asString(data.messageType) || 'audioMessage',
     };
+  }
+
+  private getWebhookMessageData(payload: JsonRecord): JsonRecord {
+    const data = this.asRecord(payload.data);
+
+    if (
+      Object.keys(this.asRecord(data.message)).length > 0 ||
+      Object.keys(this.asRecord(data.key)).length > 0
+    ) {
+      return data;
+    }
+
+    return payload;
   }
 
   private buildAudioFileName(messageId: string | null, mimetype?: string): string {
@@ -1103,7 +1116,7 @@ export class WhatsAppService {
       return null;
     }
 
-    const data = this.asRecord(payload.data);
+    const data = this.getWebhookMessageData(payload);
     const key = this.asRecord(data.key);
     const message = this.asRecord(data.message);
     const fromMe = Boolean(key.fromMe ?? data.fromMe);

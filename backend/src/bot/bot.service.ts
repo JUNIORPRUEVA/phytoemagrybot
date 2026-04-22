@@ -53,6 +53,8 @@ export class BotService {
         message: normalizedMessage,
       }),
     );
+    console.log('NUMERO:', normalizedContactId);
+    console.log('MENSAJE:', normalizedMessage);
 
     await this.memoryService.saveMessage({
       contactId: normalizedContactId,
@@ -88,6 +90,7 @@ export class BotService {
         content: result.reply,
       });
 
+      console.log('RESPUESTA:', result.reply);
       this.logReply(normalizedContactId, result);
       return result;
     }
@@ -108,6 +111,7 @@ export class BotService {
       });
 
       await this.redisService.set(cacheKey, fastLaneReply, cacheTtlSeconds);
+      console.log('RESPUESTA:', fastLaneReply.reply);
       this.logReply(normalizedContactId, fastLaneReply);
       return fastLaneReply;
     }
@@ -140,6 +144,7 @@ export class BotService {
     };
 
     await this.redisService.set(cacheKey, result, cacheTtlSeconds);
+    console.log('RESPUESTA:', result.reply);
     this.logReply(normalizedContactId, result);
     return result;
   }

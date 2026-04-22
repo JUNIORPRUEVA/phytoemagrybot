@@ -12,7 +12,7 @@ export class AiService {
   async generateReply(params: GenerateReplyParams): Promise<AssistantReply> {
     const { config, fullPrompt, contactId, history, message, context } = params;
     const aiSettings = config.aiSettings;
-    const modelName = aiSettings?.modelName || 'gpt-4o-mini';
+    const modelName = process.env.OPENAI_MODEL?.trim() || aiSettings?.modelName || 'gpt-4o-mini';
     const temperature = aiSettings?.temperature ?? 0.4;
     const maxCompletionTokens = aiSettings?.maxCompletionTokens ?? 180;
     const memoryWindow = aiSettings?.memoryWindow ?? 6;
