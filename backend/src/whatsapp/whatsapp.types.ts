@@ -25,9 +25,18 @@ export interface NormalizedIncomingWhatsAppMessage {
   rawPayload: Record<string, unknown>;
 }
 
+export interface BufferedWhatsAppMessage {
+  message: string;
+  type: IncomingWhatsAppMessageType;
+  messageId: string | null;
+  receivedAt: number;
+}
+
 export interface WebhookProcessingResult {
   ok: true;
+  accepted?: true;
   ignored?: true;
+  buffered?: true;
   fallback?: true;
   deliveredAs?: 'text' | 'audio';
   contactId?: string;

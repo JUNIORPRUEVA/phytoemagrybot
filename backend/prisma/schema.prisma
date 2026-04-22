@@ -21,9 +21,9 @@ model Client {
 
 model Config {
   id             Int      @id
-  openaiKey      String   @map("openai_key")
+  openaiKey      String   @default("") @map("openai_key")
   elevenlabsKey  String?  @map("elevenlabs_key")
-  promptBase     String   @map("prompt_base")
+  promptBase     String   @default("Eres un asistente profesional de WhatsApp. Responde con claridad, foco comercial y tono amable.") @map("prompt_base")
   configurations Json?
   createdAt      DateTime @default(now()) @map("created_at")
   updatedAt      DateTime @updatedAt @map("updated_at")
@@ -33,23 +33,11 @@ model Config {
 
 model ConversationMemory {
   id        String   @id @default(cuid())
-  clientId  String   @map("client_id")
   contactId String   @map("contact_id")
   role      String
   content   String
   createdAt DateTime @default(now()) @map("created_at")
 
-  @@index([clientId, contactId, createdAt])
+  @@index([contactId, createdAt])
   @@map("conversation_memory")
-}
-
-model ConversationSummary {
-  id        String   @id @default(cuid())
-  clientId  String   @map("client_id")
-  contactId String   @map("contact_id")
-  summary   String
-  updatedAt DateTime @updatedAt @map("updated_at")
-
-  @@unique([clientId, contactId])
-  @@map("conversation_summaries")
 }

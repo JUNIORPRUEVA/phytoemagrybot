@@ -8,6 +8,7 @@ import {
 import axios, { AxiosError, AxiosInstance } from 'axios';
 import { BotService } from '../bot/bot.service';
 import { ClientConfigService } from '../config/config.service';
+import { RedisService } from '../redis/redis.service';
 import { VoiceService } from './voice.service';
 import {
   NormalizedIncomingWhatsAppMessage,
@@ -19,6 +20,8 @@ import {
 type HeaderMap = Record<string, string | string[] | undefined>;
 type JsonRecord = Record<string, unknown>;
 
+const SPAM_GROUP_WINDOW_MS = 2000;
+
 @Injectable()
 export class WhatsAppService {
   private readonly logger = new Logger(WhatsAppService.name);
@@ -26,106 +29,27 @@ export class WhatsAppService {
   constructor(
     private readonly botService: BotService,
     private readonly clientConfigService: ClientConfigService,
+    private readonly redisService: RedisService,
     private readonly voiceService: VoiceService,
   ) {}
 
-  async handleWebhook(
+  acceptWebhook(
     payload: JsonRecord,
     headers: HeaderMap,
-  ): Promise<WebhookProcessingResult> {
+  ): WebhookProcessingResult {
     this.validatePayloadShape(payload);
 
-    const resolved = await this.resolveConfig();
-    this.validateWebhook(headers, resolved.whatsapp);
-
-    const incoming = this.normalizeWebhookPayload(payload);
-    if (!incoming) {
-      this.logger.log(
-        JSON.stringify({
-          event: 'whatsapp_webhook_ignored',
-          reason: 'unsupported_or_outbound_payload',
-        }),
-      );
-
-      return { ok: true, ignored: true };
-    }
-
-    this.logger.log(
-      JSON.stringify({
-        event: 'whatsapp_webhook_received',
-        contactId: incoming.number,
-        messageType: incoming.type,
-        messageId: incoming.messageId,
-      }),
-    );
-
-    let botReply: { reply: string; replyType: 'text' | 'audio' };
-    const fallbackMessage =
-      resolved.whatsapp.fallbackMessage ??
-      'En este momento no pude procesar tu mensaje. Intenta nuevamente en unos minutos.';
-
-    try {
-      botReply = await this.botService.processIncomingMessage(
-        incoming.number,
-        incoming.message,
-      );
-    } catch (error) {
+    void this.processWebhook(payload, headers).catch((error: unknown) => {
       this.logger.error(
         JSON.stringify({
-          event: 'ai_processing_failed',
-          contactId: incoming.number,
-          messageType: incoming.type,
+          event: 'whatsapp_async_processing_failed',
+          error: error instanceof Error ? error.message : 'Unknown error',
         }),
         error instanceof Error ? error.stack : undefined,
       );
+    });
 
-      await this.sendText(resolved, incoming.number, fallbackMessage);
-
-      return {
-        ok: true,
-        fallback: true,
-        deliveredAs: 'text',
-        contactId: incoming.number,
-        messageType: incoming.type,
-      };
-    }
-
-    if (botReply.replyType === 'audio') {
-      try {
-        const audio = await this.voiceService.generateVoice(
-          botReply.reply,
-          resolved.config.elevenlabsKey ?? '',
-          resolved.whatsapp.audioVoiceId,
-          resolved.whatsapp.elevenLabsBaseUrl,
-        );
-
-        await this.sendAudio(resolved, incoming.number, audio);
-
-        return {
-          ok: true,
-          deliveredAs: 'audio',
-          contactId: incoming.number,
-          messageType: incoming.type,
-        };
-      } catch (error) {
-        this.logger.error(
-          JSON.stringify({
-            event: 'voice_generation_failed',
-            contactId: incoming.number,
-          }),
-          error instanceof Error ? error.stack : undefined,
-        );
-      }
-    }
-
-    await this.sendText(resolved, incoming.number, botReply.reply);
-
-    return {
-      ok: true,
-      deliveredAs: 'text',
-      contactId: incoming.number,
-      messageType: incoming.type,
-    };
+    return { ok: true, accepted: true };
   }
 
   async sendText(
@@ -185,6 +109,143 @@ export class WhatsAppService {
         mimetype: 'audio/mpeg',
       },
     );
+  }
+
+  private async processWebhook(payload: JsonRecord, headers: HeaderMap): Promise<void> {
+    const resolved = await this.resolveConfig();
+    this.validateWebhook(headers, resolved.whatsapp);
+
+    const incoming = this.normalizeWebhookPayload(payload);
+    if (!incoming) {
+      this.logger.log(
+        JSON.stringify({
+          event: 'whatsapp_webhook_ignored',
+          reason: 'unsupported_or_outbound_payload',
+        }),
+      );
+      return;
+    }
+
+    this.logger.log(
+      JSON.stringify({
+        event: 'whatsapp_webhook_received',
+        contactId: incoming.number,
+        messageType: incoming.type,
+        messageId: incoming.messageId,
+      }),
+    );
+
+    if (incoming.type === 'text') {
+      const shouldScheduleFlush = await this.redisService.appendGroupedMessage(
+        incoming.number,
+        incoming.message,
+        SPAM_GROUP_WINDOW_MS,
+      );
+
+      if (shouldScheduleFlush) {
+        setTimeout(() => {
+          void this.flushGroupedTextMessage(incoming.number).catch((error: unknown) => {
+            this.logger.error(
+              JSON.stringify({
+                event: 'grouped_message_flush_failed',
+                contactId: incoming.number,
+                error: error instanceof Error ? error.message : 'Unknown error',
+              }),
+              error instanceof Error ? error.stack : undefined,
+            );
+          });
+        }, SPAM_GROUP_WINDOW_MS);
+      }
+
+      return;
+    }
+
+    await this.processAndDeliverMessage(resolved, incoming.number, incoming.message, incoming.type);
+  }
+
+  private async flushGroupedTextMessage(contactId: string): Promise<void> {
+    const resolved = await this.resolveConfig();
+    const groupedMessage = await this.redisService.consumeGroupedMessage(contactId);
+
+    if (!groupedMessage?.trim()) {
+      return;
+    }
+
+    await this.processAndDeliverMessage(resolved, contactId, groupedMessage, 'text');
+  }
+
+  private async processAndDeliverMessage(
+    resolved: ResolvedWhatsAppClient,
+    contactId: string,
+    message: string,
+    messageType: 'text' | 'image' | 'audio',
+  ): Promise<void> {
+    const fallbackMessage =
+      resolved.whatsapp.fallbackMessage ??
+      'En este momento no pude procesar tu mensaje. Intenta nuevamente en unos minutos.';
+
+    let botReply: { reply: string; replyType: 'text' | 'audio' };
+    try {
+      botReply = await this.botService.processIncomingMessage(contactId, message);
+    } catch (error) {
+      this.logger.error(
+        JSON.stringify({
+          event: 'ai_processing_failed',
+          contactId,
+          messageType,
+        }),
+        error instanceof Error ? error.stack : undefined,
+      );
+
+      await this.sendText(resolved, contactId, fallbackMessage);
+      return;
+    }
+
+    if (botReply.replyType === 'audio') {
+      setImmediate(() => {
+        void this.processAudioReply(resolved, contactId, botReply.reply).catch((error: unknown) => {
+          this.logger.error(
+            JSON.stringify({
+              event: 'audio_delivery_failed',
+              contactId,
+              error: error instanceof Error ? error.message : 'Unknown error',
+            }),
+            error instanceof Error ? error.stack : undefined,
+          );
+        });
+      });
+
+      return;
+    }
+
+    await this.sendText(resolved, contactId, botReply.reply);
+  }
+
+  private async processAudioReply(
+    resolved: ResolvedWhatsAppClient,
+    contactId: string,
+    text: string,
+  ): Promise<void> {
+    try {
+      const audio = await this.voiceService.generateVoice(
+        text,
+        resolved.config.elevenlabsKey ?? '',
+        resolved.whatsapp.audioVoiceId,
+        resolved.whatsapp.elevenLabsBaseUrl,
+      );
+
+      await this.sendAudio(resolved, contactId, audio);
+    } catch (error) {
+      this.logger.error(
+        JSON.stringify({
+          event: 'voice_generation_failed',
+          contactId,
+        }),
+        error instanceof Error ? error.stack : undefined,
+      );
+
+      await this.sendText(resolved, contactId, text);
+    }
   }
 
   private async resolveConfig(): Promise<ResolvedWhatsAppClient> {
@@ -375,10 +436,7 @@ export class WhatsAppService {
         error instanceof Error ? error.stack : undefined,
       );
 
-      throw new HttpException(
-        `Evolution API ${action} failed`,
-        HttpStatus.BAD_GATEWAY,
-      );
+      throw new HttpException(`Evolution API ${action} failed`, HttpStatus.BAD_GATEWAY);
     }
   }
 
