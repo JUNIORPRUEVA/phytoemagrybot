@@ -62,6 +62,8 @@ export class WhatsAppService {
     try {
       await client.post('/instance/create', {
         instanceName: normalizedInstanceName,
+        integration: 'WHATSAPP-BAILEYS',
+        qrcode: true,
       });
 
       return await this.getStatus(normalizedInstanceName);
