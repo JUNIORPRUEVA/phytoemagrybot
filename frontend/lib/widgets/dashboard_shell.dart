@@ -4,8 +4,12 @@ import '../pages/config_page.dart';
 import '../pages/prompt_page.dart';
 import '../services/api_service.dart';
 
+const String _appVersionLabel = 'v1.0.0';
+
 class DashboardShell extends StatefulWidget {
-  const DashboardShell({super.key});
+  const DashboardShell({super.key, ApiService? apiService}) : _apiService = apiService;
+
+  final ApiService? _apiService;
 
   @override
   State<DashboardShell> createState() => _DashboardShellState();
@@ -13,108 +17,125 @@ class DashboardShell extends StatefulWidget {
 
 class _DashboardShellState extends State<DashboardShell> {
   int _selectedIndex = 0;
+  late final ApiService _apiService;
+  late Future<ClientConfigData> _overviewFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _apiService = widget._apiService ?? ApiService();
+    _overviewFuture = _apiService.getConfig();
+  }
+
+  void _refreshOverview() {
+    setState(() {
+      _overviewFuture = _apiService.getConfig();
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
-    final apiService = ApiService();
-
     final pages = <Widget>[
-      ConfigPage(apiService: apiService),
-      PromptPage(apiService: apiService),
+      ConfigPage(apiService: _apiService, onConfigUpdated: _refreshOverview),
+      PromptPage(apiService: _apiService, onConfigUpdated: _refreshOverview),
     ];
 
     return Scaffold(
+      appBar: AppBar(
+        title: const Text('Control Bot PhytoEmagry'),
+        actions: <Widget>[
+          Padding(
+            padding: const EdgeInsets.only(right: 24),
+            child: Center(
+              child: FutureBuilder<ClientConfigData>(
+                future: _overviewFuture,
+                builder: (context, snapshot) {
+                  final config = snapshot.data;
+                  return _HeaderStateBadge(
+                    label: config?.botLabel ?? 'Cargando',
+                    accent: config?.botReady ?? false,
+                  );
+                },
+              ),
+            ),
+          ),
+        ],
+      ),
+      bottomNavigationBar: const _AppFooter(),
       body: SafeArea(
         child: Row(
           children: <Widget>[
             Container(
-              width: 280,
-              margin: const EdgeInsets.all(20),
-              padding: const EdgeInsets.all(18),
+              width: 92,
+              margin: const EdgeInsets.fromLTRB(0, 0, 0, 0),
+              padding: const EdgeInsets.symmetric(vertical: 18, horizontal: 14),
               decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: const Color(0xFFE2E8F0)),
+                color: const Color(0xFFF8FAFC),
+                border: Border(
+                  right: BorderSide(color: const Color(0xFFE2E8F0)),
+                ),
               ),
               child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
                 children: <Widget>[
-                  const _BrandBlock(),
-                  const SizedBox(height: 28),
-                  _NavButton(
-                    title: 'Configuración',
+                  const _SidebarBrandIcon(),
+                  const SizedBox(height: 24),
+                  _IconNavButton(
+                    label: 'Configuracion',
                     icon: Icons.tune_rounded,
                     selected: _selectedIndex == 0,
                     onTap: () => setState(() => _selectedIndex = 0),
                   ),
-                  const SizedBox(height: 10),
-                  _NavButton(
-                    title: 'Prompt',
+                  const SizedBox(height: 12),
+                  _IconNavButton(
+                    label: 'Prompts',
                     icon: Icons.auto_awesome_rounded,
                     selected: _selectedIndex == 1,
                     onTap: () => setState(() => _selectedIndex = 1),
                   ),
-                  const Spacer(),
-                  Container(
-                    padding: const EdgeInsets.all(14),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFF8FAFC),
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    child: const Text(
-                      'El panel consume el backend productivo y solo administra configuraciones públicas y prompts.',
-                      style: TextStyle(
-                        color: Color(0xFF475569),
-                        fontSize: 13,
-                        height: 1.5,
-                      ),
-                    ),
+                  const SizedBox(height: 16),
+                  FutureBuilder<ClientConfigData>(
+                    future: _overviewFuture,
+                    builder: (context, snapshot) {
+                      final config = snapshot.data;
+                      final accent = snapshot.hasError
+                          ? const Color(0xFFFEE2E2)
+                          : (config?.botReady ?? false)
+                              ? const Color(0xFFDCFCE7)
+                              : const Color(0xFFFEF3C7);
+                      final iconColor = snapshot.hasError
+                          ? const Color(0xFFDC2626)
+                          : (config?.botReady ?? false)
+                              ? const Color(0xFF16A34A)
+                              : const Color(0xFFD97706);
+
+                      return Tooltip(
+                        message: snapshot.hasError
+                            ? 'Estado: error de conexion'
+                            : config == null
+                                ? 'Estado: cargando'
+                                : 'Estado: ${config.botLabel}',
+                        child: Container(
+                          width: 52,
+                          height: 52,
+                          decoration: BoxDecoration(
+                            color: accent,
+                            borderRadius: BorderRadius.circular(18),
+                          ),
+                          child: Icon(Icons.podcasts_rounded, color: iconColor),
+                        ),
+                      );
+                    },
                   ),
+                  const Spacer(),
+                  const _SidebarFooter(),
                 ],
               ),
             ),
             Expanded(
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(0, 20, 20, 20),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: <Widget>[
-                    Container(
-                      padding: const EdgeInsets.all(20),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(20),
-                        border: Border.all(color: const Color(0xFFE2E8F0)),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: <Widget>[
-                          Text('Panel de control', style: Theme.of(context).textTheme.headlineMedium),
-                          const SizedBox(height: 8),
-                          const Text(
-                            'Administra configuración operativa y prompt base del bot de WhatsApp desde una interfaz SaaS.',
-                            style: TextStyle(
-                              color: Color(0xFF475569),
-                              fontSize: 14,
-                            ),
-                          ),
-                          const SizedBox(height: 24),
-                          const Wrap(
-                            spacing: 12,
-                            runSpacing: 12,
-                            children: <Widget>[
-                              _InfoBadge(label: 'API Base URL', value: ApiService.defaultBaseUrl),
-                              _InfoBadge(label: 'Modo', value: 'Producción'),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 20),
-                    Expanded(
-                      child: SingleChildScrollView(child: pages[_selectedIndex]),
-                    ),
-                  ],
+                padding: const EdgeInsets.fromLTRB(28, 24, 28, 12),
+                child: SingleChildScrollView(
+                  child: pages[_selectedIndex],
                 ),
               ),
             ),
@@ -125,88 +146,62 @@ class _DashboardShellState extends State<DashboardShell> {
   }
 }
 
-class _BrandBlock extends StatelessWidget {
-  const _BrandBlock();
+class _SidebarBrandIcon extends StatelessWidget {
+  const _SidebarBrandIcon();
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      children: <Widget>[
-        Container(
-          width: 44,
-          height: 44,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(14),
-            gradient: const LinearGradient(
-              colors: <Color>[Color(0xFF2563EB), Color(0xFF0EA5E9)],
-            ),
-          ),
-          child: const Icon(Icons.forum_rounded, color: Colors.white),
-        ),
-        const SizedBox(width: 14),
-        const Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              Text(
-                'PhytoEmagry',
-                style: TextStyle(
-                  fontSize: 17,
-                  fontWeight: FontWeight.w800,
-                  color: Color(0xFF0F172A),
-                ),
-              ),
-              SizedBox(height: 4),
-              Text(
-                'Bot SaaS Control',
-                style: TextStyle(
-                  color: Color(0xFF64748B),
-                  fontSize: 13,
-                ),
-              ),
-            ],
+    return Tooltip(
+      message: 'PhytoEmagry',
+      child: Container(
+        width: 56,
+        height: 56,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(18),
+          gradient: const LinearGradient(
+            colors: <Color>[Color(0xFF2563EB), Color(0xFF0EA5E9)],
           ),
         ),
-      ],
+        child: const Icon(Icons.spa_rounded, color: Colors.white, size: 28),
+      ),
     );
   }
 }
 
-class _NavButton extends StatelessWidget {
-  const _NavButton({
-    required this.title,
+class _IconNavButton extends StatelessWidget {
+  const _IconNavButton({
+    required this.label,
     required this.icon,
     required this.selected,
     required this.onTap,
   });
 
-  final String title;
+  final String label;
   final IconData icon;
   final bool selected;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: selected ? const Color(0xFFE0ECFF) : Colors.transparent,
-      borderRadius: BorderRadius.circular(14),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(14),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-          child: Row(
-            children: <Widget>[
-              Icon(icon, color: selected ? const Color(0xFF2563EB) : const Color(0xFF475569)),
-              const SizedBox(width: 12),
-              Text(
-                title,
-                style: TextStyle(
-                  color: selected ? const Color(0xFF2563EB) : const Color(0xFF0F172A),
-                  fontWeight: FontWeight.w700,
-                ),
+    return Tooltip(
+      message: label,
+      waitDuration: const Duration(milliseconds: 250),
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        child: Material(
+          color: selected ? const Color(0xFFEFF6FF) : Colors.transparent,
+          borderRadius: BorderRadius.circular(18),
+          child: InkWell(
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(18),
+            child: SizedBox(
+              width: 56,
+              height: 56,
+              child: Icon(
+                icon,
+                color: selected ? const Color(0xFF2563EB) : const Color(0xFF64748B),
               ),
-            ],
+            ),
           ),
         ),
       ),
@@ -214,42 +209,87 @@ class _NavButton extends StatelessWidget {
   }
 }
 
-class _InfoBadge extends StatelessWidget {
-  const _InfoBadge({required this.label, required this.value});
+class _HeaderStateBadge extends StatelessWidget {
+  const _HeaderStateBadge({required this.label, required this.accent});
 
   final String label;
-  final String value;
+  final bool accent;
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: <Widget>[
-        Text(
-          label,
-          style: const TextStyle(
-            color: Color(0xFF64748B),
-            fontSize: 12,
-            fontWeight: FontWeight.w600,
-          ),
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: accent ? const Color(0xFFECFDF5) : const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(
+          color: accent ? const Color(0xFFBBF7D0) : const Color(0xFFE2E8F0),
         ),
-        const SizedBox(height: 6),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-          decoration: BoxDecoration(
-            color: const Color(0xFFF8FAFC),
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: const Color(0xFFE2E8F0)),
-          ),
-          child: Text(
-            value,
-            style: const TextStyle(
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: accent ? const Color(0xFF166534) : const Color(0xFF334155),
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+  }
+}
+
+class _SidebarFooter extends StatelessWidget {
+  const _SidebarFooter();
+
+  @override
+  Widget build(BuildContext context) {
+    return RotatedBox(
+      quarterTurns: 3,
+      child: Text(
+        'PhytoEmagry  $_appVersionLabel',
+        style: const TextStyle(
+          color: Color(0xFF94A3B8),
+          fontSize: 11,
+          fontWeight: FontWeight.w600,
+          letterSpacing: 0.2,
+        ),
+      ),
+    );
+  }
+}
+
+class _AppFooter extends StatelessWidget {
+  const _AppFooter();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 42,
+      padding: const EdgeInsets.symmetric(horizontal: 28),
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        border: Border(top: BorderSide(color: Color(0xFFE2E8F0))),
+      ),
+      child: const Row(
+        children: <Widget>[
+          Text(
+            'PhytoEmagry',
+            style: TextStyle(
               color: Color(0xFF0F172A),
               fontWeight: FontWeight.w700,
             ),
           ),
-        ),
-      ],
+          Spacer(),
+          Text(
+            'v1.0.0',
+            style: TextStyle(color: Color(0xFF64748B)),
+          ),
+          SizedBox(width: 16),
+          Text(
+            'Todos los derechos reservados',
+            style: TextStyle(color: Color(0xFF64748B)),
+          ),
+        ],
+      ),
     );
   }
 }

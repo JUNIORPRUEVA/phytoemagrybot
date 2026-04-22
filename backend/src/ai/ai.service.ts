@@ -4,6 +4,7 @@ import {
   InternalServerErrorException,
 } from '@nestjs/common';
 import OpenAI from 'openai';
+import { AppConfigRecord } from '../config/config.types';
 import { AssistantReply, GenerateReplyParams } from './ai.types';
 
 @Injectable()
@@ -30,7 +31,11 @@ export class AiService {
         messages: [
           {
             role: 'system',
-            content: this.buildSystemPrompt(config.promptBase, contactId),
+            content: this.buildSystemPromptFromConfig({
+              promptBase: config.promptBase,
+              contactId,
+              config,
+            }),
           },
           ...history.slice(-memoryWindow).map((item) => ({
             role: item.role,
@@ -61,16 +66,60 @@ export class AiService {
       throw new BadGatewayException('OpenAI request failed');
     }
   }
-  private buildSystemPrompt(promptBase: string, contactId: string): string {
+  private buildSystemPromptFromConfig(params: {
+    promptBase: string;
+    contactId: string;
+    config?: AppConfigRecord;
+  }): string {
+    const promptSections = this.readPromptSections(params.config?.configurations);
+
     return [
-      promptBase.trim() ||
+      params.promptBase.trim() ||
         'Eres un asistente profesional de WhatsApp. Responde con claridad, foco comercial y tono amable.',
-      `Contacto actual: ${contactId}`,
+      ...promptSections,
+      `Contacto actual: ${params.contactId}`,
       'Responde breve, útil y alineado al negocio del cliente.',
       'Devuelve siempre un JSON valido con las claves "type" y "content".',
       'Usa type="text" para respuestas normales.',
       'Usa type="audio" solo cuando el usuario pida explicitamente una respuesta en audio o voz.',
     ].join('\n\n');
+  }
+
+  private readPromptSections(configurations: unknown): string[] {
+    const prompts = this.asRecord(this.asRecord(configurations).prompts);
+    const sections: string[] = [];
+
+    this.appendPromptSection(sections, 'Saludo inicial', prompts['greeting']);
+    this.appendPromptSection(sections, 'Informacion de la empresa', prompts['companyInfo']);
+    this.appendPromptSection(sections, 'Catalogo y detalles de productos', prompts['productInfo']);
+    this.appendPromptSection(sections, 'Guia comercial y tono de ventas', prompts['salesGuidelines']);
+    this.appendPromptSection(sections, 'Manejo de objeciones', prompts['objectionHandling']);
+    this.appendPromptSection(sections, 'Cierre y conversion', prompts['closingPrompt']);
+    this.appendPromptSection(sections, 'Soporte y postventa', prompts['supportPrompt']);
+
+    return sections;
+  }
+
+  private appendPromptSection(
+    sections: string[],
+    title: string,
+    value: unknown,
+  ): void {
+    const content = typeof value === 'string' ? value.trim() : '';
+
+    if (!content) {
+      return;
+    }
+
+    sections.push(`${title}:\n${content}`);
+  }
+
+  private asRecord(value: unknown): Record<string, unknown> {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      return {};
+    }
+
+    return value as Record<string, unknown>;
   }
 
   private parseAssistantReply(response: string): AssistantReply {
