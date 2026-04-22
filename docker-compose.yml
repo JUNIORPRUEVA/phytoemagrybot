@@ -3,7 +3,7 @@ services:
   backend:
     build:
       context: ./backend
-      dockerfile: Dockerfile
+      dockerfile: dockerfile
     container_name: phytoemagrybot-backend
     depends_on:
       postgres:
@@ -30,7 +30,7 @@ services:
     image: postgres:16-alpine
     container_name: phytoemagrybot-postgres
     environment:
-      POSTGRES_DB: phytoemagrybot
+      POSTGRES_DB: phytoemagry
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
     ports:
@@ -38,7 +38,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U postgres -d phytoemagrybot']
+      test: ['CMD-SHELL', 'pg_isready -U postgres -d phytoemagry']
       interval: 10s
       timeout: 5s
       retries: 5
