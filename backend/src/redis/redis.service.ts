@@ -1,6 +1,6 @@
 import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import Redis from 'ioredis';
+import Redis, { RedisOptions } from 'ioredis';
 
 @Injectable()
 export class RedisService implements OnModuleDestroy {
@@ -11,16 +11,28 @@ export class RedisService implements OnModuleDestroy {
   constructor(private readonly configService: ConfigService) {
     const host = this.configService.get<string>('REDIS_HOST') ?? '127.0.0.1';
     const port = Number(this.configService.get<string>('REDIS_PORT') ?? 6379);
+    const password = this.configService.get<string>('REDIS_PASSWORD')?.trim();
+    const tlsEnabled = this.parseBoolean(this.configService.get<string>('REDIS_TLS'));
 
-    this.client = new Redis({
+    const options: RedisOptions = {
       host,
       port,
       maxRetriesPerRequest: null,
       lazyConnect: false,
-    });
+    };
 
-    this.client.on('connect', () => {
-      this.logger.log(`Redis connected to ${host}:${port}`);
+    if (password) {
+      options.password = password;
+    }
+
+    if (tlsEnabled) {
+      options.tls = {};
+    }
+
+    this.client = new Redis(options);
+
+    this.client.on('ready', () => {
+      this.logger.log(`Redis ready at ${host}:${port}`);
     });
 
     this.client.on('error', (error) => {
@@ -120,5 +132,13 @@ export class RedisService implements OnModuleDestroy {
 
   private getTimerKey(contactId: string): string {
     return `buffer:timer:${contactId}`;
+  }
+
+  private parseBoolean(value: string | undefined): boolean {
+    if (!value) {
+      return false;
+    }
+
+    return ['true', '1', 'yes', 'on'].includes(value.trim().toLowerCase());
   }
 }
