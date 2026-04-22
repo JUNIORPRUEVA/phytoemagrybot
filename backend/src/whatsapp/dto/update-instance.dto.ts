@@ -1,4 +1,4 @@
-import { IsOptional, IsString } from '@nestjs/common';
+import { IsOptional, IsString } from 'class-validator';
 
 export class UpdateInstanceDto {
   @IsString()
