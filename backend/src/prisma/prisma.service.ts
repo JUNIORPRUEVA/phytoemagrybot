@@ -27,4 +27,16 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
   async onModuleDestroy(): Promise<void> {
     await this.$disconnect();
   }
+
+  async checkHealth(): Promise<boolean> {
+    try {
+      await this.$queryRawUnsafe('SELECT 1');
+      return true;
+    } catch (error) {
+      this.logger.warn(
+        `Prisma health check failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      );
+      return false;
+    }
+  }
 }

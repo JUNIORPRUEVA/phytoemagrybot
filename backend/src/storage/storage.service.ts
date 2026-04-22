@@ -83,11 +83,12 @@ export class StorageService {
     const bucket = this.getBucketName();
     const encodedKey = this.encodeObjectKey(key);
 
-    if (publicUrl) {
-      return `${baseUrl}/${encodedKey}`;
-    }
+    const candidate = publicUrl
+      ? `${baseUrl}/${encodedKey}`
+      : `${baseUrl}/${bucket}/${encodedKey}`;
 
-    return `${baseUrl}/${bucket}/${encodedKey}`;
+    this.ensureAbsoluteUrl(candidate);
+    return candidate;
   }
 
   private extractObjectKey(fileUrl: string): string {
@@ -115,6 +116,17 @@ export class StorageService {
       .split('/')
       .map((segment) => encodeURIComponent(segment))
       .join('/');
+  }
+
+  private ensureAbsoluteUrl(value: string): void {
+    try {
+      const url = new URL(value);
+      if (!url.protocol.startsWith('http')) {
+        throw new Error('Invalid protocol');
+      }
+    } catch {
+      throw new InternalServerErrorException('La URL publica generada para storage no es valida.');
+    }
   }
 
   private getBucketName(): string {

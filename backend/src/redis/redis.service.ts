@@ -157,6 +157,17 @@ export class RedisService implements OnModuleDestroy {
     return value;
   }
 
+  async ping(): Promise<boolean> {
+    try {
+      return (await this.client.ping()) === 'PONG';
+    } catch (error) {
+      this.logger.warn(
+        `Redis ping failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      );
+      return false;
+    }
+  }
+
   async onModuleDestroy(): Promise<void> {
     await this.client.quit();
   }

@@ -218,6 +218,9 @@ export class WhatsAppService {
       resolved.whatsapp.webhookUrl?.trim() ||
       this.getOptionalEnv('WEBHOOK_URL') ||
       '';
+    const webhookHeaders = resolved.whatsapp.webhookSecret?.trim()
+      ? { 'x-webhook-secret': resolved.whatsapp.webhookSecret.trim() }
+      : undefined;
     const resolvedEvents = this.normalizeWebhookEvents(events);
 
     if (!resolvedWebhook) {
@@ -232,6 +235,7 @@ export class WhatsAppService {
         webhook: {
           enabled: true,
           url: resolvedWebhook,
+          headers: webhookHeaders,
           events: resolvedEvents,
           webhookByEvents: false,
           webhookBase64: false,
@@ -378,6 +382,11 @@ export class WhatsAppService {
   }
 
   private looksLikeMessageWebhook(payload: JsonRecord): boolean {
+    const event = this.asString(payload.event)?.toLowerCase();
+    if (event && event !== 'messages.upsert') {
+      return false;
+    }
+
     const data = this.asRecord(payload.data);
     return (
       Object.keys(this.asRecord(data.message)).length > 0 ||
@@ -681,9 +690,7 @@ export class WhatsAppService {
       status: instance.status as InstanceStatus,
       phone: instance.phone,
       connected: instance.status === 'connected',
-      webhookReady:
-        webhookConfig.webhookSecretConfigured &&
-        this.isWebhookVerified(evolutionWebhook, expectedWebhookUrl),
+      webhookReady: this.isWebhookVerified(evolutionWebhook, expectedWebhookUrl),
       webhookTarget,
       createdAt: instance.createdAt.toISOString(),
       updatedAt: instance.updatedAt.toISOString(),
@@ -732,7 +739,7 @@ export class WhatsAppService {
     }
 
     const providedSecret = this.readHeader(headers, 'x-webhook-secret');
-    if (providedSecret && providedSecret !== expectedSecret) {
+    if (!providedSecret || providedSecret !== expectedSecret) {
       throw new HttpException('Invalid webhook secret', HttpStatus.UNAUTHORIZED);
     }
   }
@@ -741,7 +748,7 @@ export class WhatsAppService {
     payload: JsonRecord,
   ): NormalizedIncomingWhatsAppMessage | null {
     const event = typeof payload.event === 'string' ? payload.event : undefined;
-    if (event && !event.includes('message')) {
+    if (event && event.toLowerCase() !== 'messages.upsert') {
       return null;
     }
 
