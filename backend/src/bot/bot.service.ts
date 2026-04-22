@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { AssistantReply } from '../ai/ai.types';
 import { AiService } from '../ai/ai.service';
+import { BotConfigService } from '../bot-config/bot-config.service';
 import { ClientConfigService } from '../config/config.service';
 import { MemoryService } from '../memory/memory.service';
 import { RedisService } from '../redis/redis.service';
@@ -9,6 +10,7 @@ import { RedisService } from '../redis/redis.service';
 export class BotService {
   constructor(
     private readonly aiService: AiService,
+    private readonly botConfigService: BotConfigService,
     private readonly clientConfigService: ClientConfigService,
     private readonly memoryService: MemoryService,
     private readonly redisService: RedisService,
@@ -56,6 +58,7 @@ export class BotService {
     }
 
     const config = await this.clientConfigService.getConfig();
+  const botConfig = await this.botConfigService.getConfig();
     const responseCacheTtlSeconds = config.botSettings?.responseCacheTtlSeconds ?? 60;
     const memoryWindow = config.aiSettings?.memoryWindow ?? 6;
 
@@ -72,6 +75,7 @@ export class BotService {
 
     const reply = await this.aiService.generateReply({
       config,
+      fullPrompt: this.botConfigService.getFullPrompt(botConfig),
       contactId: normalizedContactId,
       message: normalizedMessage,
       history,

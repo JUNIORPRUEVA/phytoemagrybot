@@ -10,6 +10,7 @@ export interface AssistantReply {
 
 export interface GenerateReplyParams {
   config: AppConfigRecord;
+  fullPrompt: string;
   contactId: string;
   message: string;
   history: StoredMessage[];

@@ -4,6 +4,7 @@ export type IncomingWhatsAppMessageType = 'text' | 'image' | 'audio';
 
 export interface WhatsAppClientConfiguration {
   webhookSecret: string;
+  webhookUrl?: string;
   apiBaseUrl: string;
   apiKey: string;
   instanceName: string;
@@ -42,6 +43,8 @@ export interface ManagedWhatsAppInstance {
   status: 'connected' | 'disconnected' | 'connecting';
   phone: string | null;
   connected: boolean;
+  webhookReady: boolean;
+  webhookTarget: string | null;
   createdAt: string;
   updatedAt: string;
 }

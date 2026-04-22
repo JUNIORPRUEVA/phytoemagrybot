@@ -23,6 +23,7 @@ class ClientConfigData {
     required this.evolutionApiKey,
     required this.instanceName,
     required this.webhookSecret,
+    required this.webhookUrl,
     required this.fallbackMessage,
     required this.audioVoiceId,
     required this.elevenLabsBaseUrl,
@@ -52,6 +53,7 @@ class ClientConfigData {
   final String evolutionApiKey;
   final String instanceName;
   final String webhookSecret;
+  final String webhookUrl;
   final String fallbackMessage;
   final String audioVoiceId;
   final String elevenLabsBaseUrl;
@@ -75,7 +77,10 @@ class ClientConfigData {
       evolutionApiUrl.isNotEmpty &&
       evolutionApiKey.isNotEmpty &&
       instanceName.isNotEmpty &&
-      webhookSecret.isNotEmpty;
+      webhookSecret.isNotEmpty &&
+      webhookUrl.isNotEmpty;
+
+    bool get webhookReady => webhookSecret.isNotEmpty && webhookUrl.isNotEmpty;
 
   bool get botReady => backendOnline && openaiConfigured && whatsappConfigured;
 
@@ -114,6 +119,9 @@ class ClientConfigData {
     if (webhookSecret.isEmpty) {
       next.add('Falta el webhook secret del bot.');
     }
+    if (webhookUrl.isEmpty) {
+      next.add('Falta la URL publica del webhook.');
+    }
 
     return next;
   }
@@ -129,6 +137,7 @@ class ClientConfigData {
       evolutionApiKey: '',
       instanceName: '',
       webhookSecret: '',
+      webhookUrl: '',
       fallbackMessage: '',
       audioVoiceId: '',
       elevenLabsBaseUrl: '',
@@ -174,6 +183,7 @@ class ClientConfigData {
       evolutionApiKey: (whatsapp['apiKey'] as String?) ?? '',
       instanceName: (whatsapp['instanceName'] as String?) ?? '',
       webhookSecret: (whatsapp['webhookSecret'] as String?) ?? '',
+      webhookUrl: (whatsapp['webhookUrl'] as String?) ?? '',
       fallbackMessage: (whatsapp['fallbackMessage'] as String?) ?? '',
       audioVoiceId: (whatsapp['audioVoiceId'] as String?) ?? '',
       elevenLabsBaseUrl: (elevenlabs['baseUrl'] as String?) ?? '',
@@ -201,6 +211,32 @@ class ApiHealthData {
 
   final bool online;
   final String status;
+}
+
+class BotPromptConfigData {
+  const BotPromptConfigData({
+    required this.id,
+    required this.promptBase,
+    required this.promptShort,
+    required this.promptHuman,
+    required this.promptSales,
+  });
+
+  final int id;
+  final String promptBase;
+  final String promptShort;
+  final String promptHuman;
+  final String promptSales;
+
+  factory BotPromptConfigData.fromJson(Map<String, dynamic> json) {
+    return BotPromptConfigData(
+      id: (json['id'] as int?) ?? 1,
+      promptBase: (json['promptBase'] as String?) ?? '',
+      promptShort: (json['promptShort'] as String?) ?? '',
+      promptHuman: (json['promptHuman'] as String?) ?? '',
+      promptSales: (json['promptSales'] as String?) ?? '',
+    );
+  }
 }
 
 class WhatsAppChannelData {
@@ -279,6 +315,8 @@ class ManagedWhatsAppInstanceData {
     required this.status,
     required this.phone,
     required this.connected,
+    required this.webhookReady,
+    required this.webhookTarget,
     required this.createdAt,
     required this.updatedAt,
   });
@@ -288,6 +326,8 @@ class ManagedWhatsAppInstanceData {
   final String status;
   final String? phone;
   final bool connected;
+  final bool webhookReady;
+  final String? webhookTarget;
   final DateTime? createdAt;
   final DateTime? updatedAt;
 
@@ -300,6 +340,8 @@ class ManagedWhatsAppInstanceData {
       status: (json['status'] as String?) ?? 'disconnected',
       phone: json['phone'] as String?,
       connected: (json['connected'] as bool?) ?? false,
+      webhookReady: (json['webhookReady'] as bool?) ?? false,
+      webhookTarget: json['webhookTarget'] as String?,
       createdAt: _parseDateTime(json['createdAt']),
       updatedAt: _parseDateTime(json['updatedAt']),
     );
@@ -368,6 +410,35 @@ class ApiService {
     );
   }
 
+  Future<BotPromptConfigData> getBotPromptConfig() async {
+    final response = await _client.get(
+      _buildUri('/bot-config'),
+      headers: _headers,
+    );
+
+    return BotPromptConfigData.fromJson(_decodeResponse(response));
+  }
+
+  Future<BotPromptConfigData> saveBotPromptConfig({
+    required String promptBase,
+    required String promptShort,
+    required String promptHuman,
+    required String promptSales,
+  }) async {
+    final response = await _client.post(
+      _buildUri('/bot-config'),
+      headers: _headers,
+      body: jsonEncode(<String, dynamic>{
+        'promptBase': promptBase,
+        'promptShort': promptShort,
+        'promptHuman': promptHuman,
+        'promptSales': promptSales,
+      }),
+    );
+
+    return BotPromptConfigData.fromJson(_decodeResponse(response));
+  }
+
   Future<ClientConfigData> saveConfig({
     String? openaiKey,
     String? elevenLabsKey,
@@ -375,6 +446,7 @@ class ApiService {
     required String evolutionApiKey,
     required String instanceName,
     required String webhookSecret,
+    required String webhookUrl,
     required String fallbackMessage,
     required String audioVoiceId,
     required String elevenLabsBaseUrl,
@@ -393,6 +465,7 @@ class ApiService {
           'apiKey': evolutionApiKey,
           'instanceName': instanceName,
           'webhookSecret': webhookSecret,
+          'webhookUrl': webhookUrl,
           'fallbackMessage': fallbackMessage,
           'audioVoiceId': audioVoiceId,
         },
@@ -482,6 +555,7 @@ class ApiService {
     required String evolutionApiKey,
     required String instanceName,
     required String webhookSecret,
+    required String webhookUrl,
   }) async {
     final current = await getConfig();
     return saveConfig(
@@ -489,6 +563,7 @@ class ApiService {
       evolutionApiKey: evolutionApiKey,
       instanceName: instanceName,
       webhookSecret: webhookSecret,
+      webhookUrl: webhookUrl,
       fallbackMessage: current.fallbackMessage,
       audioVoiceId: current.audioVoiceId,
       elevenLabsBaseUrl: current.elevenLabsBaseUrl,
@@ -503,6 +578,7 @@ class ApiService {
   }
 
   Future<ClientConfigData> saveToolSettings({
+    String? openaiKey,
     String? elevenLabsKey,
     required String elevenLabsBaseUrl,
     required String audioVoiceId,
@@ -510,11 +586,13 @@ class ApiService {
   }) async {
     final current = await getConfig();
     return saveConfig(
+      openaiKey: openaiKey,
       elevenLabsKey: elevenLabsKey,
       evolutionApiUrl: current.evolutionApiUrl,
       evolutionApiKey: current.evolutionApiKey,
       instanceName: current.instanceName,
       webhookSecret: current.webhookSecret,
+      webhookUrl: current.webhookUrl,
       fallbackMessage: current.fallbackMessage,
       audioVoiceId: audioVoiceId,
       elevenLabsBaseUrl: elevenLabsBaseUrl,
@@ -562,11 +640,12 @@ class ApiService {
     return WhatsAppQrData.fromJson(_decodeResponse(response));
   }
 
-  Future<WhatsAppWebhookData> setWebhook(String instanceName) async {
+  Future<WhatsAppWebhookData> setWebhook(String instanceName, {String? webhookUrl}) async {
     final response = await _client.post(
       _buildUri('/whatsapp/webhook/${Uri.encodeComponent(instanceName)}'),
       headers: _headers,
       body: jsonEncode(<String, dynamic>{
+        if (webhookUrl != null && webhookUrl.trim().isNotEmpty) 'webhook': webhookUrl.trim(),
         'events': <String>['messages.upsert'],
       }),
     );

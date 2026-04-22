@@ -22,6 +22,8 @@ class _FakeApiService extends ApiService {
       status: 'connecting',
       phone: null,
       connected: false,
+      webhookReady: true,
+      webhookTarget: 'https://example.com/webhook/whatsapp',
       createdAt: DateTime(2026),
       updatedAt: DateTime(2026),
     );
@@ -36,6 +38,8 @@ class _FakeApiService extends ApiService {
         status: 'connecting',
         phone: null,
         connected: false,
+        webhookReady: true,
+        webhookTarget: 'https://example.com/webhook/whatsapp',
         createdAt: DateTime(2026),
         updatedAt: DateTime(2026),
       ),
@@ -43,7 +47,7 @@ class _FakeApiService extends ApiService {
   }
 
   @override
-  Future<WhatsAppWebhookData> setWebhook(String instanceName) async {
+  Future<WhatsAppWebhookData> setWebhook(String instanceName, {String? webhookUrl}) async {
     return const WhatsAppWebhookData(
       instanceName: 'test-instance',
       webhook: 'https://example.com/webhook/whatsapp',
@@ -70,6 +74,8 @@ class _FakeApiService extends ApiService {
       status: 'connecting',
       phone: null,
       connected: false,
+      webhookReady: true,
+      webhookTarget: 'https://example.com/webhook/whatsapp',
       createdAt: DateTime(2026),
       updatedAt: DateTime(2026),
     );

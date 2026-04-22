@@ -19,15 +19,7 @@ class ConfigPage extends StatefulWidget {
 }
 
 class _ConfigPageState extends State<ConfigPage> {
-  final TextEditingController _openAiKeyController = TextEditingController();
-  final TextEditingController _elevenLabsKeyController = TextEditingController();
-  final TextEditingController _evolutionUrlController = TextEditingController();
-  final TextEditingController _evolutionApiKeyController = TextEditingController();
-  final TextEditingController _instanceNameController = TextEditingController();
-  final TextEditingController _webhookSecretController = TextEditingController();
   final TextEditingController _fallbackMessageController = TextEditingController();
-  final TextEditingController _audioVoiceIdController = TextEditingController();
-  final TextEditingController _elevenLabsBaseUrlController = TextEditingController();
   final TextEditingController _aiModelController = TextEditingController();
   final TextEditingController _temperatureController = TextEditingController();
   final TextEditingController _memoryWindowController = TextEditingController();
@@ -57,15 +49,7 @@ class _ConfigPageState extends State<ConfigPage> {
 
   @override
   void dispose() {
-    _openAiKeyController.dispose();
-    _elevenLabsKeyController.dispose();
-    _evolutionUrlController.dispose();
-    _evolutionApiKeyController.dispose();
-    _instanceNameController.dispose();
-    _webhookSecretController.dispose();
     _fallbackMessageController.dispose();
-    _audioVoiceIdController.dispose();
-    _elevenLabsBaseUrlController.dispose();
     _aiModelController.dispose();
     _temperatureController.dispose();
     _memoryWindowController.dispose();
@@ -105,13 +89,7 @@ class _ConfigPageState extends State<ConfigPage> {
   void _applyConfig(ClientConfigData config) {
     setState(() {
       _config = config;
-      _evolutionUrlController.text = config.evolutionApiUrl;
-      _evolutionApiKeyController.text = config.evolutionApiKey;
-      _instanceNameController.text = config.instanceName;
-      _webhookSecretController.text = config.webhookSecret;
       _fallbackMessageController.text = config.fallbackMessage;
-      _audioVoiceIdController.text = config.audioVoiceId;
-      _elevenLabsBaseUrlController.text = config.elevenLabsBaseUrl;
       _aiModelController.text = config.aiModelName;
       _temperatureController.text = config.aiTemperature.toString();
       _memoryWindowController.text = config.aiMemoryWindow.toString();
@@ -119,8 +97,6 @@ class _ConfigPageState extends State<ConfigPage> {
       _cacheTtlController.text = config.responseCacheTtlSeconds.toString();
       _spamWindowController.text = config.spamGroupWindowMs.toString();
       _allowAudioReplies = config.allowAudioReplies;
-      _openAiKeyController.clear();
-      _elevenLabsKeyController.clear();
     });
   }
 
@@ -131,19 +107,14 @@ class _ConfigPageState extends State<ConfigPage> {
 
     try {
       final config = await widget.apiService.saveConfig(
-        openaiKey: _openAiKeyController.text.trim().isEmpty
-            ? null
-            : _openAiKeyController.text.trim(),
-        elevenLabsKey: _elevenLabsKeyController.text.trim().isEmpty
-            ? null
-            : _elevenLabsKeyController.text.trim(),
-        evolutionApiUrl: _evolutionUrlController.text.trim(),
-        evolutionApiKey: _evolutionApiKeyController.text.trim(),
-        instanceName: _instanceNameController.text.trim(),
-        webhookSecret: _webhookSecretController.text.trim(),
+      evolutionApiUrl: _config.evolutionApiUrl,
+      evolutionApiKey: _config.evolutionApiKey,
+      instanceName: _config.instanceName,
+      webhookSecret: _config.webhookSecret,
+      webhookUrl: _config.webhookUrl,
         fallbackMessage: _fallbackMessageController.text.trim(),
-        audioVoiceId: _audioVoiceIdController.text.trim(),
-        elevenLabsBaseUrl: _elevenLabsBaseUrlController.text.trim(),
+      audioVoiceId: _config.audioVoiceId,
+      elevenLabsBaseUrl: _config.elevenLabsBaseUrl,
         aiModelName: _aiModelController.text.trim().isEmpty
             ? 'gpt-4o-mini'
             : _aiModelController.text.trim(),
@@ -223,72 +194,26 @@ class _ConfigPageState extends State<ConfigPage> {
                   ),
                   _StatusPill(
                     title: 'OpenAI',
-                    value: _config.openaiConfigured ? 'Configurado' : 'Pendiente',
+                    value: _config.openaiConfigured ? 'Configurado en Herramientas' : 'Pendiente en Herramientas',
                     accent: _config.openaiConfigured,
                   ),
                   _StatusPill(
                     title: 'WhatsApp',
-                    value: _config.whatsappConfigured ? 'Listo' : 'Incompleto',
+                    value: _config.whatsappConfigured ? 'Listo en Canales' : 'Pendiente en Canales',
                     accent: _config.whatsappConfigured,
                   ),
                 ],
+              ),
+              const SizedBox(height: 20),
+              const _InlineInfo(
+                message:
+                    'Las credenciales de OpenAI, Evolution, instancia y webhook se gestionan en Herramientas y Canales para mantener esta pantalla limpia.',
               ),
               const SizedBox(height: 20),
               Wrap(
                 spacing: 18,
                 runSpacing: 18,
                 children: <Widget>[
-                  SizedBox(
-                    width: 360,
-                    child: AppTextField(
-                      label: 'OpenAI API key',
-                      controller: _openAiKeyController,
-                      hintText: 'sk-proj-...',
-                      obscureText: true,
-                      enabled: !isBusy,
-                      helperText: _config.openaiConfigured
-                          ? 'Dejalo vacio para mantener la clave actual.'
-                          : 'Todavia no hay clave configurada.',
-                    ),
-                  ),
-                  SizedBox(
-                    width: 360,
-                    child: AppTextField(
-                      label: 'Evolution API URL',
-                      controller: _evolutionUrlController,
-                      hintText: 'https://evolution.midominio.com',
-                      enabled: !isBusy,
-                    ),
-                  ),
-                  SizedBox(
-                    width: 360,
-                    child: AppTextField(
-                      label: 'Evolution API key',
-                      controller: _evolutionApiKeyController,
-                      hintText: 'apikey-super-segura',
-                      obscureText: true,
-                      enabled: !isBusy,
-                    ),
-                  ),
-                  SizedBox(
-                    width: 360,
-                    child: AppTextField(
-                      label: 'Instance name',
-                      controller: _instanceNameController,
-                      hintText: 'phytoemagry-main',
-                      enabled: !isBusy,
-                    ),
-                  ),
-                  SizedBox(
-                    width: 360,
-                    child: AppTextField(
-                      label: 'Webhook secret',
-                      controller: _webhookSecretController,
-                      hintText: 'secreto-del-webhook',
-                      obscureText: true,
-                      enabled: !isBusy,
-                    ),
-                  ),
                   SizedBox(
                     width: 360,
                     child: AppTextField(
@@ -422,6 +347,33 @@ class _StatusPill extends StatelessWidget {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _InlineInfo extends StatelessWidget {
+  const _InlineInfo({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFFEFF6FF),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFBFDBFE)),
+      ),
+      child: Text(
+        message,
+        style: const TextStyle(
+          color: Color(0xFF1E3A8A),
+          fontWeight: FontWeight.w600,
+          height: 1.45,
         ),
       ),
     );

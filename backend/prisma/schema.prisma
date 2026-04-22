@@ -59,6 +59,18 @@ model BotSettings {
   @@map("bot_settings")
 }
 
+model BotConfig {
+  id          Int      @id @default(1)
+  promptBase  String   @map("prompt_base")
+  promptShort String   @map("prompt_short")
+  promptHuman String   @map("prompt_human")
+  promptSales String   @map("prompt_sales")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@map("bot_config")
+}
+
 model WhatsAppSettings {
   configId           Int      @id @map("config_id")
   webhookSecret      String   @default("") @map("webhook_secret")

@@ -32,6 +32,10 @@ class ConnectWhatsAppPage extends GestionWhatsAppPage {
 
 class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
   final TextEditingController _instanceNameController = TextEditingController();
+  final TextEditingController _evolutionUrlController = TextEditingController();
+  final TextEditingController _evolutionApiKeyController = TextEditingController();
+  final TextEditingController _webhookSecretController = TextEditingController();
+  final TextEditingController _webhookUrlController = TextEditingController();
 
   Timer? _refreshTimer;
   List<ManagedWhatsAppInstanceData> _instances = const <ManagedWhatsAppInstanceData>[];
@@ -41,7 +45,10 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
   bool _isCreating = false;
   bool _isRefreshing = false;
   bool _isDeleting = false;
+  bool _isSavingChannel = false;
+  bool _isConfiguringWebhook = false;
   String? _errorMessage;
+  String? _webhookMessage;
 
   ManagedWhatsAppInstanceData? get _selectedInstance {
     final selectedName = _selectedInstanceName;
@@ -61,7 +68,7 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
   @override
   void initState() {
     super.initState();
-    _loadInstances();
+    _loadPage();
     _refreshTimer = Timer.periodic(const Duration(seconds: 5), (_) {
       unawaited(_loadInstances(showLoader: false, preserveMessage: true));
     });
@@ -71,7 +78,52 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
   void dispose() {
     _refreshTimer?.cancel();
     _instanceNameController.dispose();
+    _evolutionUrlController.dispose();
+    _evolutionApiKeyController.dispose();
+    _webhookSecretController.dispose();
+    _webhookUrlController.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadPage() async {
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
+
+    try {
+      final config = await widget.apiService.getConfig();
+      if (!mounted) {
+        return;
+      }
+
+      _applyConfig(config);
+      await _loadInstances(showLoader: false, preserveMessage: true);
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _errorMessage = error.toString().replaceFirst('Exception: ', '');
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
+  }
+
+  void _applyConfig(ClientConfigData config) {
+    _evolutionUrlController.text = config.evolutionApiUrl;
+    _evolutionApiKeyController.text = config.evolutionApiKey;
+    _webhookSecretController.text = config.webhookSecret;
+    _webhookUrlController.text = config.webhookUrl;
+    if (_instanceNameController.text.trim().isEmpty) {
+      _instanceNameController.text = config.instanceName;
+    }
   }
 
   Future<void> _loadInstances({
@@ -127,6 +179,9 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
         _instances = instances;
         _selectedInstanceName = nextSelectedName;
         _qrCodeBase64 = nextQrCodeBase64;
+        if (selected != null && selected.webhookReady) {
+          _webhookMessage = 'Webhook configurado y listo para recibir mensajes.';
+        }
         if (!preserveMessage) {
           _errorMessage = null;
         }
@@ -164,8 +219,12 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
     });
 
     try {
+      await _saveChannelSettings(showMessage: false);
       final created = await widget.apiService.createInstance(instanceName);
-      await widget.apiService.setWebhook(created.name);
+      final webhook = await widget.apiService.setWebhook(
+        created.name,
+        webhookUrl: _webhookUrlController.text.trim(),
+      );
       final qr = await widget.apiService.getQr(created.name);
 
       if (!mounted) {
@@ -175,6 +234,7 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
       _instanceNameController.clear();
       _selectedInstanceName = created.name;
       _qrCodeBase64 = qr.qrCodeBase64;
+      _webhookMessage = webhook.message;
 
       await _loadInstances(showLoader: false, preserveMessage: true);
       widget.onConfigUpdated();
@@ -195,6 +255,102 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
       if (mounted) {
         setState(() {
           _isCreating = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _saveChannelSettings({bool showMessage = true}) async {
+    setState(() {
+      _isSavingChannel = true;
+      _errorMessage = null;
+    });
+
+    try {
+      final config = await widget.apiService.saveChannelSettings(
+        evolutionApiUrl: _evolutionUrlController.text.trim(),
+        evolutionApiKey: _evolutionApiKeyController.text.trim(),
+        instanceName: _instanceNameController.text.trim(),
+        webhookSecret: _webhookSecretController.text.trim(),
+        webhookUrl: _webhookUrlController.text.trim(),
+      );
+
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _applyConfig(config);
+      });
+      widget.onConfigUpdated();
+      if (showMessage) {
+        _showMessage('Canal y webhook guardados correctamente.');
+      }
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+
+      final message = error.toString().replaceFirst('Exception: ', '');
+      setState(() {
+        _errorMessage = message;
+      });
+      if (showMessage) {
+        _showMessage(message, isError: true);
+      }
+      rethrow;
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSavingChannel = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _configureWebhook() async {
+    final instanceName = _selectedInstanceName ?? _instanceNameController.text.trim();
+    if (instanceName.isEmpty) {
+      _showMessage('Selecciona o escribe una instancia para configurar el webhook.', isError: true);
+      return;
+    }
+
+    setState(() {
+      _isConfiguringWebhook = true;
+      _errorMessage = null;
+    });
+
+    try {
+      await _saveChannelSettings(showMessage: false);
+      final response = await widget.apiService.setWebhook(
+        instanceName,
+        webhookUrl: _webhookUrlController.text.trim(),
+      );
+
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _selectedInstanceName = instanceName;
+        _webhookMessage = response.message;
+      });
+      await _loadInstances(showLoader: false, preserveMessage: true);
+      _showMessage(response.message);
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+
+      final message = error.toString().replaceFirst('Exception: ', '');
+      setState(() {
+        _errorMessage = message;
+      });
+      _showMessage(message, isError: true);
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isConfiguringWebhook = false;
         });
       }
     }
@@ -345,8 +501,8 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
           const SizedBox(height: 20),
         ],
         SectionCard(
-          title: 'Nueva instancia',
-          subtitle: 'La creacion configura webhook y deja listo el QR para escaneo.',
+          title: 'Canal y webhook',
+          subtitle: 'Aqui se guardan Evolution API, webhook secret y la URL publica del webhook.',
           child: Wrap(
             spacing: 16,
             runSpacing: 16,
@@ -355,15 +511,69 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
               SizedBox(
                 width: 360,
                 child: AppTextField(
+                  label: 'Evolution API URL',
+                  controller: _evolutionUrlController,
+                  hintText: 'https://evolution.midominio.com',
+                  enabled: !_isSavingChannel && !_isCreating && !_isConfiguringWebhook,
+                ),
+              ),
+              SizedBox(
+                width: 360,
+                child: AppTextField(
+                  label: 'Evolution API key',
+                  controller: _evolutionApiKeyController,
+                  hintText: 'apikey-super-segura',
+                  obscureText: true,
+                  enabled: !_isSavingChannel && !_isCreating && !_isConfiguringWebhook,
+                ),
+              ),
+              SizedBox(
+                width: 360,
+                child: AppTextField(
+                  label: 'Webhook secret',
+                  controller: _webhookSecretController,
+                  hintText: 'secreto-del-webhook',
+                  obscureText: true,
+                  enabled: !_isSavingChannel && !_isCreating && !_isConfiguringWebhook,
+                ),
+              ),
+              SizedBox(
+                width: 360,
+                child: AppTextField(
+                  label: 'Webhook URL publica',
+                  controller: _webhookUrlController,
+                  hintText: 'https://tu-backend.com/webhook/whatsapp',
+                  enabled: !_isSavingChannel && !_isCreating && !_isConfiguringWebhook,
+                ),
+              ),
+              SizedBox(
+                width: 360,
+                child: AppTextField(
                   label: 'Nombre de instancia',
                   controller: _instanceNameController,
                   hintText: 'phytoemagry-main',
-                  enabled: !_isCreating && !_isDeleting,
+                  enabled: !_isCreating && !_isDeleting && !_isSavingChannel,
                 ),
               ),
               ElevatedButton(
-                onPressed: _isLoading || _isCreating || _isDeleting ? null : _createInstance,
+                onPressed: _isLoading || _isSavingChannel || _isCreating || _isConfiguringWebhook
+                    ? null
+                    : _saveChannelSettings,
+                child: Text(_isSavingChannel ? 'Guardando...' : 'Guardar canal'),
+              ),
+              ElevatedButton(
+                onPressed: _isLoading || _isCreating || _isDeleting || _isSavingChannel
+                    ? null
+                    : _createInstance,
                 child: Text(_isCreating ? 'Creando...' : 'Crear instancia'),
+              ),
+              OutlinedButton(
+                onPressed: _isLoading || _isConfiguringWebhook || _isSavingChannel
+                    ? null
+                    : _configureWebhook,
+                child: Text(
+                  _isConfiguringWebhook ? 'Configurando webhook...' : 'Configurar webhook',
+                ),
               ),
               OutlinedButton(
                 onPressed: _isLoading || _isCreating || _isDeleting
@@ -374,6 +584,10 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
             ],
           ),
         ),
+        if (_webhookMessage != null) ...<Widget>[
+          _InlineNotice(message: _webhookMessage!, color: const Color(0xFF166534)),
+          const SizedBox(height: 20),
+        ],
         SectionCard(
           title: 'Instancias registradas',
           subtitle: 'El estado se refresca automaticamente cada 5 segundos desde Evolution.',
@@ -437,8 +651,22 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
                               : 'Sin detectar',
                           color: const Color(0xFF475569),
                         ),
+                        _StatusBadge(
+                          label: 'Webhook',
+                          value: selectedInstance.webhookReady ? 'Listo' : 'Pendiente',
+                          color: selectedInstance.webhookReady
+                              ? const Color(0xFF166534)
+                              : const Color(0xFFD97706),
+                        ),
                       ],
                     ),
+                    if (selectedInstance.webhookTarget?.isNotEmpty == true) ...<Widget>[
+                      const SizedBox(height: 12),
+                      Text(
+                        'Destino webhook: ${selectedInstance.webhookTarget}',
+                        style: const TextStyle(color: Color(0xFF475569), height: 1.4),
+                      ),
+                    ],
                     const SizedBox(height: 24),
                     if (selectedInstance.connected)
                       const _ConnectedChannelState()

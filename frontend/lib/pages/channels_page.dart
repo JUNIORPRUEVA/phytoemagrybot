@@ -27,6 +27,7 @@ class _ChannelsPageState extends State<ChannelsPage> {
   final TextEditingController _evolutionApiKeyController = TextEditingController();
   final TextEditingController _instanceNameController = TextEditingController();
   final TextEditingController _webhookSecretController = TextEditingController();
+  final TextEditingController _webhookUrlController = TextEditingController();
 
   bool _isLoading = true;
   bool _isSaving = false;
@@ -47,6 +48,7 @@ class _ChannelsPageState extends State<ChannelsPage> {
     _evolutionApiKeyController.dispose();
     _instanceNameController.dispose();
     _webhookSecretController.dispose();
+    _webhookUrlController.dispose();
     super.dispose();
   }
 
@@ -84,6 +86,7 @@ class _ChannelsPageState extends State<ChannelsPage> {
       _evolutionApiKeyController.text = config.evolutionApiKey;
       _instanceNameController.text = config.instanceName;
       _webhookSecretController.text = config.webhookSecret;
+      _webhookUrlController.text = config.webhookUrl;
     });
   }
 
@@ -120,6 +123,7 @@ class _ChannelsPageState extends State<ChannelsPage> {
         evolutionApiKey: _evolutionApiKeyController.text.trim(),
         instanceName: _instanceNameController.text.trim(),
         webhookSecret: _webhookSecretController.text.trim(),
+        webhookUrl: _webhookUrlController.text.trim(),
       );
 
       if (!mounted) {
@@ -155,6 +159,7 @@ class _ChannelsPageState extends State<ChannelsPage> {
         evolutionApiKey: _evolutionApiKeyController.text.trim(),
         instanceName: _instanceNameController.text.trim(),
         webhookSecret: _webhookSecretController.text.trim(),
+        webhookUrl: _webhookUrlController.text.trim(),
       );
 
       final channel = await widget.apiService.createWhatsAppInstance();

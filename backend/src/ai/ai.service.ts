@@ -10,7 +10,7 @@ import { AssistantReply, GenerateReplyParams } from './ai.types';
 @Injectable()
 export class AiService {
   async generateReply(params: GenerateReplyParams): Promise<AssistantReply> {
-    const { config, contactId, history, message } = params;
+    const { config, fullPrompt, contactId, history, message } = params;
     const aiSettings = config.aiSettings;
     const modelName = aiSettings?.modelName || 'gpt-4o-mini';
     const temperature = aiSettings?.temperature ?? 0.4;
@@ -32,7 +32,7 @@ export class AiService {
           {
             role: 'system',
             content: this.buildSystemPromptFromConfig({
-              promptBase: config.promptBase,
+              fullPrompt,
               contactId,
               config,
             }),
@@ -67,15 +67,15 @@ export class AiService {
     }
   }
   private buildSystemPromptFromConfig(params: {
-    promptBase: string;
+    fullPrompt: string;
     contactId: string;
     config?: AppConfigRecord;
   }): string {
     const promptSections = this.readPromptSections(params.config?.configurations);
 
     return [
-      params.promptBase.trim() ||
-        'Eres un asistente profesional de WhatsApp. Responde con claridad, foco comercial y tono amable.',
+      params.fullPrompt.trim() ||
+        'Eres un asistente de ventas por WhatsApp. Responde corto, claro y natural. No hables mucho. No expliques de mas. Habla como una persona real dominicana y enfocate en vender.',
       ...promptSections,
       `Contacto actual: ${params.contactId}`,
       'Responde breve, útil y alineado al negocio del cliente.',

@@ -115,7 +115,7 @@ export class WhatsAppService {
       orderBy: { createdAt: 'desc' },
     });
 
-    return instances.map((instance) => this.toManagedInstance(instance));
+    return Promise.all(instances.map((instance) => this.toManagedInstance(instance)));
   }
 
   async getInstanceStatus(name: string): Promise<ManagedWhatsAppInstance> {
@@ -212,8 +212,20 @@ export class WhatsAppService {
     events?: string[],
   ): Promise<WhatsAppWebhookConfigResponse> {
     const instanceName = this.normalizeInstanceName(name);
-    const resolvedWebhook = webhook?.trim() || this.getRequiredEnv('WEBHOOK_URL');
+    const resolved = await this.resolveConfig();
+    const resolvedWebhook =
+      webhook?.trim() ||
+      resolved.whatsapp.webhookUrl?.trim() ||
+      this.getOptionalEnv('WEBHOOK_URL') ||
+      '';
     const resolvedEvents = this.normalizeWebhookEvents(events);
+
+    if (!resolvedWebhook) {
+      throw new HttpException(
+        'Debes configurar la URL del webhook antes de activarlo.',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
 
     try {
       await this.getEvolutionClient().post(`/webhook/set/${instanceName}`, {
@@ -566,13 +578,19 @@ export class WhatsAppService {
     return this.toManagedInstance(instance);
   }
 
-  private toManagedInstance(instance: WhatsAppInstanceRecord): ManagedWhatsAppInstance {
+  private async toManagedInstance(instance: WhatsAppInstanceRecord): Promise<ManagedWhatsAppInstance> {
+    const webhookConfig = await this.getConfiguredWebhookMetadata();
     return {
       id: instance.id,
       name: instance.name,
       status: instance.status as InstanceStatus,
       phone: instance.phone,
       connected: instance.status === 'connected',
+      webhookReady:
+        webhookConfig.webhookSecretConfigured &&
+        webhookConfig.webhookUrl.length > 0 &&
+        webhookConfig.instanceName == instance.name,
+      webhookTarget: webhookConfig.webhookUrl.length > 0 ? webhookConfig.webhookUrl : null,
       createdAt: instance.createdAt.toISOString(),
       updatedAt: instance.updatedAt.toISOString(),
     };
@@ -599,6 +617,7 @@ export class WhatsAppService {
     return {
       webhookSecret:
         persisted?.webhookSecret?.trim() || this.asString(whatsapp.webhookSecret) || '',
+      webhookUrl: this.asString(whatsapp.webhookUrl),
       apiBaseUrl: persisted?.apiBaseUrl?.trim() || this.asString(whatsapp.apiBaseUrl) || '',
       apiKey: persisted?.apiKey?.trim() || this.asString(whatsapp.apiKey) || '',
       instanceName:
@@ -860,7 +879,7 @@ export class WhatsAppService {
     return normalized;
   }
 
-  private getRequiredEnv(name: 'EVOLUTION_URL' | 'AUTHENTICATION_API_KEY' | 'WEBHOOK_URL'): string {
+  private getRequiredEnv(name: 'EVOLUTION_URL' | 'AUTHENTICATION_API_KEY'): string {
     const value = this.configService.get<string>(name)?.trim();
     if (!value) {
       throw new HttpException(
@@ -870,6 +889,28 @@ export class WhatsAppService {
     }
 
     return value;
+  }
+
+  private getOptionalEnv(name: 'WEBHOOK_URL'): string | undefined {
+    return this.configService.get<string>(name)?.trim() || undefined;
+  }
+
+  private async getConfiguredWebhookMetadata(): Promise<{
+    instanceName: string;
+    webhookSecretConfigured: boolean;
+    webhookUrl: string;
+  }> {
+    const config = await this.clientConfigService.getConfig();
+    const configurations = this.asRecord(config.configurations);
+    const whatsapp = this.asRecord(configurations.whatsapp);
+
+    return {
+      instanceName: config.whatsappSettings?.instanceName?.trim() || this.asString(whatsapp.instanceName) || '',
+      webhookSecretConfigured: Boolean(
+        config.whatsappSettings?.webhookSecret?.trim() || this.asString(whatsapp.webhookSecret),
+      ),
+      webhookUrl: this.asString(whatsapp.webhookUrl) || '',
+    };
   }
 
   private handleEvolutionError(error: unknown, fallbackMessage: string): never {

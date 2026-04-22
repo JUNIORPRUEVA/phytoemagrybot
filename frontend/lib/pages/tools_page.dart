@@ -19,6 +19,7 @@ class ToolsPage extends StatefulWidget {
 }
 
 class _ToolsPageState extends State<ToolsPage> {
+  final TextEditingController _openAiKeyController = TextEditingController();
   final TextEditingController _elevenLabsKeyController = TextEditingController();
   final TextEditingController _elevenLabsBaseUrlController = TextEditingController();
   final TextEditingController _audioVoiceIdController = TextEditingController();
@@ -37,6 +38,7 @@ class _ToolsPageState extends State<ToolsPage> {
 
   @override
   void dispose() {
+    _openAiKeyController.dispose();
     _elevenLabsKeyController.dispose();
     _elevenLabsBaseUrlController.dispose();
     _audioVoiceIdController.dispose();
@@ -57,6 +59,7 @@ class _ToolsPageState extends State<ToolsPage> {
 
       setState(() {
         _config = config;
+        _openAiKeyController.clear();
         _elevenLabsBaseUrlController.text = config.elevenLabsBaseUrl;
         _audioVoiceIdController.text = config.audioVoiceId;
         _elevenLabsKeyController.clear();
@@ -86,6 +89,9 @@ class _ToolsPageState extends State<ToolsPage> {
 
     try {
       final config = await widget.apiService.saveToolSettings(
+        openaiKey: _openAiKeyController.text.trim().isEmpty
+            ? null
+            : _openAiKeyController.text.trim(),
         elevenLabsKey: _elevenLabsKeyController.text.trim().isEmpty
             ? null
             : _elevenLabsKeyController.text.trim(),
@@ -100,6 +106,7 @@ class _ToolsPageState extends State<ToolsPage> {
 
       setState(() {
         _config = config;
+        _openAiKeyController.clear();
         _elevenLabsKeyController.clear();
       });
       widget.onConfigUpdated();
@@ -165,6 +172,11 @@ class _ToolsPageState extends State<ToolsPage> {
                 runSpacing: 10,
                 children: <Widget>[
                   _ToolStatus(
+                    label: 'OpenAI',
+                    value: _config.openaiConfigured ? 'Conectado' : 'Pendiente',
+                    accent: _config.openaiConfigured,
+                  ),
+                  _ToolStatus(
                     label: 'Estado',
                     value: _config.elevenLabsConfigured ? 'Conectado' : 'Pendiente',
                     accent: _config.elevenLabsConfigured,
@@ -181,6 +193,19 @@ class _ToolsPageState extends State<ToolsPage> {
                 spacing: 18,
                 runSpacing: 18,
                 children: <Widget>[
+                  SizedBox(
+                    width: 360,
+                    child: AppTextField(
+                      label: 'OpenAI API key',
+                      controller: _openAiKeyController,
+                      hintText: 'sk-proj-...',
+                      obscureText: true,
+                      enabled: !isBusy,
+                      helperText: _config.openaiConfigured
+                          ? 'Dejalo vacio para mantener la clave actual.'
+                          : 'Configura la clave para habilitar ChatGPT.',
+                    ),
+                  ),
                   SizedBox(
                     width: 360,
                     child: AppTextField(
