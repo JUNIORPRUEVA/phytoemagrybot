@@ -58,7 +58,7 @@ export class StorageService {
   private getClient(): S3Client {
     if (!this.client) {
       this.client = new S3Client({
-        region: 'auto',
+        region: this.configService.get<string>('STORAGE_REGION')?.trim() || 'auto',
         endpoint: this.getRequiredConfig('STORAGE_ENDPOINT'),
         forcePathStyle: true,
         credentials: {
@@ -78,9 +78,16 @@ export class StorageService {
   }
 
   private buildPublicUrl(key: string): string {
-    const endpoint = this.getRequiredConfig('STORAGE_ENDPOINT').replace(/\/+$/, '');
+    const publicUrl = this.configService.get<string>('STORAGE_PUBLIC_URL')?.trim();
+    const baseUrl = (publicUrl || this.getRequiredConfig('STORAGE_ENDPOINT')).replace(/\/+$/, '');
     const bucket = this.getBucketName();
-    return `${endpoint}/${bucket}/${this.encodeObjectKey(key)}`;
+    const encodedKey = this.encodeObjectKey(key);
+
+    if (publicUrl) {
+      return `${baseUrl}/${encodedKey}`;
+    }
+
+    return `${baseUrl}/${bucket}/${encodedKey}`;
   }
 
   private extractObjectKey(fileUrl: string): string {
