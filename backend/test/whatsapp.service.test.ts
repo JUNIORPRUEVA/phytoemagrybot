@@ -230,6 +230,62 @@ test('normalizeWebhookPayload extracts audio metadata from inbound voice notes',
   assert.equal(result?.audio?.ptt, true);
 });
 
+test('normalizeWebhookPayload prefers remoteJidAlt for lid conversations', () => {
+  const service = createService();
+
+  const result = service.normalizeWebhookPayload({
+    event: 'messages.upsert',
+    data: {
+      key: {
+        remoteJid: '69132011749577@lid',
+        remoteJidAlt: '18095551234@s.whatsapp.net',
+        fromMe: false,
+        id: 'lid-123',
+      },
+      message: {
+        conversation: 'hola desde lid',
+      },
+      messageType: 'conversation',
+    },
+  });
+
+  assert.equal(result?.number, '18095551234');
+  assert.equal(result?.message, 'hola desde lid');
+});
+
+test('normalizeWebhookPayload preserves group jids for replies', () => {
+  const service = createService();
+
+  const result = service.normalizeWebhookPayload({
+    event: 'messages.upsert',
+    data: {
+      key: {
+        remoteJid: '120363382457717265@g.us',
+        fromMe: false,
+        id: 'group-123',
+      },
+      message: {
+        conversation: 'hola grupo',
+      },
+      messageType: 'conversation',
+    },
+  });
+
+  assert.equal(result?.number, '120363382457717265@g.us');
+  assert.equal(result?.message, 'hola grupo');
+});
+
+test('normalizeNumber preserves special whatsapp jids and digits for direct chats', () => {
+  const service = createService();
+
+  assert.equal(service.normalizeNumber('69132011749577@lid'), '69132011749577@lid');
+  assert.equal(
+    service.normalizeNumber('120363382457717265@g.us'),
+    '120363382457717265@g.us',
+  );
+  assert.equal(service.normalizeNumber('18095551234@s.whatsapp.net'), '18095551234');
+});
+
 test('processIncomingAudioMessage answers short audios as text', async () => {
   const { service, sentTexts, sentAudios } = createAudioFlowService();
 

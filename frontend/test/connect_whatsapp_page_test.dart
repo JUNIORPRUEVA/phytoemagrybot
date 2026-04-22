@@ -113,4 +113,38 @@ void main() {
 
     await binding.setSurfaceSize(null);
   });
+
+  testWidgets('canceling webhook configuration does not show a configuration error', (
+    WidgetTester tester,
+  ) async {
+    final binding = TestWidgetsFlutterBinding.ensureInitialized();
+    await binding.setSurfaceSize(const Size(1280, 900));
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: ConnectWhatsAppPage(
+              apiService: _FakeApiService(),
+              onConfigUpdated: () {},
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Configurar webhook'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Completar canal y webhook'), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(TextButton, 'Cancelar'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Debes completar la configuracion del canal para continuar.'), findsNothing);
+
+    await binding.setSurfaceSize(null);
+  });
 }

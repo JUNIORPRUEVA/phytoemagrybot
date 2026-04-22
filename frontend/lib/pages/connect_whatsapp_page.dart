@@ -42,6 +42,7 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
   bool _isCreating = false;
   bool _isDeleting = false;
   bool _isConfiguringWebhook = false;
+  bool _isCheckingWebhook = false;
   String? _errorMessage;
   String? _webhookMessage;
 
@@ -208,6 +209,9 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
 
     try {
       final preparedConfig = await _ensureChannelConfig(instanceName);
+      if (preparedConfig == null) {
+        return;
+      }
       final created = await widget.apiService.createInstance(instanceName);
       final webhook = await widget.apiService.setWebhook(
         created.name,
@@ -262,6 +266,9 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
 
     try {
       final preparedConfig = await _ensureChannelConfig(instanceName);
+      if (preparedConfig == null) {
+        return;
+      }
       final response = await widget.apiService.setWebhook(
         instanceName,
         webhookUrl: preparedConfig.webhookUrl,
@@ -296,7 +303,69 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
     }
   }
 
-  Future<ClientConfigData> _ensureChannelConfig(String instanceName) async {
+  Future<void> _verifyWebhook() async {
+    final instanceName = _selectedInstanceName ?? _instanceNameController.text.trim();
+    if (instanceName.isEmpty) {
+      _showMessage('Selecciona una instancia para verificar el webhook.', isError: true);
+      return;
+    }
+
+    setState(() {
+      _isCheckingWebhook = true;
+      _errorMessage = null;
+    });
+
+    try {
+      final status = await widget.apiService.getStatus(instanceName);
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _selectedInstanceName = status.name;
+      });
+      await _loadInstances(showLoader: false, preserveMessage: true);
+
+      final webhookTarget = status.webhookTarget?.trim();
+      if (!mounted) {
+        return;
+      }
+
+      if (status.webhookReady) {
+        _showMessage(
+          webhookTarget?.isNotEmpty == true
+              ? 'Webhook activo en Evolution: $webhookTarget'
+              : 'Webhook activo en Evolution para esta instancia.',
+        );
+        return;
+      }
+
+      _showMessage(
+        webhookTarget?.isNotEmpty == true
+            ? 'Evolution todavia no confirma el webhook en $webhookTarget. Pulsa Configurar webhook para activarlo o revalidarlo.'
+            : 'Evolution todavia no confirma el webhook para esta instancia. Pulsa Configurar webhook para activarlo o revalidarlo.',
+        isError: true,
+      );
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+
+      final message = error.toString().replaceFirst('Exception: ', '');
+      setState(() {
+        _errorMessage = message;
+      });
+      _showMessage(message, isError: true);
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isCheckingWebhook = false;
+        });
+      }
+    }
+  }
+
+  Future<ClientConfigData?> _ensureChannelConfig(String instanceName) async {
     final needsPrompt = !_hasEvolutionConfig || _config.webhookUrl.trim().isEmpty;
 
     if (!needsPrompt) {
@@ -383,7 +452,7 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
     webhookUrlController.dispose();
 
     if (values == null) {
-      throw ApiException('Debes completar la configuracion del canal para continuar.');
+      return null;
     }
 
     if (values.evolutionApiUrl.isEmpty || values.evolutionApiKey.isEmpty || values.webhookUrl.isEmpty) {
@@ -408,6 +477,24 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
     widget.onConfigUpdated();
 
     return updatedConfig;
+  }
+
+  String _loadedConfigSummary() {
+    final parts = <String>[];
+
+    if (_config.instanceName.trim().isNotEmpty) {
+      parts.add('Instancia: ${_config.instanceName.trim()}');
+    }
+
+    if (_config.evolutionApiUrl.trim().isNotEmpty) {
+      parts.add('Evolution URL: ${_config.evolutionApiUrl.trim()}');
+    }
+
+    if (_config.webhookUrl.trim().isNotEmpty) {
+      parts.add('Webhook URL: ${_config.webhookUrl.trim()}');
+    }
+
+    return parts.join(' | ');
   }
 
   Future<void> _showQrFor(String instanceName) async {
@@ -574,6 +661,13 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
           ),
           const SizedBox(height: 20),
         ],
+        if (_loadedConfigSummary().isNotEmpty) ...<Widget>[
+          _InlineNotice(
+            message: 'Configuracion cargada: ${_loadedConfigSummary()}',
+            color: const Color(0xFF0F766E),
+          ),
+          const SizedBox(height: 20),
+        ],
         if (_errorMessage != null) ...<Widget>[
           _InlineNotice(message: _errorMessage!, color: const Color(0xFFDC2626)),
           const SizedBox(height: 20),
@@ -607,6 +701,14 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
                     : _configureWebhook,
                 child: Text(
                   _isConfiguringWebhook ? 'Configurando webhook...' : 'Configurar webhook',
+                ),
+              ),
+              OutlinedButton(
+                onPressed: _isLoading || _isCheckingWebhook
+                    ? null
+                    : _verifyWebhook,
+                child: Text(
+                  _isCheckingWebhook ? 'Verificando webhook...' : 'Verificar webhook',
                 ),
               ),
             ],

@@ -1113,13 +1113,7 @@ export class WhatsAppService {
       return null;
     }
 
-    const number = this.normalizeNumber(
-      this.asString(key.remoteJid) ||
-        this.asString(data.remoteJid) ||
-        this.asString(payload.sender) ||
-        this.asString(payload.from) ||
-        '',
-    );
+    const number = this.normalizeNumber(this.resolveIncomingRecipient(payload, data, key));
 
     if (!number) {
       throw new BadRequestException('Incoming payload does not contain a valid phone number');
@@ -1201,6 +1195,16 @@ export class WhatsAppService {
     return this.createEvolutionClient(resolved.whatsapp).post(path, body).then(
       () => undefined,
       (error: unknown) => {
+        this.logger.error(
+          JSON.stringify({
+            event: 'evolution_request_failed',
+            action,
+            instanceName: resolved.whatsapp.instanceName,
+            path,
+            number: this.asString(body.number) || null,
+            mediatype: this.asString(body.mediatype) || null,
+          }),
+        );
         this.handleEvolutionError(error, `Evolution API ${action} failed`);
       },
     );
@@ -1344,8 +1348,41 @@ export class WhatsAppService {
     return typeof record[key] === 'object' && record[key] !== null;
   }
 
+  private resolveIncomingRecipient(
+    payload: JsonRecord,
+    data: JsonRecord,
+    key: JsonRecord,
+  ): string {
+    const remoteJid = this.asString(key.remoteJid) || this.asString(data.remoteJid) || '';
+    const remoteJidAlt =
+      this.asString(key.remoteJidAlt) ||
+      this.asString(data.remoteJidAlt) ||
+      this.asString(payload.remoteJidAlt) ||
+      '';
+
+    if (remoteJid.includes('@lid') && remoteJidAlt) {
+      return remoteJidAlt;
+    }
+
+    return remoteJid || this.asString(payload.sender) || this.asString(payload.from) || '';
+  }
+
   private normalizeNumber(raw: string): string {
-    return raw.replace(/@.*/, '').replace(/\D/g, '');
+    const normalized = raw.trim().toLowerCase();
+    if (!normalized) {
+      return '';
+    }
+
+    if (
+      normalized === 'status@broadcast' ||
+      normalized.includes('@lid') ||
+      normalized.includes('@g.us') ||
+      normalized.includes('@broadcast')
+    ) {
+      return normalized;
+    }
+
+    return normalized.replace(/@.*/, '').replace(/\D/g, '');
   }
 
   private normalizeInstanceName(name: string): string {
