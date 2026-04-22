@@ -316,16 +316,17 @@ export class WhatsAppService {
     to: string,
     text: string,
   ): Promise<void> {
-    const instanceName = this.getRequiredInstanceName(resolved.whatsapp);
     const number = this.getRequiredOutboundNumber(to);
+    const jid = `${number}@s.whatsapp.net`;
 
-    console.log('📤 Enviando a:', `${number}@s.whatsapp.net`);
-    console.log('📦 Instancia:', instanceName);
+    console.log('📤 Enviando a:', jid);
 
     await this.createEvolutionClient(resolved.whatsapp)
-      .post(`/message/sendText/${instanceName}`, {
-        number: `${number}@s.whatsapp.net`,
-        text,
+      .post('/message/sendText', {
+        jid,
+        message: {
+          text,
+        },
       })
       .then(
         () => undefined,
@@ -334,9 +335,8 @@ export class WhatsAppService {
             JSON.stringify({
               event: 'evolution_request_failed',
               action: 'sendText',
-              instanceName,
-              path: `/message/sendText/${instanceName}`,
-              number: `${number}@s.whatsapp.net`,
+              path: '/message/sendText',
+              jid,
               mediatype: null,
               hasApiBaseUrl: Boolean(resolved.whatsapp.apiBaseUrl?.trim()),
               hasApiKey: Boolean(resolved.whatsapp.apiKey?.trim()),
