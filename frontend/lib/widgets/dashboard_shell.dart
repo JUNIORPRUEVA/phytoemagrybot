@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 
+import '../pages/channels_page.dart';
 import '../pages/config_page.dart';
 import '../pages/prompt_page.dart';
+import '../pages/tools_page.dart';
 import '../services/api_service.dart';
 
 const String _appVersionLabel = 'v1.0.0';
@@ -37,7 +39,9 @@ class _DashboardShellState extends State<DashboardShell> {
   Widget build(BuildContext context) {
     final pages = <Widget>[
       ConfigPage(apiService: _apiService, onConfigUpdated: _refreshOverview),
+      ChannelsPage(apiService: _apiService, onConfigUpdated: _refreshOverview),
       PromptPage(apiService: _apiService, onConfigUpdated: _refreshOverview),
+      ToolsPage(apiService: _apiService, onConfigUpdated: _refreshOverview),
     ];
 
     return Scaffold(
@@ -87,10 +91,24 @@ class _DashboardShellState extends State<DashboardShell> {
                   ),
                   const SizedBox(height: 12),
                   _IconNavButton(
-                    label: 'Prompts',
-                    icon: Icons.auto_awesome_rounded,
+                    label: 'Canales',
+                    icon: Icons.hub_rounded,
                     selected: _selectedIndex == 1,
                     onTap: () => setState(() => _selectedIndex = 1),
+                  ),
+                  const SizedBox(height: 12),
+                  _IconNavButton(
+                    label: 'Prompts',
+                    icon: Icons.auto_awesome_rounded,
+                    selected: _selectedIndex == 2,
+                    onTap: () => setState(() => _selectedIndex = 2),
+                  ),
+                  const SizedBox(height: 12),
+                  _IconNavButton(
+                    label: 'Herramientas',
+                    icon: Icons.extension_rounded,
+                    selected: _selectedIndex == 3,
+                    onTap: () => setState(() => _selectedIndex = 3),
                   ),
                   const SizedBox(height: 16),
                   FutureBuilder<ClientConfigData>(

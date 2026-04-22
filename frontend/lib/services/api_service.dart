@@ -202,6 +202,50 @@ class ApiHealthData {
   final String status;
 }
 
+class WhatsAppChannelData {
+  const WhatsAppChannelData({
+    required this.provider,
+    required this.instanceName,
+    required this.status,
+    required this.connected,
+    required this.qrCode,
+    required this.qrCodeBase64,
+    required this.details,
+  });
+
+  final String provider;
+  final String instanceName;
+  final String status;
+  final bool connected;
+  final String? qrCode;
+  final String? qrCodeBase64;
+  final Map<String, dynamic> details;
+
+  factory WhatsAppChannelData.empty() {
+    return const WhatsAppChannelData(
+      provider: 'evolution',
+      instanceName: '',
+      status: 'pending',
+      connected: false,
+      qrCode: null,
+      qrCodeBase64: null,
+      details: <String, dynamic>{},
+    );
+  }
+
+  factory WhatsAppChannelData.fromJson(Map<String, dynamic> json) {
+    return WhatsAppChannelData(
+      provider: (json['provider'] as String?) ?? 'evolution',
+      instanceName: (json['instanceName'] as String?) ?? '',
+      status: (json['status'] as String?) ?? 'unknown',
+      connected: (json['connected'] as bool?) ?? false,
+      qrCode: json['qrCode'] as String?,
+      qrCodeBase64: json['qrCodeBase64'] as String?,
+      details: (json['details'] as Map<String, dynamic>?) ?? <String, dynamic>{},
+    );
+  }
+}
+
 class ApiService {
   ApiService({this.baseUrl = defaultBaseUrl, http.Client? client}) : _client = client ?? http.Client();
 
@@ -329,6 +373,72 @@ class ApiService {
     } catch (_) {
       return const ApiHealthData(online: false, status: 'offline');
     }
+  }
+
+  Future<ClientConfigData> saveChannelSettings({
+    required String evolutionApiUrl,
+    required String evolutionApiKey,
+    required String instanceName,
+    required String webhookSecret,
+  }) async {
+    final current = await getConfig();
+    return saveConfig(
+      evolutionApiUrl: evolutionApiUrl,
+      evolutionApiKey: evolutionApiKey,
+      instanceName: instanceName,
+      webhookSecret: webhookSecret,
+      fallbackMessage: current.fallbackMessage,
+      audioVoiceId: current.audioVoiceId,
+      elevenLabsBaseUrl: current.elevenLabsBaseUrl,
+      aiModelName: current.aiModelName,
+      aiTemperature: current.aiTemperature,
+      aiMemoryWindow: current.aiMemoryWindow,
+      aiMaxCompletionTokens: current.aiMaxCompletionTokens,
+      responseCacheTtlSeconds: current.responseCacheTtlSeconds,
+      spamGroupWindowMs: current.spamGroupWindowMs,
+      allowAudioReplies: current.allowAudioReplies,
+    );
+  }
+
+  Future<ClientConfigData> saveToolSettings({
+    String? elevenLabsKey,
+    required String elevenLabsBaseUrl,
+    required String audioVoiceId,
+    required bool allowAudioReplies,
+  }) async {
+    final current = await getConfig();
+    return saveConfig(
+      elevenLabsKey: elevenLabsKey,
+      evolutionApiUrl: current.evolutionApiUrl,
+      evolutionApiKey: current.evolutionApiKey,
+      instanceName: current.instanceName,
+      webhookSecret: current.webhookSecret,
+      fallbackMessage: current.fallbackMessage,
+      audioVoiceId: audioVoiceId,
+      elevenLabsBaseUrl: elevenLabsBaseUrl,
+      aiModelName: current.aiModelName,
+      aiTemperature: current.aiTemperature,
+      aiMemoryWindow: current.aiMemoryWindow,
+      aiMaxCompletionTokens: current.aiMaxCompletionTokens,
+      responseCacheTtlSeconds: current.responseCacheTtlSeconds,
+      spamGroupWindowMs: current.spamGroupWindowMs,
+      allowAudioReplies: allowAudioReplies,
+    );
+  }
+
+  Future<WhatsAppChannelData> getWhatsAppChannel() async {
+    final response = await _client.get(_buildUri('/whatsapp/channel'), headers: _headers);
+    return WhatsAppChannelData.fromJson(_decodeResponse(response));
+  }
+
+  Future<WhatsAppChannelData> createWhatsAppInstance() async {
+    final response = await _client.post(_buildUri('/whatsapp/channel/instance'), headers: _headers);
+    return WhatsAppChannelData.fromJson(_decodeResponse(response));
+  }
+
+  Future<WhatsAppChannelData> refreshWhatsAppQr() async {
+    final response = await _client.post(_buildUri('/whatsapp/channel/qr'), headers: _headers);
+    return WhatsAppChannelData.fromJson(_decodeResponse(response));
   }
 
   Uri _buildUri(String path) {

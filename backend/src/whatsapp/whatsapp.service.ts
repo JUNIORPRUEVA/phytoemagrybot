@@ -14,6 +14,7 @@ import {
   NormalizedIncomingWhatsAppMessage,
   ResolvedWhatsAppClient,
   WebhookProcessingResult,
+  WhatsAppChannelStatus,
   WhatsAppClientConfiguration,
 } from './whatsapp.types';
 
@@ -48,6 +49,22 @@ export class WhatsAppService {
     });
 
     return { ok: true, accepted: true };
+  }
+
+  async getChannelStatus(): Promise<WhatsAppChannelStatus> {
+    const resolved = await this.resolveConfig();
+    return this.readChannelStatus(resolved, true);
+  }
+
+  async createChannelInstance(): Promise<WhatsAppChannelStatus> {
+    const resolved = await this.resolveConfig();
+    await this.createEvolutionInstance(resolved);
+    return this.readChannelStatus(resolved, true, true);
+  }
+
+  async refreshChannelQr(): Promise<WhatsAppChannelStatus> {
+    const resolved = await this.resolveConfig();
+    return this.readChannelStatus(resolved, true, true);
   }
 
   async sendText(
@@ -422,6 +439,262 @@ export class WhatsAppService {
     });
   }
 
+  private async readChannelStatus(
+    resolved: ResolvedWhatsAppClient,
+    includeQrCode: boolean,
+    preferFreshQr = false,
+  ): Promise<WhatsAppChannelStatus> {
+    const payload = await this.readEvolutionResource(resolved, [
+      { path: `/instance/connectionState/${resolved.whatsapp.instanceName}`, method: 'get' },
+      { path: `/instance/status/${resolved.whatsapp.instanceName}`, method: 'get' },
+    ]);
+
+    const status = this.extractConnectionStatus(payload);
+    const connected = this.extractConnectedFlag(payload, status);
+    let qrCode: string | null = null;
+    let qrCodeBase64: string | null = null;
+
+    if (includeQrCode && !connected) {
+      const qrPayload = await this.readEvolutionResource(
+        resolved,
+        preferFreshQr
+            ? [
+                {
+                  path: `/instance/connect/${resolved.whatsapp.instanceName}`,
+                  method: 'get',
+                },
+                {
+                  path: `/instance/connect/${resolved.whatsapp.instanceName}`,
+                  method: 'post',
+                },
+                {
+                  path: `/instance/qrcode/${resolved.whatsapp.instanceName}`,
+                  method: 'get',
+                },
+              ]
+            : [
+                {
+                  path: `/instance/qrcode/${resolved.whatsapp.instanceName}`,
+                  method: 'get',
+                },
+                {
+                  path: `/instance/connect/${resolved.whatsapp.instanceName}`,
+                  method: 'get',
+                },
+                {
+                  path: `/instance/connect/${resolved.whatsapp.instanceName}`,
+                  method: 'post',
+                },
+              ],
+      );
+
+      const qrData = this.extractQrData(qrPayload);
+      qrCode = qrData.qrCode;
+      qrCodeBase64 = qrData.qrCodeBase64;
+    }
+
+    return {
+      provider: 'evolution',
+      instanceName: resolved.whatsapp.instanceName,
+      status,
+      connected,
+      qrCode,
+      qrCodeBase64,
+      details: this.asRecord(payload),
+    };
+  }
+
+  private async createEvolutionInstance(
+    resolved: ResolvedWhatsAppClient,
+  ): Promise<void> {
+    const client = this.createEvolutionClient(resolved.whatsapp);
+
+    try {
+      await client.post('/instance/create', {
+        instanceName: resolved.whatsapp.instanceName,
+        integration: 'WHATSAPP-BAILEYS',
+        qrcode: true,
+      });
+    } catch (error) {
+      const axiosError = error as AxiosError<unknown>;
+      const responseStatus = axiosError.response?.status;
+      const responseBody = JSON.stringify(axiosError.response?.data ?? {}).toLowerCase();
+      const alreadyExists =
+        responseStatus === 400 ||
+        responseStatus === 409 ||
+        responseBody.includes('already exists') ||
+        responseBody.includes('already exist') ||
+        responseBody.includes('duplicate') ||
+        responseBody.includes('exists');
+
+      if (alreadyExists) {
+        return;
+      }
+
+      this.logger.error(
+        JSON.stringify({
+          event: 'whatsapp_instance_create_failed',
+          configId: resolved.config.id,
+          instanceName: resolved.whatsapp.instanceName,
+          status: responseStatus,
+          response: axiosError.response?.data,
+        }),
+        error instanceof Error ? error.stack : undefined,
+      );
+
+      throw new HttpException(
+        'No se pudo crear la instancia en Evolution API',
+        HttpStatus.BAD_GATEWAY,
+      );
+    }
+  }
+
+  private async readEvolutionResource(
+    resolved: ResolvedWhatsAppClient,
+    attempts: Array<{
+      path: string;
+      method: 'get' | 'post';
+    }>,
+  ): Promise<unknown> {
+    const client = this.createEvolutionClient(resolved.whatsapp);
+    let lastError: AxiosError<unknown> | null = null;
+
+    for (const attempt of attempts) {
+      try {
+        const response = await client.request({
+          method: attempt.method,
+          url: attempt.path,
+        });
+        return response.data;
+      } catch (error) {
+        const axiosError = error as AxiosError<unknown>;
+        lastError = axiosError;
+
+        if (axiosError.response?.status === 404) {
+          continue;
+        }
+      }
+    }
+
+    this.logger.error(
+      JSON.stringify({
+        event: 'whatsapp_channel_request_failed',
+        configId: resolved.config.id,
+        instanceName: resolved.whatsapp.instanceName,
+        status: lastError?.response?.status,
+        response: lastError?.response?.data,
+      }),
+      lastError instanceof Error ? lastError.stack : undefined,
+    );
+
+    throw new HttpException(
+      'No se pudo consultar la instancia en Evolution API',
+      HttpStatus.BAD_GATEWAY,
+    );
+  }
+
+  private extractConnectionStatus(payload: unknown): string {
+    const record = this.asRecord(payload);
+    const instance = this.asRecord(record.instance);
+    const instanceStatus = this.asRecord(instance.status);
+    const data = this.asRecord(record.data);
+    const dataInstance = this.asRecord(data.instance);
+
+    return (
+      this.pickString([
+        record.status,
+        record.state,
+        record.connectionStatus,
+        instance.state,
+        instance.status,
+        instance.connectionStatus,
+        instanceStatus.status,
+        instanceStatus.state,
+        data.status,
+        data.state,
+        data.connectionStatus,
+        dataInstance.status,
+        dataInstance.state,
+      ]) ?? 'unknown'
+    );
+  }
+
+  private extractConnectedFlag(payload: unknown, status: string): boolean {
+    const normalizedStatus = status.toLowerCase();
+    if (
+      normalizedStatus.includes('open') ||
+      normalizedStatus.includes('connected') ||
+      normalizedStatus.includes('online')
+    ) {
+      return true;
+    }
+
+    const record = this.asRecord(payload);
+    const instance = this.asRecord(record.instance);
+    const data = this.asRecord(record.data);
+    const dataInstance = this.asRecord(data.instance);
+
+    return this.pickBoolean([
+      record.connected,
+      record.open,
+      record.isConnected,
+      instance.connected,
+      instance.open,
+      instance.isConnected,
+      data.connected,
+      data.open,
+      data.isConnected,
+      dataInstance.connected,
+      dataInstance.open,
+      dataInstance.isConnected,
+    ]);
+  }
+
+  private extractQrData(payload: unknown): {
+    qrCode: string | null;
+    qrCodeBase64: string | null;
+  } {
+    const record = this.asRecord(payload);
+    const qrcode = this.asRecord(record.qrcode);
+    const qr = this.asRecord(record.qr);
+    const data = this.asRecord(record.data);
+    const dataQrCode = this.asRecord(data.qrcode);
+
+    return {
+      qrCode:
+        this.pickString([
+          record.code,
+          record.qrCode,
+          record.pairingCode,
+          qrcode.code,
+          qrcode.text,
+          qrcode.string,
+          qr.code,
+          qr.text,
+          data.code,
+          data.qrCode,
+          dataQrCode.code,
+          dataQrCode.text,
+        ]) ?? null,
+      qrCodeBase64:
+        this.normalizeBase64(
+          this.pickString([
+            record.base64,
+            record.qrCodeBase64,
+            qrcode.base64,
+            qrcode.image,
+            qrcode.base64Image,
+            qr.base64,
+            qr.image,
+            data.base64,
+            data.qrCodeBase64,
+            dataQrCode.base64,
+            dataQrCode.image,
+          ]),
+        ) ?? null,
+    };
+  }
+
   private async executeEvolutionRequest(
     resolved: ResolvedWhatsAppClient,
     action: 'sendText' | 'sendImage' | 'sendAudio',
@@ -467,6 +740,40 @@ export class WhatsAppService {
 
   private hasNestedObject(record: JsonRecord, key: string): boolean {
     return typeof record[key] === 'object' && record[key] !== null;
+  }
+
+  private normalizeBase64(value?: string): string | undefined {
+    if (!value) {
+      return undefined;
+    }
+
+    if (!value.includes(',')) {
+      return value.trim();
+    }
+
+    const parts = value.split(',');
+    return parts[parts.length - 1]?.trim();
+  }
+
+  private pickString(values: unknown[]): string | undefined {
+    for (const value of values) {
+      const next = this.asString(value);
+      if (next) {
+        return next;
+      }
+    }
+
+    return undefined;
+  }
+
+  private pickBoolean(values: unknown[]): boolean {
+    for (const value of values) {
+      if (typeof value === 'boolean') {
+        return value;
+      }
+    }
+
+    return false;
   }
 
   private asRecord(value: unknown): JsonRecord {

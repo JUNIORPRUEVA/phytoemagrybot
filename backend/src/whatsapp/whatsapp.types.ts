@@ -17,6 +17,16 @@ export interface ResolvedWhatsAppClient {
   whatsapp: WhatsAppClientConfiguration;
 }
 
+export interface WhatsAppChannelStatus {
+  provider: 'evolution';
+  instanceName: string;
+  status: string;
+  connected: boolean;
+  qrCode: string | null;
+  qrCodeBase64: string | null;
+  details: Record<string, unknown>;
+}
+
 export interface NormalizedIncomingWhatsAppMessage {
   number: string;
   message: string;
