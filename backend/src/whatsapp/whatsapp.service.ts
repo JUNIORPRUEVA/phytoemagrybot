@@ -319,81 +319,35 @@ export class WhatsAppService {
     const instanceName = this.getRequiredInstanceName(resolved.whatsapp);
     const number = this.getRequiredOutboundNumber(to);
     const jid = `${number}@s.whatsapp.net`;
-    const client = this.createEvolutionClient(resolved.whatsapp);
-    const attempts: Array<{ path: string; payloadType: string; status: number | null; data: unknown }> = [];
-
-    const variants: Array<{ path: string; body: JsonRecord; payloadType: string }> = [
-      {
-        path: '/message/sendText',
-        body: {
-          jid,
-          message: {
-            text,
-          },
-        },
-        payloadType: 'jid-message',
-      },
-      {
-        path: `/message/sendText/${instanceName}`,
-        body: {
-          number: jid,
-          text,
-        },
-        payloadType: 'instance-number-jid',
-      },
-      {
-        path: `/message/sendText/${instanceName}`,
-        body: {
-          number,
-          text,
-        },
-        payloadType: 'instance-number-text',
-      },
-      {
-        path: '/message/sendText',
-        body: {
-          instance: instanceName,
-          number,
-          text,
-        },
-        payloadType: 'body-instance-number-text',
-      },
-    ];
 
     console.log('📤 Enviando a:', jid);
     console.log('📦 Instancia:', instanceName);
 
-    let lastError: unknown;
-    for (const variant of variants) {
-      try {
-        await client.post(variant.path, variant.body);
-        return;
-      } catch (error) {
-        lastError = error;
-        attempts.push({
-          path: variant.path,
-          payloadType: variant.payloadType,
-          status: axios.isAxiosError(error) ? error.response?.status ?? null : null,
-          data: axios.isAxiosError(error) ? error.response?.data ?? null : null,
-        });
-      }
-    }
-
-    this.logger.error(
-      JSON.stringify({
-        event: 'evolution_request_failed',
-        action: 'sendText',
-        instanceName,
-        path: '/message/sendText',
-        jid,
-        mediatype: null,
-        hasApiBaseUrl: Boolean(resolved.whatsapp.apiBaseUrl?.trim()),
-        hasApiKey: Boolean(resolved.whatsapp.apiKey?.trim()),
-        attempts,
-      }),
-    );
-
-    this.handleEvolutionError(lastError, 'Evolution API sendText failed');
+    await this.createEvolutionClient(resolved.whatsapp)
+      .post(`/message/sendText/${instanceName}`, {
+        number: jid,
+        text,
+      })
+      .then(
+        () => undefined,
+        (error: unknown) => {
+          this.logger.error(
+            JSON.stringify({
+              event: 'evolution_request_failed',
+              action: 'sendText',
+              instanceName,
+              path: `/message/sendText/${instanceName}`,
+              jid,
+              mediatype: null,
+              hasApiBaseUrl: Boolean(resolved.whatsapp.apiBaseUrl?.trim()),
+              hasApiKey: Boolean(resolved.whatsapp.apiKey?.trim()),
+              status: axios.isAxiosError(error) ? error.response?.status ?? null : null,
+              data: axios.isAxiosError(error) ? error.response?.data ?? null : null,
+            }),
+          );
+          this.handleEvolutionError(error, 'Evolution API sendText failed');
+        },
+      );
   }
 
   async sendImage(
@@ -1476,12 +1430,36 @@ export class WhatsAppService {
       this.asString(data.remoteJidAlt) ||
       this.asString(payload.remoteJidAlt) ||
       '';
+    const prioritizedCandidates = [
+      remoteJidAlt,
+      this.asString(key.senderPn),
+      this.asString(data.senderPn),
+      this.asString(payload.senderPn),
+      this.asString(key.participantPn),
+      this.asString(data.participantPn),
+      this.asString(payload.participantPn),
+      this.asString(key.sender),
+      this.asString(data.sender),
+      this.asString(payload.sender),
+      this.asString(key.from),
+      this.asString(data.from),
+      this.asString(payload.from),
+      this.asString(key.participant),
+      this.asString(data.participant),
+      this.asString(payload.participant),
+    ].filter((value): value is string => Boolean(value));
 
     if (remoteJid.includes('@lid') && remoteJidAlt) {
       return remoteJidAlt;
     }
 
-    return remoteJid || this.asString(payload.sender) || this.asString(payload.from) || '';
+    for (const candidate of prioritizedCandidates) {
+      if (!candidate.includes('@g.us') && !candidate.includes('@broadcast')) {
+        return candidate;
+      }
+    }
+
+    return remoteJid || prioritizedCandidates[0] || '';
   }
 
   private normalizeNumber(raw: string): string {
