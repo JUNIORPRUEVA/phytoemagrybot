@@ -326,6 +326,91 @@ test('executeEvolutionRequest requires a configured instance name', async () => 
   );
 });
 
+test('setWebhook requests rich Evolution payload options and broad events', async () => {
+  const service = createService();
+  const calls: Array<{ path: string; body: Record<string, unknown> }> = [];
+
+  service.resolveConfig = async () => createResolvedConfig();
+  service.getEvolutionClient = () => ({
+    post: async (path: string, body: Record<string, unknown>) => {
+      calls.push({ path, body });
+      return { data: { ok: true } };
+    },
+  });
+  service.getEvolutionWebhookMetadata = async () => ({
+    enabled: true,
+    url: 'https://example.com/webhook',
+    events: ['MESSAGES_UPSERT', 'CONTACTS_UPSERT'],
+  });
+
+  const result = await service.setWebhook('demo', 'https://example.com/webhook');
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0]?.path, '/webhook/set/demo');
+  assert.deepEqual(calls[0]?.body, {
+    webhook: {
+      enabled: true,
+      url: 'https://example.com/webhook',
+      headers: {
+        'x-webhook-secret': 'secret',
+      },
+      events: [
+        'MESSAGES_UPSERT',
+        'MESSAGES_SET',
+        'MESSAGES_UPDATE',
+        'MESSAGES_DELETE',
+        'MESSAGES_EDITED',
+        'SEND_MESSAGE',
+        'SEND_MESSAGE_UPDATE',
+        'CONTACTS_SET',
+        'CONTACTS_UPSERT',
+        'CONTACTS_UPDATE',
+        'CHATS_SET',
+        'CHATS_UPSERT',
+        'CHATS_UPDATE',
+        'CHATS_DELETE',
+        'PRESENCE_UPDATE',
+        'CONNECTION_UPDATE',
+        'GROUPS_UPSERT',
+        'GROUPS_UPDATE',
+        'GROUP_PARTICIPANTS_UPDATE',
+        'CALL',
+      ],
+      byEvents: false,
+      base64: true,
+    },
+  });
+  assert.equal(result.instanceName, 'demo');
+  assert.equal(result.webhook, 'https://example.com/webhook');
+});
+
+test('onModuleInit reapplies the configured webhook when instance and url are present', async () => {
+  const service = createService();
+  const calls: Array<{ name: string; webhook: string }> = [];
+
+  service.resolveConfig = async () => ({
+    config: {},
+    whatsapp: {
+      instanceName: 'demo',
+      webhookUrl: 'https://example.com/webhook',
+    },
+  });
+  service.setWebhook = async (name: string, webhook?: string) => {
+    calls.push({ name, webhook: webhook || '' });
+
+    return {
+      instanceName: name,
+      webhook: webhook || '',
+      events: [],
+      message: 'ok',
+    };
+  };
+
+  await service.onModuleInit();
+
+  assert.deepEqual(calls, [{ name: 'demo', webhook: 'https://example.com/webhook' }]);
+});
+
 test('sendText uses instance endpoint with jid number payload', async () => {
   const service = createService();
   const calls: Array<{ path: string; body: Record<string, unknown> }> = [];

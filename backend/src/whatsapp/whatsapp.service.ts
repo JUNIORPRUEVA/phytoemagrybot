@@ -4,6 +4,7 @@ import {
   HttpStatus,
   Injectable,
   Logger,
+  OnModuleInit,
 } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import { ConfigService } from '@nestjs/config';
@@ -31,12 +32,34 @@ type JsonRecord = Record<string, unknown>;
 type InstanceStatus = 'connected' | 'disconnected' | 'connecting';
 
 @Injectable()
-export class WhatsAppService {
+export class WhatsAppService implements OnModuleInit {
   private static readonly SHORT_AUDIO_MAX_SECONDS = 12;
   private static readonly MAX_AUDIO_DURATION_SECONDS = 60;
   private static readonly AUDIO_TRANSCRIPT_CACHE_TTL_SECONDS = 60 * 60 * 6;
   private static readonly VOICE_PREFERENCE_TTL_SECONDS = 60 * 60 * 24 * 30;
   private static readonly INBOUND_MESSAGE_DEDUP_TTL_SECONDS = 60 * 10;
+  private static readonly DEFAULT_WEBHOOK_EVENTS = [
+    'messages.upsert',
+    'messages.set',
+    'messages.update',
+    'messages.delete',
+    'messages.edited',
+    'send.message',
+    'send.message.update',
+    'contacts.set',
+    'contacts.upsert',
+    'contacts.update',
+    'chats.set',
+    'chats.upsert',
+    'chats.update',
+    'chats.delete',
+    'presence.update',
+    'connection.update',
+    'groups.upsert',
+    'groups.update',
+    'group-participants.update',
+    'call',
+  ];
 
   private readonly logger = new Logger(WhatsAppService.name);
 
@@ -48,6 +71,10 @@ export class WhatsAppService {
     private readonly redisService: RedisService,
     private readonly voiceService: VoiceService,
   ) {}
+
+  async onModuleInit(): Promise<void> {
+    await this.syncConfiguredWebhookOnStartup();
+  }
 
   async acceptWebhook(
     payload: JsonRecord,
@@ -73,6 +100,34 @@ export class WhatsAppService {
     });
 
     return { ok: true, accepted: true };
+  }
+
+  private async syncConfiguredWebhookOnStartup(): Promise<void> {
+    try {
+      const resolved = await this.resolveConfig();
+      const instanceName = resolved.whatsapp.instanceName?.trim();
+      const webhookUrl = resolved.whatsapp.webhookUrl?.trim();
+
+      if (!instanceName || !webhookUrl) {
+        return;
+      }
+
+      await this.setWebhook(instanceName, webhookUrl);
+      this.logger.log(
+        JSON.stringify({
+          event: 'whatsapp_webhook_sync_applied',
+          instanceName,
+          webhookUrl,
+        }),
+      );
+    } catch (error) {
+      this.logger.warn(
+        JSON.stringify({
+          event: 'whatsapp_webhook_sync_failed',
+          error: error instanceof Error ? error.message : 'Unknown error',
+        }),
+      );
+    }
   }
 
   async createInstance(name: string): Promise<ManagedWhatsAppInstance> {
@@ -268,8 +323,8 @@ export class WhatsAppService {
           url: resolvedWebhook,
           headers: webhookHeaders,
           events: resolvedEvents,
-          webhookByEvents: false,
-          webhookBase64: false,
+          byEvents: false,
+          base64: true,
         },
       });
 
@@ -1472,16 +1527,88 @@ export class WhatsAppService {
   }
 
   private normalizeWebhookEvents(events?: string[]): string[] {
-    const source = events?.length ? events : ['messages.upsert', 'connection.update'];
+    const source = events?.length ? events : WhatsAppService.DEFAULT_WEBHOOK_EVENTS;
 
-    return source.map((event) => {
+    return [...new Set(source.map((event) => event.trim()).filter((event) => event.length > 0))].map((event) => {
       const normalized = event.trim();
       if (normalized.toLowerCase() === 'messages.upsert') {
         return 'MESSAGES_UPSERT';
       }
 
+      if (normalized.toLowerCase() === 'messages.set') {
+        return 'MESSAGES_SET';
+      }
+
+      if (normalized.toLowerCase() === 'messages.update') {
+        return 'MESSAGES_UPDATE';
+      }
+
+      if (normalized.toLowerCase() === 'messages.delete') {
+        return 'MESSAGES_DELETE';
+      }
+
+      if (normalized.toLowerCase() === 'messages.edited') {
+        return 'MESSAGES_EDITED';
+      }
+
+      if (normalized.toLowerCase() === 'send.message') {
+        return 'SEND_MESSAGE';
+      }
+
+      if (normalized.toLowerCase() === 'send.message.update') {
+        return 'SEND_MESSAGE_UPDATE';
+      }
+
+      if (normalized.toLowerCase() === 'contacts.set') {
+        return 'CONTACTS_SET';
+      }
+
+      if (normalized.toLowerCase() === 'contacts.upsert') {
+        return 'CONTACTS_UPSERT';
+      }
+
+      if (normalized.toLowerCase() === 'contacts.update') {
+        return 'CONTACTS_UPDATE';
+      }
+
+      if (normalized.toLowerCase() === 'chats.set') {
+        return 'CHATS_SET';
+      }
+
+      if (normalized.toLowerCase() === 'chats.upsert') {
+        return 'CHATS_UPSERT';
+      }
+
+      if (normalized.toLowerCase() === 'chats.update') {
+        return 'CHATS_UPDATE';
+      }
+
+      if (normalized.toLowerCase() === 'chats.delete') {
+        return 'CHATS_DELETE';
+      }
+
+      if (normalized.toLowerCase() === 'presence.update') {
+        return 'PRESENCE_UPDATE';
+      }
+
       if (normalized.toLowerCase() === 'connection.update') {
         return 'CONNECTION_UPDATE';
+      }
+
+      if (normalized.toLowerCase() === 'groups.upsert') {
+        return 'GROUPS_UPSERT';
+      }
+
+      if (normalized.toLowerCase() === 'groups.update') {
+        return 'GROUPS_UPDATE';
+      }
+
+      if (normalized.toLowerCase() === 'group-participants.update') {
+        return 'GROUP_PARTICIPANTS_UPDATE';
+      }
+
+      if (normalized.toLowerCase() === 'call') {
+        return 'CALL';
       }
 
       return normalized;
