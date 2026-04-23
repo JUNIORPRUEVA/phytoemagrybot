@@ -868,6 +868,94 @@ test('enrichWebhookPayloadFromEvolution falls back to contact lookup when messag
   assert.equal(enrichedKey.senderPn, '18095551234@s.whatsapp.net');
 });
 
+test('enrichWebhookPayloadFromKnownLid reuses cached lid mappings before contact lookup', async () => {
+  const service = createService();
+
+  service.redisService = {
+    get: async (key: string) =>
+      key === 'wa:lid-map:demo:69132011749577@lid'
+        ? '18095551234@s.whatsapp.net'
+        : null,
+  };
+
+  const result = await service.enrichWebhookPayloadFromKnownLid(
+    {
+      event: 'messages.upsert',
+      data: {
+        key: {
+          remoteJid: '69132011749577@lid',
+          fromMe: false,
+          id: 'cached-lid-1',
+        },
+        pushName: 'Junior Lopez',
+        message: {
+          conversation: 'Hola cache',
+        },
+        messageType: 'conversation',
+      },
+    },
+    'demo',
+  );
+
+  const enrichedData = service.getWebhookMessageData(result);
+  const enrichedKey = enrichedData.key;
+
+  assert.equal(enrichedKey.remoteJidAlt, '18095551234@s.whatsapp.net');
+  assert.equal(enrichedKey.senderPn, '18095551234@s.whatsapp.net');
+  assert.equal(enrichedKey.participantPn, '18095551234@s.whatsapp.net');
+});
+
+test('rememberSenderJidMapping learns lid to real jid correlations from paired outbound webhooks', async () => {
+  const service = createService();
+  const store = new Map<string, string>();
+
+  service.redisService = {
+    set: async (key: string, value: string) => {
+      store.set(key, value);
+    },
+    get: async (key: string) => store.get(key) ?? null,
+  };
+
+  await service.rememberSenderJidMapping(
+    {
+      event: 'messages.upsert',
+      data: {
+        key: {
+          remoteJid: '69132011749577@lid',
+          fromMe: true,
+          id: 'paired-message-1',
+        },
+        message: {
+          conversation: 'Klo',
+        },
+      },
+    },
+    'demo',
+  );
+
+  await service.rememberSenderJidMapping(
+    {
+      event: 'messages.upsert',
+      data: {
+        key: {
+          remoteJid: '18295319442@s.whatsapp.net',
+          fromMe: true,
+          id: 'paired-message-1',
+        },
+        message: {
+          conversation: 'Klo',
+        },
+      },
+    },
+    'demo',
+  );
+
+  assert.equal(
+    store.get('wa:lid-map:demo:69132011749577@lid'),
+    '18295319442@s.whatsapp.net',
+  );
+});
+
 test('attachWebhookRoutingMetadata exposes distinct sender and recipient numbers in the webhook payload', () => {
   const service = createService();
 

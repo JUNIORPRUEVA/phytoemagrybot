@@ -38,6 +38,8 @@ export class WhatsAppService implements OnModuleInit {
   private static readonly AUDIO_TRANSCRIPT_CACHE_TTL_SECONDS = 60 * 60 * 6;
   private static readonly VOICE_PREFERENCE_TTL_SECONDS = 60 * 60 * 24 * 30;
   private static readonly INBOUND_MESSAGE_DEDUP_TTL_SECONDS = 60 * 10;
+  private static readonly MESSAGE_JID_CORRELATION_TTL_SECONDS = 60 * 60 * 24;
+  private static readonly LID_JID_MAPPING_TTL_SECONDS = 60 * 60 * 24 * 30;
   private static readonly DEFAULT_WEBHOOK_EVENTS = [
     'messages.upsert',
     'messages.set',
@@ -523,6 +525,13 @@ export class WhatsAppService implements OnModuleInit {
 
     const rawData = this.getWebhookMessageData(payload);
     const rawKey = this.asRecord(rawData.key);
+
+    const resolved = await this.resolveConfig();
+    this.validateWebhook(headers, resolved.whatsapp);
+    const webhookInstanceName =
+      this.asString(payload.instance) || resolved.whatsapp.instanceName;
+    await this.rememberSenderJidMapping(payload, webhookInstanceName);
+
     if (rawKey.fromMe === true || rawData.fromMe === true) {
       this.logger.log(
         JSON.stringify({
@@ -537,10 +546,9 @@ export class WhatsAppService implements OnModuleInit {
       return;
     }
 
-    const resolved = await this.resolveConfig();
-    this.validateWebhook(headers, resolved.whatsapp);
     const instancePhone = await this.getInstancePhoneNumber(resolved.whatsapp.instanceName);
-    payload = await this.enrichWebhookPayloadFromEvolution(payload, resolved.whatsapp.instanceName);
+    payload = await this.enrichWebhookPayloadFromKnownLid(payload, webhookInstanceName);
+    payload = await this.enrichWebhookPayloadFromEvolution(payload, webhookInstanceName);
     payload = this.attachWebhookRoutingMetadata(payload, instancePhone);
     this.logPreparedWebhookPayload(payload, instancePhone);
 
@@ -1085,6 +1093,18 @@ export class WhatsAppService implements OnModuleInit {
     return `voice-pref:${this.normalizeNumber(contactId)}`;
   }
 
+  private getLidJidMappingKey(instanceName: string, lidJid: string): string {
+    return `wa:lid-map:${instanceName.trim()}:${lidJid.trim().toLowerCase()}`;
+  }
+
+  private getMessageLidCorrelationKey(instanceName: string, messageId: string): string {
+    return `wa:msg-lid:${instanceName.trim()}:${messageId.trim()}`;
+  }
+
+  private getMessageRealJidCorrelationKey(instanceName: string, messageId: string): string {
+    return `wa:msg-real:${instanceName.trim()}:${messageId.trim()}`;
+  }
+
   private getIncomingMessageDedupKey(
     incoming: NormalizedIncomingWhatsAppMessage,
   ): string {
@@ -1553,6 +1573,44 @@ export class WhatsAppService implements OnModuleInit {
     return contactEnrichedPayload;
   }
 
+  private async enrichWebhookPayloadFromKnownLid(
+    payload: JsonRecord,
+    instanceName: string,
+  ): Promise<JsonRecord> {
+    const data = this.getWebhookMessageData(payload);
+    const key = this.asRecord(data.key);
+    const remoteJid = this.asString(key.remoteJid) || this.asString(data.remoteJid) || '';
+
+    if (!instanceName.trim() || !remoteJid.includes('@lid') || this.hasWebhookSenderMetadata(payload)) {
+      return payload;
+    }
+
+    const cachedJid = await this.getMappedSenderJid(instanceName, remoteJid);
+    if (!cachedJid) {
+      return payload;
+    }
+
+    const enrichedPayload = this.mergeWebhookPayloadWithResolvedContact(payload, cachedJid);
+    const enrichedData = this.getWebhookMessageData(enrichedPayload);
+    const enrichedKey = this.asRecord(enrichedData.key);
+
+    this.logger.log(
+      JSON.stringify({
+        event: 'whatsapp_webhook_payload_enriched',
+        source: 'lid_cache',
+        messageId: this.asString(key.id) ?? this.asString(data.messageId) ?? null,
+        remoteJid,
+        contactRemoteJid: cachedJid,
+        remoteJidAlt: this.asString(enrichedKey.remoteJidAlt) || null,
+        senderPn: this.asString(enrichedKey.senderPn) || null,
+        participantPn: this.asString(enrichedKey.participantPn) || null,
+        participantAlt: this.asString(enrichedKey.participantAlt) || null,
+      }),
+    );
+
+    return enrichedPayload;
+  }
+
   private mergeWebhookPayloadWithSenderFields(
     payload: JsonRecord,
     sourcePayload: JsonRecord,
@@ -1724,6 +1782,142 @@ export class WhatsAppService implements OnModuleInit {
     }
 
     return null;
+  }
+
+  private async rememberSenderJidMapping(
+    payload: JsonRecord,
+    instanceName: string,
+  ): Promise<void> {
+    if (
+      !instanceName.trim() ||
+      typeof this.redisService?.set !== 'function' ||
+      typeof this.redisService?.get !== 'function'
+    ) {
+      return;
+    }
+
+    const data = this.getWebhookMessageData(payload);
+    const key = this.asRecord(data.key);
+    const messageId = this.asString(key.id) ?? this.asString(data.messageId) ?? '';
+    const remoteJid = this.asString(key.remoteJid) || this.asString(data.remoteJid) || '';
+    const resolvedRealJid = this.resolveKnownRealJid(payload, data, key);
+
+    if (remoteJid.includes('@lid') && resolvedRealJid) {
+      await this.storeMappedSenderJid(instanceName, remoteJid, resolvedRealJid);
+      return;
+    }
+
+    if (!messageId.trim()) {
+      return;
+    }
+
+    if (remoteJid.includes('@lid')) {
+      await this.redisService.set(
+        this.getMessageLidCorrelationKey(instanceName, messageId),
+        remoteJid,
+        WhatsAppService.MESSAGE_JID_CORRELATION_TTL_SECONDS,
+      );
+
+      const correlatedRealJid = await this.redisService.get<string>(
+        this.getMessageRealJidCorrelationKey(instanceName, messageId),
+      );
+      if (correlatedRealJid?.includes('@s.whatsapp.net')) {
+        await this.storeMappedSenderJid(instanceName, remoteJid, correlatedRealJid);
+      }
+      return;
+    }
+
+    if (remoteJid.includes('@s.whatsapp.net')) {
+      await this.redisService.set(
+        this.getMessageRealJidCorrelationKey(instanceName, messageId),
+        remoteJid,
+        WhatsAppService.MESSAGE_JID_CORRELATION_TTL_SECONDS,
+      );
+
+      const correlatedLid = await this.redisService.get<string>(
+        this.getMessageLidCorrelationKey(instanceName, messageId),
+      );
+      if (correlatedLid?.includes('@lid')) {
+        await this.storeMappedSenderJid(instanceName, correlatedLid, remoteJid);
+      }
+    }
+  }
+
+  private resolveKnownRealJid(
+    payload: JsonRecord,
+    data: JsonRecord,
+    key: JsonRecord,
+  ): string {
+    const candidates = [
+      this.asString(key.remoteJidAlt),
+      this.asString(data.remoteJidAlt),
+      this.asString(payload.remoteJidAlt),
+      this.asString(key.senderPn),
+      this.asString(data.senderPn),
+      this.asString(payload.senderPn),
+      this.asString(key.participantPn),
+      this.asString(data.participantPn),
+      this.asString(payload.participantPn),
+      this.asString(key.participantAlt),
+      this.asString(data.participantAlt),
+      this.asString(payload.participantAlt),
+      this.asString(key.participant),
+      this.asString(data.participant),
+      this.asString(payload.participant),
+      this.asString(key.remoteJid),
+      this.asString(data.remoteJid),
+    ].filter((value): value is string => Boolean(value?.trim()));
+
+    return candidates.find((value) => value.includes('@s.whatsapp.net')) || '';
+  }
+
+  private async getMappedSenderJid(
+    instanceName: string,
+    lidJid: string,
+  ): Promise<string | null> {
+    if (
+      !instanceName.trim() ||
+      !lidJid.includes('@lid') ||
+      typeof this.redisService?.get !== 'function'
+    ) {
+      return null;
+    }
+
+    const mappedJid = await this.redisService.get<string>(
+      this.getLidJidMappingKey(instanceName, lidJid),
+    );
+
+    return mappedJid?.includes('@s.whatsapp.net') ? mappedJid : null;
+  }
+
+  private async storeMappedSenderJid(
+    instanceName: string,
+    lidJid: string,
+    realJid: string,
+  ): Promise<void> {
+    if (
+      !instanceName.trim() ||
+      !lidJid.includes('@lid') ||
+      !realJid.includes('@s.whatsapp.net') ||
+      typeof this.redisService?.set !== 'function'
+    ) {
+      return;
+    }
+
+    await this.redisService.set(
+      this.getLidJidMappingKey(instanceName, lidJid),
+      realJid,
+      WhatsAppService.LID_JID_MAPPING_TTL_SECONDS,
+    );
+
+    this.logger.log(
+      JSON.stringify({
+        event: 'whatsapp_lid_mapping_learned',
+        instanceName,
+        lidJid,
+        realJid,
+      }),
+    );
   }
 
   private pickBestEvolutionContact(
