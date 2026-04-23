@@ -348,6 +348,28 @@ test('sendText uses instance endpoint with jid number payload', async () => {
   });
 });
 
+test('sendText preserves lid jid payload', async () => {
+  const service = createService();
+  const calls: Array<{ path: string; body: Record<string, unknown> }> = [];
+
+  service.createEvolutionClient = () => ({
+    post: async (path: string, body: Record<string, unknown>) => {
+      calls.push({ path, body });
+
+      return { data: { ok: true } };
+    },
+  });
+
+  await service.sendText(createResolvedConfig(), '69132011749577@lid', 'hola lid');
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0]?.path, '/message/sendText/demo');
+  assert.deepEqual(calls[0]?.body, {
+    number: '69132011749577@lid',
+    text: 'hola lid',
+  });
+});
+
 test('normalizeWebhookPayload prefers senderPn over remoteJid for direct chats when both differ', () => {
   const service = createService();
 
@@ -368,6 +390,7 @@ test('normalizeWebhookPayload prefers senderPn over remoteJid for direct chats w
   });
 
   assert.equal(result?.number, '18295319442');
+  assert.equal(result?.outboundAddress, '18295319442@s.whatsapp.net');
   assert.equal(result?.message, 'hola real');
 });
 
@@ -550,6 +573,7 @@ test('processIncomingAudioMessage answers short audios as text', async () => {
 
   await service.processIncomingAudioMessage(createResolvedConfig(), {
     number: '18095551234',
+    outboundAddress: '69132011749577@lid',
     message: '[audio]',
     type: 'audio',
     messageId: 'short-audio',
@@ -562,6 +586,7 @@ test('processIncomingAudioMessage answers short audios as text', async () => {
   });
 
   assert.equal(sentTexts.length, 1);
+  assert.equal(sentTexts[0]?.to, '69132011749577@lid');
   assert.equal(sentTexts[0]?.text, 'Te ayudo ahora mismo');
   assert.equal(sentAudios.length, 0);
 });
@@ -624,6 +649,7 @@ test('processMessageWebhook ignores duplicate inbound message ids', async () => 
   service.validateWebhook = () => undefined;
   service.normalizeWebhookPayload = () => ({
     number: '18095551234',
+    outboundAddress: '69132011749577@lid',
     message: '[audio]',
     type: 'audio',
     messageId: 'duplicate-audio',

@@ -143,28 +143,43 @@ export class RedisService implements OnModuleDestroy {
     contactId: string,
     message: string,
     windowMs: number,
+    outboundAddress?: string,
   ): Promise<boolean> {
     const bufferKey = this.getGroupedBufferKey(contactId);
+    const recipientKey = this.getGroupedRecipientKey(contactId);
     const timerKey = this.getGroupedTimerKey(contactId);
     const current = await this.client.get(bufferKey);
     const nextMessage = current ? `${current}\n${message}` : message;
+    const ttlMs = Math.max(windowMs * 3, 6000);
 
-    await this.client.set(bufferKey, nextMessage, 'PX', Math.max(windowMs * 3, 6000));
+    await this.client.set(bufferKey, nextMessage, 'PX', ttlMs);
+    if (outboundAddress?.trim()) {
+      await this.client.set(recipientKey, outboundAddress.trim(), 'PX', ttlMs);
+    }
     const lockResult = await this.client.set(timerKey, '1', 'PX', windowMs, 'NX');
 
     return lockResult === 'OK';
   }
 
-  async consumeGroupedMessage(contactId: string): Promise<string | null> {
+  async consumeGroupedMessage(
+    contactId: string,
+  ): Promise<{ message: string; outboundAddress: string | null } | null> {
     const bufferKey = this.getGroupedBufferKey(contactId);
+    const recipientKey = this.getGroupedRecipientKey(contactId);
     const value = await this.client.get(bufferKey);
 
     if (value === null) {
       return null;
     }
 
+    const outboundAddress = await this.client.get(recipientKey);
+
     await this.client.del(bufferKey);
-    return value;
+    await this.client.del(recipientKey);
+    return {
+      message: value,
+      outboundAddress,
+    };
   }
 
   async ping(): Promise<boolean> {
@@ -212,6 +227,10 @@ export class RedisService implements OnModuleDestroy {
 
   private getGroupedTimerKey(contactId: string): string {
     return `grouped-buffer:timer:${contactId}`;
+  }
+
+  private getGroupedRecipientKey(contactId: string): string {
+    return `grouped-buffer:recipient:${contactId}`;
   }
 
   private parseBoolean(value: string | undefined): boolean {

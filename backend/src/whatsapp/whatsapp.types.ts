@@ -77,6 +77,7 @@ export interface WhatsAppWebhookConfigResponse {
 
 export interface NormalizedIncomingWhatsAppMessage {
   number: string;
+  outboundAddress?: string;
   pushName?: string;
   message: string;
   type: IncomingWhatsAppMessageType;

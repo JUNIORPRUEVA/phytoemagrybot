@@ -317,8 +317,7 @@ export class WhatsAppService {
     text: string,
   ): Promise<void> {
     const instanceName = this.getRequiredInstanceName(resolved.whatsapp);
-    const number = this.getRequiredOutboundNumber(to);
-    const jid = `${number}@s.whatsapp.net`;
+    const jid = this.getRequiredOutboundAddress(to);
 
     console.log('📤 Enviando a:', jid);
     console.log('📦 Instancia:', instanceName);
@@ -361,7 +360,7 @@ export class WhatsAppService {
       'sendImage',
       `/message/sendMedia/${resolved.whatsapp.instanceName}`,
       {
-        number: this.normalizeNumber(to),
+        number: to,
         mediatype: 'image',
         mimetype: 'image/jpeg',
         media: imageUrl,
@@ -382,7 +381,7 @@ export class WhatsAppService {
       'sendVideo',
       `/message/sendMedia/${resolved.whatsapp.instanceName}`,
       {
-        number: this.normalizeNumber(to),
+        number: to,
         mediatype: 'video',
         mimetype: 'video/mp4',
         media: videoUrl,
@@ -407,7 +406,7 @@ export class WhatsAppService {
       'sendAudio',
       `/message/sendWhatsAppAudio/${resolved.whatsapp.instanceName}`,
       {
-        number: this.normalizeNumber(to),
+        number: to,
         audio: Buffer.isBuffer(audio) ? audio.toString('base64') : audio,
         fileName: options?.fileName ?? 'reply.mp3',
         mimetype: options?.mimetype ?? 'audio/mpeg',
@@ -502,6 +501,7 @@ export class WhatsAppService {
         incoming.number,
         incoming.message,
         spamGroupWindowMs,
+        incoming.outboundAddress,
       );
 
       if (shouldScheduleFlush) {
@@ -527,18 +527,22 @@ export class WhatsAppService {
       return;
     }
 
-    await this.processAndDeliverMessage(resolved, incoming.number, incoming.message, incoming.type);
+    await this.processAndDeliverMessage(resolved, incoming.number, incoming.message, incoming.type, {
+      outboundAddress: incoming.outboundAddress,
+    });
   }
 
   private async flushGroupedTextMessage(contactId: string): Promise<void> {
     const resolved = await this.resolveConfig();
     const groupedMessage = await this.redisService.consumeGroupedMessage(contactId);
 
-    if (!groupedMessage?.trim()) {
+    if (!groupedMessage?.message.trim()) {
       return;
     }
 
-    await this.processAndDeliverMessage(resolved, contactId, groupedMessage, 'text');
+    await this.processAndDeliverMessage(resolved, contactId, groupedMessage.message, 'text', {
+      outboundAddress: groupedMessage.outboundAddress || contactId,
+    });
   }
 
   private async processAndDeliverMessage(
@@ -548,6 +552,7 @@ export class WhatsAppService {
     messageType: 'text' | 'image' | 'audio',
     options?: {
       preferAudioReply?: boolean;
+      outboundAddress?: string;
     },
   ): Promise<void> {
     const fallbackMessage =
@@ -555,6 +560,7 @@ export class WhatsAppService {
       'En este momento no pude procesar tu mensaje. Intenta nuevamente en unos minutos.';
     const preferAudioReply =
       options?.preferAudioReply ?? (await this.hasVoiceReplyPreference(contactId));
+    const outboundAddress = options?.outboundAddress?.trim() || contactId;
 
     let botReply: Awaited<ReturnType<BotService['processIncomingMessage']>>;
     try {
@@ -569,12 +575,12 @@ export class WhatsAppService {
         error instanceof Error ? error.stack : undefined,
       );
 
-      await this.sendText(resolved, contactId, fallbackMessage);
+      await this.sendText(resolved, outboundAddress, fallbackMessage);
       return;
     }
 
     if (botReply.mediaFiles.length > 0) {
-      await this.deliverMatchedMedia(resolved, contactId, botReply.mediaFiles, botReply.reply);
+      await this.deliverMatchedMedia(resolved, outboundAddress, botReply.mediaFiles, botReply.reply);
       this.logger.log(
         JSON.stringify({
           event: 'whatsapp_reply_sent',
@@ -601,7 +607,7 @@ export class WhatsAppService {
           baseUrl: resolved.whatsapp.elevenLabsBaseUrl,
         });
 
-        await this.sendAudioWithRetry(resolved, contactId, audio.buffer, {
+        await this.sendAudioWithRetry(resolved, outboundAddress, audio.buffer, {
           fileName: audio.fileName,
           mimetype: audio.mimetype,
           ptt: true,
@@ -628,7 +634,7 @@ export class WhatsAppService {
       }
     }
 
-    await this.sendText(resolved, contactId, botReply.reply);
+    await this.sendText(resolved, outboundAddress, botReply.reply);
     this.logger.log(
       JSON.stringify({
         event: 'whatsapp_reply_sent',
@@ -664,6 +670,7 @@ export class WhatsAppService {
     incoming: NormalizedIncomingWhatsAppMessage,
   ): Promise<void> {
     const durationSeconds = incoming.audio?.seconds;
+    const outboundAddress = incoming.outboundAddress?.trim() || incoming.number;
 
     try {
       if (
@@ -672,7 +679,7 @@ export class WhatsAppService {
       ) {
         await this.sendText(
           resolved,
-          incoming.number,
+          outboundAddress,
           'Tu nota de voz supera los 60 segundos. Enviamela mas corta, por favor.',
         );
         return;
@@ -682,7 +689,7 @@ export class WhatsAppService {
       if (!transcript) {
         await this.sendText(
           resolved,
-          incoming.number,
+          outboundAddress,
           'No pude entender tu nota de voz. Si puedes, mandamela otra vez o escribeme.',
         );
         return;
@@ -700,6 +707,7 @@ export class WhatsAppService {
 
       await this.processAndDeliverMessage(resolved, incoming.number, transcript, 'audio', {
         preferAudioReply: this.shouldReplyWithVoiceForAudio(incoming),
+        outboundAddress,
       });
       await this.rememberVoiceReplyPreference(incoming.number);
     } catch (error) {
@@ -714,7 +722,7 @@ export class WhatsAppService {
 
       await this.sendText(
         resolved,
-        incoming.number,
+        outboundAddress,
         'No pude procesar tu audio ahora mismo. Si quieres, escribeme el mensaje.',
       );
     }
@@ -1283,6 +1291,7 @@ export class WhatsAppService {
 
     return {
       number,
+      outboundAddress: resolvedRecipient,
       pushName,
       message: type === 'text' ? text : text || `[${type}]`,
       type,
@@ -1348,7 +1357,7 @@ export class WhatsAppService {
     body: JsonRecord,
   ): Promise<void> {
     const instanceName = this.getRequiredInstanceName(resolved.whatsapp);
-    const number = this.getRequiredOutboundNumber(this.asString(body.number) || '');
+    const number = this.getRequiredOutboundAddress(this.asString(body.number) || '');
     const apiBaseUrl = this.getRequiredWhatsAppConfig(resolved.whatsapp.apiBaseUrl, 'EVOLUTION_URL');
     const apiKey = this.getRequiredWhatsAppConfig(resolved.whatsapp.apiKey, 'AUTHENTICATION_API_KEY');
 
@@ -1677,6 +1686,45 @@ export class WhatsAppService {
     }
 
     return cleanNumber;
+  }
+
+  private getRequiredOutboundAddress(address: string): string {
+    const normalized = this.normalizeOutboundAddress(address);
+    if (!normalized) {
+      throw new HttpException('Valid number is required', HttpStatus.BAD_REQUEST);
+    }
+
+    return normalized;
+  }
+
+  private normalizeOutboundAddress(raw: string): string {
+    const normalizedRaw = raw.trim().toLowerCase();
+    if (!normalizedRaw) {
+      return '';
+    }
+
+    if (normalizedRaw === 'status@broadcast') {
+      return normalizedRaw;
+    }
+
+    const digits = this.normalizeNumber(normalizedRaw);
+    if (!digits) {
+      return '';
+    }
+
+    if (normalizedRaw.includes('@g.us')) {
+      return `${digits}@g.us`;
+    }
+
+    if (normalizedRaw.includes('@broadcast')) {
+      return `${digits}@broadcast`;
+    }
+
+    if (normalizedRaw.includes('@lid')) {
+      return `${digits}@lid`;
+    }
+
+    return `${digits}@s.whatsapp.net`;
   }
 
   private getRequiredWhatsAppConfig(
