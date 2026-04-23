@@ -1179,12 +1179,15 @@ export class WhatsAppService {
       return null;
     }
 
-    const number = this.normalizeNumber(
-      this.resolveIncomingRecipient(payload, data, key, instancePhone),
-    );
+    const resolvedRecipient = this.resolveIncomingRecipient(payload, data, key, instancePhone);
+    if (!resolvedRecipient.trim()) {
+      return null;
+    }
+
+    const number = this.normalizeNumber(resolvedRecipient);
 
     if (!number) {
-      throw new BadRequestException('Incoming payload does not contain a valid phone number');
+      return null;
     }
 
     const type = this.detectMessageType(message, this.asString(data.messageType));
@@ -1443,14 +1446,15 @@ export class WhatsAppService {
       this.asString(payload.remoteJidAlt) ||
       '';
     const normalizedInstancePhone = this.normalizeNumber(instancePhone || '');
-    const prioritizedCandidates = [
-      remoteJidAlt,
+    const directSenderCandidates = [
       this.asString(key.senderPn),
       this.asString(data.senderPn),
       this.asString(payload.senderPn),
       this.asString(key.participantPn),
       this.asString(data.participantPn),
       this.asString(payload.participantPn),
+    ].filter((value): value is string => Boolean(value));
+    const secondaryCandidates = [
       this.asString(key.sender),
       this.asString(data.sender),
       this.asString(payload.sender),
@@ -1461,21 +1465,13 @@ export class WhatsAppService {
       this.asString(data.participant),
       this.asString(payload.participant),
     ].filter((value): value is string => Boolean(value));
+    const remoteJidNumber = this.normalizeNumber(remoteJid);
 
     if (remoteJid.includes('@lid') && remoteJidAlt) {
       return remoteJidAlt;
     }
 
-    if (
-      remoteJid.includes('@s.whatsapp.net') &&
-      this.normalizeNumber(remoteJid) !== normalizedInstancePhone &&
-      !remoteJid.includes('@g.us') &&
-      !remoteJid.includes('@broadcast')
-    ) {
-      return remoteJid;
-    }
-
-    for (const candidate of prioritizedCandidates) {
+    for (const candidate of directSenderCandidates) {
       if (
         !candidate.includes('@g.us') &&
         !candidate.includes('@broadcast') &&
@@ -1485,7 +1481,39 @@ export class WhatsAppService {
       }
     }
 
-    return remoteJid || prioritizedCandidates[0] || '';
+    if (
+      remoteJid.includes('@s.whatsapp.net') &&
+      remoteJidNumber !== normalizedInstancePhone &&
+      !remoteJid.includes('@g.us') &&
+      !remoteJid.includes('@broadcast')
+    ) {
+      return remoteJid;
+    }
+
+    for (const candidate of secondaryCandidates) {
+      if (
+        !candidate.includes('@g.us') &&
+        !candidate.includes('@broadcast') &&
+        this.normalizeNumber(candidate) !== normalizedInstancePhone
+      ) {
+        return candidate;
+      }
+    }
+
+    if (normalizedInstancePhone) {
+      const fallbackCandidates = [remoteJidAlt, ...directSenderCandidates, remoteJid, ...secondaryCandidates]
+        .map((candidate) => this.normalizeNumber(candidate))
+        .filter((candidate) => candidate.length > 0);
+
+      if (
+        fallbackCandidates.length > 0 &&
+        fallbackCandidates.every((candidate) => candidate === normalizedInstancePhone)
+      ) {
+        return '';
+      }
+    }
+
+    return remoteJidAlt || remoteJid || directSenderCandidates[0] || secondaryCandidates[0] || '';
   }
 
   private async getInstancePhoneNumber(instanceName: string): Promise<string | null> {
@@ -1503,7 +1531,21 @@ export class WhatsAppService {
       select: { phone: true },
     });
 
-    return instance?.phone?.trim() || null;
+    const storedPhone = instance?.phone?.trim() || null;
+    if (storedPhone) {
+      return storedPhone;
+    }
+
+    if (!this.syncInstanceFromEvolution) {
+      return null;
+    }
+
+    try {
+      const syncedInstance = await this.syncInstanceFromEvolution(normalizedName);
+      return syncedInstance?.phone?.trim() || null;
+    } catch {
+      return null;
+    }
   }
 
   private normalizeNumber(raw: string): string {

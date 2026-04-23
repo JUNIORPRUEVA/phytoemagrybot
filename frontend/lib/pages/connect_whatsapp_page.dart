@@ -6,7 +6,6 @@ import 'package:flutter/material.dart';
 
 import '../services/api_service.dart';
 import '../widgets/app_text_field.dart';
-import '../widgets/section_card.dart';
 
 class GestionWhatsAppPage extends StatefulWidget {
   const GestionWhatsAppPage({
@@ -530,24 +529,6 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
     }
   }
 
-  String _loadedConfigSummary() {
-    final parts = <String>[];
-
-    if (_config.instanceName.trim().isNotEmpty) {
-      parts.add('Instancia: ${_config.instanceName.trim()}');
-    }
-
-    if (_config.evolutionApiUrl.trim().isNotEmpty) {
-      parts.add('Evolution URL: ${_config.evolutionApiUrl.trim()}');
-    }
-
-    if (_config.webhookUrl.trim().isNotEmpty) {
-      parts.add('Webhook URL: ${_config.webhookUrl.trim()}');
-    }
-
-    return parts.join(' | ');
-  }
-
   Future<void> _showQrFor(String instanceName) async {
     setState(() {
       _selectedInstanceName = instanceName;
@@ -764,255 +745,256 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
   Widget build(BuildContext context) {
     final selectedInstance = _selectedInstance;
     final qrImageBytes = _decodeQrImage(_qrCodeBase64);
+    final hasConfigGaps = !_hasEvolutionConfig || !_hasWebhookBaseConfig;
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: <Widget>[
-        Text('Gestion WhatsApp', style: Theme.of(context).textTheme.headlineMedium),
-        const SizedBox(height: 6),
-        const Text(
-          'Crea, monitorea y elimina instancias desde el backend con estado sincronizado en base de datos.',
-          style: TextStyle(color: Color(0xFF475569), fontSize: 14),
-        ),
-        const SizedBox(height: 20),
-        if (!_hasEvolutionConfig || !_hasWebhookBaseConfig) ...<Widget>[
-          const _InlineNotice(
-            message:
-                'Si falta algun dato de Evolution o del webhook, al pulsar Crear instancia o Configurar webhook se abrira un formulario para completarlo aqui mismo.',
-            color: Color(0xFFD97706),
-          ),
-          const SizedBox(height: 20),
-        ],
-        if (_hasEvolutionConfig && _config.webhookUrl.trim().isEmpty && _webhookMessage == null) ...<Widget>[
-          const _InlineNotice(
-            message:
-                'Todavia falta indicar la URL del webhook. Al pulsar Configurar webhook se te pedira esa URL y se activara para la instancia.',
-            color: Color(0xFF1D4ED8),
-          ),
-          const SizedBox(height: 20),
-        ],
-        if (_hasEvolutionConfig && _config.webhookUrl.trim().isNotEmpty && _webhookMessage == null) ...<Widget>[
-          const _InlineNotice(
-            message:
-                'La URL del webhook ya esta cargada. Ahora pulsa Configurar webhook para activarlo en la instancia seleccionada.',
-            color: Color(0xFF1D4ED8),
-          ),
-          const SizedBox(height: 20),
-        ],
-        if (_loadedConfigSummary().isNotEmpty) ...<Widget>[
-          _InlineNotice(
-            message: 'Configuracion cargada: ${_loadedConfigSummary()}',
-            color: const Color(0xFF0F766E),
-          ),
-          const SizedBox(height: 20),
-        ],
-        if (_errorMessage != null) ...<Widget>[
-          _InlineNotice(message: _errorMessage!, color: const Color(0xFFDC2626)),
-          const SizedBox(height: 20),
-        ],
-        SectionCard(
-          title: 'Nueva instancia',
-          subtitle: 'Solo necesitas el nombre de la instancia para crearla y activar el webhook.',
-          child: Wrap(
-            spacing: 16,
-            runSpacing: 16,
-            crossAxisAlignment: WrapCrossAlignment.end,
-            children: <Widget>[
-              SizedBox(
-                width: 360,
-                child: AppTextField(
-                  label: 'Nombre de instancia',
-                  controller: _instanceNameController,
-                  hintText: 'phytoemagry-main',
-                  enabled: !_isCreating && !_isDeleting,
+    return LayoutBuilder(
+      builder: (BuildContext context, BoxConstraints constraints) {
+        final compact = constraints.maxWidth < 760;
+        final bodyWidth = compact ? 620.0 : 760.0;
+
+        return Center(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(maxWidth: bodyWidth),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: <Widget>[
+                Text(
+                  'Gestion WhatsApp',
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: -0.4,
+                      ),
                 ),
-              ),
-              ElevatedButton(
-                onPressed: _isLoading || _isCreating || _isDeleting
-                    ? null
-                    : _createInstance,
-                child: Text(_isCreating ? 'Creando...' : 'Crear instancia'),
-              ),
-              OutlinedButton(
-                onPressed: _isLoading || _isConfiguringWebhook
-                    ? null
-                    : _configureWebhook,
-                child: Text(
-                  _isConfiguringWebhook ? 'Configurando webhook...' : 'Configurar webhook',
-                ),
-              ),
-              OutlinedButton(
-                onPressed: _isLoading || _isCheckingWebhook
-                    ? null
-                    : _verifyWebhook,
-                child: Text(
-                  _isCheckingWebhook ? 'Verificando webhook...' : 'Verificar webhook',
-                ),
-              ),
-            ],
-          ),
-        ),
-        if (_webhookMessage != null) ...<Widget>[
-          _InlineNotice(message: _webhookMessage!, color: const Color(0xFF166534)),
-          const SizedBox(height: 20),
-        ],
-        SectionCard(
-          title: 'Instancias registradas',
-          subtitle: 'El estado se refresca automaticamente cada 5 segundos desde Evolution.',
-          child: _isLoading
-              ? const Center(
-                  child: Padding(
-                    padding: EdgeInsets.all(24),
-                    child: CircularProgressIndicator(),
+                const SizedBox(height: 8),
+                Text(
+                  'Instancias, webhook y QR en un solo flujo.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: const Color(0xFF64748B),
+                    fontSize: compact ? 12 : 13,
+                    fontWeight: FontWeight.w500,
                   ),
-                )
-              : _instances.isEmpty
-                  ? const Text(
-                      'Todavia no hay instancias registradas.',
-                      style: TextStyle(color: Color(0xFF475569), height: 1.5),
-                    )
-                  : Column(
-                      children: _instances
-                          .map(
-                            (ManagedWhatsAppInstanceData instance) => Padding(
-                              padding: const EdgeInsets.only(bottom: 14),
-                              child: _InstanceTile(
-                                instance: instance,
-                                selected: instance.name == _selectedInstanceName,
-                                configured: instance.name == _config.instanceName.trim(),
-                                onShowQr: () => _showQrFor(instance.name),
-                                onDelete: _isDeleting ? null : () => _confirmDelete(instance.name),
-                              ),
-                            ),
-                          )
-                          .toList(),
+                ),
+                const SizedBox(height: 20),
+                if (hasConfigGaps)
+                  const Padding(
+                    padding: EdgeInsets.only(bottom: 16),
+                    child: _InlineNotice(
+                      message: 'Si faltan datos base del canal, se solicitaran al crear o configurar el webhook.',
+                      color: Color(0xFFD97706),
                     ),
-        ),
-        SectionCard(
-          title: 'QR y detalle',
-          subtitle: 'Selecciona una instancia para ver su estado actual y el QR si sigue pendiente.',
-          child: selectedInstance == null
-              ? const Text(
-                  'Selecciona una instancia de la lista para ver su QR.',
-                  style: TextStyle(color: Color(0xFF475569), height: 1.5),
-                )
-              : Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: <Widget>[
-                    Wrap(
-                      spacing: 10,
-                      runSpacing: 10,
-                      children: <Widget>[
-                        _StatusBadge(
-                          label: 'Estado',
-                          value: _statusLabel(selectedInstance),
-                          color: _statusColor(selectedInstance.status),
+                  ),
+                if (_errorMessage != null)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 16),
+                    child: _InlineNotice(message: _errorMessage!, color: const Color(0xFFDC2626)),
+                  ),
+                if (_webhookMessage != null)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 16),
+                    child: _InlineNotice(message: _webhookMessage!, color: const Color(0xFF166534)),
+                  ),
+                _ChannelSection(
+                  title: 'Nueva instancia',
+                  child: Column(
+                    children: <Widget>[
+                      ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 380),
+                        child: AppTextField(
+                          label: 'Nombre de instancia',
+                          controller: _instanceNameController,
+                          hintText: 'phytoemagry-main',
+                          enabled: !_isCreating && !_isDeleting,
                         ),
-                        _StatusBadge(
-                          label: 'Instancia',
-                          value: selectedInstance.label,
-                          color: const Color(0xFF1D4ED8),
-                        ),
-                        _StatusBadge(
-                          label: 'Telefono',
-                          value: selectedInstance.phone?.isNotEmpty == true
-                              ? selectedInstance.phone!
-                              : 'Sin detectar',
-                          color: const Color(0xFF475569),
-                        ),
-                        _StatusBadge(
-                          label: 'Webhook',
-                          value: selectedInstance.webhookReady ? 'Activo en Evolution' : 'Sin verificar',
-                          color: selectedInstance.webhookReady
-                              ? const Color(0xFF166534)
-                              : const Color(0xFFD97706),
-                        ),
-                      ],
-                    ),
-                    if (selectedInstance.webhookTarget?.isNotEmpty == true) ...<Widget>[
-                      const SizedBox(height: 12),
-                      Text(
-                        'URL configurada para webhook: ${selectedInstance.webhookTarget}',
-                        style: const TextStyle(color: Color(0xFF475569), height: 1.4),
                       ),
-                      const SizedBox(height: 8),
-                      Text(
-                        selectedInstance.webhookReady
-                            ? 'Evolution confirma que esta instancia tiene el webhook activo con esa URL.'
-                            : 'Hay una URL cargada, pero Evolution todavia no confirma el webhook para esta instancia. Pulsa Configurar webhook para activarlo o revalidarlo.',
-                        style: const TextStyle(color: Color(0xFF475569), height: 1.4),
-                      ),
-                    ],
-                    const SizedBox(height: 24),
-                    SectionCard(
-                      title: 'Editar instancia',
-                      subtitle: 'Puedes cambiar el nombre visible y el telefono sin crear otra instancia.',
-                      child: Wrap(
-                        spacing: 16,
-                        runSpacing: 16,
-                        crossAxisAlignment: WrapCrossAlignment.end,
+                      const SizedBox(height: 16),
+                      Wrap(
+                        alignment: WrapAlignment.center,
+                        spacing: 10,
+                        runSpacing: 10,
                         children: <Widget>[
-                          SizedBox(
-                            width: 280,
-                            child: AppTextField(
-                              label: 'Nombre visible',
-                              controller: _displayNameController,
-                              hintText: selectedInstance.name,
-                              enabled: !_isEditingInstance,
-                            ),
+                          ElevatedButton(
+                            onPressed: _isLoading || _isCreating || _isDeleting ? null : _createInstance,
+                            child: Text(_isCreating ? 'Creando...' : 'Crear instancia'),
                           ),
-                          SizedBox(
-                            width: 220,
-                            child: AppTextField(
-                              label: 'Telefono',
-                              controller: _phoneController,
-                              hintText: '8090000000',
-                              enabled: !_isEditingInstance,
-                            ),
+                          OutlinedButton(
+                            onPressed: _isLoading || _isConfiguringWebhook ? null : _configureWebhook,
+                            child: Text(_isConfiguringWebhook ? 'Configurando...' : 'Configurar webhook'),
                           ),
-                          FilledButton(
-                            onPressed: _isEditingInstance ? null : _saveSelectedInstanceMetadata,
-                            child: Text(_isEditingInstance ? 'Guardando...' : 'Guardar cambios'),
+                          OutlinedButton(
+                            onPressed: _isLoading || _isCheckingWebhook ? null : _verifyWebhook,
+                            child: Text(_isCheckingWebhook ? 'Verificando...' : 'Verificar webhook'),
                           ),
                         ],
                       ),
-                    ),
-                    const SizedBox(height: 24),
-                    Wrap(
-                      spacing: 12,
-                      runSpacing: 12,
-                      children: <Widget>[
-                        FilledButton(
-                          onPressed: _isLoading ? null : _useSelectedInstance,
-                          child: const Text('Usar esta instancia'),
-                        ),
-                        if (_config.instanceName.trim() == selectedInstance.name)
-                          const _InlineNotice(
-                            message: 'Esta es la instancia activa del bot.',
-                            color: Color(0xFF166534),
-                          ),
-                      ],
-                    ),
-                    const SizedBox(height: 24),
-                    if (selectedInstance.connected)
-                      const _ConnectedChannelState()
-                    else if (qrImageBytes != null)
-                      Center(
-                        child: Container(
-                          padding: const EdgeInsets.all(16),
-                          color: Colors.white,
-                          child: Image.memory(qrImageBytes, width: 260, height: 260),
-                        ),
-                      )
-                    else
-                      const Text(
-                        'Todavia no hay un QR disponible para esta instancia.',
-                        style: TextStyle(color: Color(0xFF475569), height: 1.5),
-                      ),
-                  ],
+                    ],
+                  ),
                 ),
-        ),
-      ],
+                const SizedBox(height: 18),
+                _ChannelSection(
+                  title: 'Instancias',
+                  child: _isLoading
+                      ? const Center(
+                          child: Padding(
+                            padding: EdgeInsets.all(24),
+                            child: CircularProgressIndicator(),
+                          ),
+                        )
+                      : _instances.isEmpty
+                          ? const Text(
+                              'Todavia no hay instancias registradas.',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(color: Color(0xFF64748B), height: 1.5),
+                            )
+                          : Column(
+                              children: _instances
+                                  .map(
+                                    (ManagedWhatsAppInstanceData instance) => Padding(
+                                      padding: const EdgeInsets.only(bottom: 12),
+                                      child: _InstanceTile(
+                                        instance: instance,
+                                        selected: instance.name == _selectedInstanceName,
+                                        configured: instance.name == _config.instanceName.trim(),
+                                        onShowQr: () => _showQrFor(instance.name),
+                                        onDelete: _isDeleting ? null : () => _confirmDelete(instance.name),
+                                      ),
+                                    ),
+                                  )
+                                  .toList(),
+                            ),
+                ),
+                const SizedBox(height: 18),
+                _ChannelSection(
+                  title: 'Detalle de instancia',
+                  child: selectedInstance == null
+                      ? const Text(
+                          'Selecciona una instancia para ver su detalle.',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(color: Color(0xFF64748B), height: 1.5),
+                        )
+                      : Column(
+                          crossAxisAlignment: CrossAxisAlignment.center,
+                          children: <Widget>[
+                            Wrap(
+                              alignment: WrapAlignment.center,
+                              spacing: 10,
+                              runSpacing: 10,
+                              children: <Widget>[
+                                _StatusBadge(
+                                  label: 'Estado',
+                                  value: _statusLabel(selectedInstance),
+                                  color: _statusColor(selectedInstance.status),
+                                ),
+                                _StatusBadge(
+                                  label: 'Instancia',
+                                  value: selectedInstance.label,
+                                  color: const Color(0xFF1D4ED8),
+                                ),
+                                _StatusBadge(
+                                  label: 'Telefono',
+                                  value: selectedInstance.phone?.isNotEmpty == true ? selectedInstance.phone! : 'Sin detectar',
+                                  color: const Color(0xFF475569),
+                                ),
+                                _StatusBadge(
+                                  label: 'Webhook',
+                                  value: selectedInstance.webhookReady ? 'Activo' : 'Pendiente',
+                                  color: selectedInstance.webhookReady ? const Color(0xFF166534) : const Color(0xFFD97706),
+                                ),
+                              ],
+                            ),
+                            if (selectedInstance.webhookTarget?.isNotEmpty == true) ...<Widget>[
+                              const SizedBox(height: 14),
+                              Text(
+                                selectedInstance.webhookTarget!,
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(
+                                  color: Color(0xFF64748B),
+                                  height: 1.4,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ],
+                            const SizedBox(height: 22),
+                            Wrap(
+                              alignment: WrapAlignment.center,
+                              spacing: 14,
+                              runSpacing: 14,
+                              children: <Widget>[
+                                SizedBox(
+                                  width: compact ? double.infinity : 280,
+                                  child: AppTextField(
+                                    label: 'Nombre visible',
+                                    controller: _displayNameController,
+                                    hintText: selectedInstance.name,
+                                    enabled: !_isEditingInstance,
+                                  ),
+                                ),
+                                SizedBox(
+                                  width: compact ? double.infinity : 220,
+                                  child: AppTextField(
+                                    label: 'Telefono',
+                                    controller: _phoneController,
+                                    hintText: '8090000000',
+                                    enabled: !_isEditingInstance,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 16),
+                            Wrap(
+                              alignment: WrapAlignment.center,
+                              spacing: 10,
+                              runSpacing: 10,
+                              children: <Widget>[
+                                FilledButton(
+                                  onPressed: _isEditingInstance ? null : _saveSelectedInstanceMetadata,
+                                  child: Text(_isEditingInstance ? 'Guardando...' : 'Guardar cambios'),
+                                ),
+                                FilledButton(
+                                  onPressed: _isLoading ? null : _useSelectedInstance,
+                                  child: const Text('Usar esta instancia'),
+                                ),
+                              ],
+                            ),
+                            if (_config.instanceName.trim() == selectedInstance.name) ...<Widget>[
+                              const SizedBox(height: 14),
+                              const _InlineNotice(
+                                message: 'Esta es la instancia activa del bot.',
+                                color: Color(0xFF166534),
+                              ),
+                            ],
+                            const SizedBox(height: 22),
+                            if (selectedInstance.connected)
+                              const _ConnectedChannelState()
+                            else if (qrImageBytes != null)
+                              Center(
+                                child: ColoredBox(
+                                  color: Colors.white,
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(12),
+                                    child: Image.memory(
+                                      qrImageBytes,
+                                      width: compact ? 220 : 260,
+                                      height: compact ? 220 : 260,
+                                    ),
+                                  ),
+                                ),
+                              )
+                            else
+                              const Text(
+                                'Todavia no hay un QR disponible para esta instancia.',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(color: Color(0xFF64748B), height: 1.5),
+                              ),
+                          ],
+                        ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 
@@ -1056,6 +1038,7 @@ class _InstanceTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final compact = MediaQuery.sizeOf(context).width < 760;
     final Color accent = switch (instance.status) {
       'connected' => const Color(0xFFDCFCE7),
       'connecting' => const Color(0xFFFEF3C7),
@@ -1069,95 +1052,86 @@ class _InstanceTile extends StatelessWidget {
     };
 
     return Container(
-      padding: const EdgeInsets.all(18),
+      padding: EdgeInsets.symmetric(vertical: compact ? 14 : 16),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(22),
-        border: Border.all(color: border, width: selected ? 1.5 : 1),
+        border: Border(
+          bottom: BorderSide(color: selected ? border : const Color(0xFFE2E8F0), width: selected ? 1.5 : 1),
+        ),
       ),
-      child: Row(
+      child: Flex(
+        direction: compact ? Axis.vertical : Axis.horizontal,
+        crossAxisAlignment: compact ? CrossAxisAlignment.start : CrossAxisAlignment.center,
         children: <Widget>[
-          Container(
-            width: 12,
-            height: 12,
-            decoration: BoxDecoration(
-              color: statusColor,
-              shape: BoxShape.circle,
-            ),
-          ),
-          const SizedBox(width: 14),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: <Widget>[
-                Text(
-                  instance.label,
-                  style: const TextStyle(
-                    color: Color(0xFF0F172A),
-                    fontSize: 16,
-                    fontWeight: FontWeight.w700,
-                  ),
+                Row(
+                  children: <Widget>[
+                    Container(
+                      width: 10,
+                      height: 10,
+                      decoration: BoxDecoration(color: statusColor, shape: BoxShape.circle),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        instance.label,
+                        style: TextStyle(
+                          color: const Color(0xFF0F172A),
+                          fontSize: compact ? 15 : 16,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 6),
+                const SizedBox(height: 8),
                 if (instance.displayName?.trim().isNotEmpty == true && instance.displayName!.trim() != instance.name)
                   Padding(
                     padding: const EdgeInsets.only(bottom: 6),
                     child: Text(
-                      'Instancia tecnica: ${instance.name}',
-                      style: const TextStyle(color: Color(0xFF64748B), fontSize: 12),
+                      instance.name,
+                      style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 12, fontWeight: FontWeight.w500),
                     ),
                   ),
                 Wrap(
                   spacing: 8,
                   runSpacing: 8,
                   children: <Widget>[
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                      decoration: BoxDecoration(
-                        color: accent,
-                        borderRadius: BorderRadius.circular(999),
-                      ),
-                      child: Text(
-                        instance.status,
-                        style: TextStyle(color: statusColor, fontWeight: FontWeight.w700),
-                      ),
-                    ),
+                    _MiniTag(label: instance.status, textColor: statusColor, backgroundColor: accent),
                     if (configured)
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFDBEAFE),
-                          borderRadius: BorderRadius.circular(999),
-                        ),
-                        child: const Text(
-                          'activa',
-                          style: TextStyle(
-                            color: Color(0xFF1D4ED8),
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
+                      const _MiniTag(
+                        label: 'activa',
+                        textColor: Color(0xFF1D4ED8),
+                        backgroundColor: Color(0xFFDBEAFE),
                       ),
                     if (instance.phone?.isNotEmpty == true)
                       Text(
                         instance.phone!,
-                        style: const TextStyle(color: Color(0xFF475569)),
+                        style: const TextStyle(color: Color(0xFF64748B), fontSize: 13),
                       ),
                   ],
                 ),
               ],
             ),
           ),
-          const SizedBox(width: 12),
-          OutlinedButton(
-            onPressed: onShowQr,
-            child: Text(instance.connected ? 'Ver estado' : 'Ver QR'),
-          ),
-          const SizedBox(width: 8),
-          IconButton(
-            onPressed: onDelete,
-            icon: const Icon(Icons.delete_outline_rounded),
-            color: const Color(0xFFB91C1C),
-            tooltip: 'Eliminar instancia',
+          SizedBox(width: compact ? 0 : 16, height: compact ? 12 : 0),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: <Widget>[
+              TextButton(
+                onPressed: onShowQr,
+                child: Text(instance.connected ? 'Ver estado' : 'Ver QR'),
+              ),
+              IconButton(
+                onPressed: onDelete,
+                icon: const Icon(Icons.delete_outline_rounded),
+                color: const Color(0xFFB91C1C),
+                tooltip: 'Eliminar instancia',
+              ),
+            ],
           ),
         ],
       ),
@@ -1212,30 +1186,21 @@ class _ConnectedChannelState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: const Color(0xFFECFDF5),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: const Color(0xFFBBF7D0)),
-      ),
-      child: const Row(
-        children: <Widget>[
-          Icon(Icons.check_circle_rounded, color: Color(0xFF16A34A), size: 28),
-          SizedBox(width: 12),
-          Expanded(
-            child: Text(
-              'La instancia ya se encuentra conectada y lista para recibir mensajes.',
-              style: TextStyle(
-                color: Color(0xFF166534),
-                fontWeight: FontWeight.w600,
-                height: 1.4,
-              ),
+    return const Row(
+      children: <Widget>[
+        Icon(Icons.check_circle_rounded, color: Color(0xFF16A34A), size: 22),
+        SizedBox(width: 10),
+        Expanded(
+          child: Text(
+            'La instancia ya se encuentra conectada y lista para recibir mensajes.',
+            style: TextStyle(
+              color: Color(0xFF166534),
+              fontWeight: FontWeight.w600,
+              height: 1.4,
             ),
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 }
@@ -1248,18 +1213,25 @@ class _InlineNotice extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: color.withAlpha(20),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: color.withAlpha(56)),
-      ),
-      child: Text(
-        message,
-        style: TextStyle(color: color, fontWeight: FontWeight.w600),
-      ),
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Container(
+          width: 4,
+          height: 42,
+          decoration: BoxDecoration(
+            color: color,
+            borderRadius: BorderRadius.circular(999),
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Text(
+            message,
+            style: TextStyle(color: color, fontWeight: FontWeight.w600, height: 1.45),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -1276,4 +1248,60 @@ class _ChannelConfigValues {
   final String evolutionApiKey;
   final String webhookSecret;
   final String webhookUrl;
+}
+
+class _ChannelSection extends StatelessWidget {
+  const _ChannelSection({required this.title, required this.child});
+
+  final String title;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: <Widget>[
+        const Divider(height: 1, color: Color(0xFFE2E8F0)),
+        const SizedBox(height: 22),
+        Text(
+          title,
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            color: Color(0xFF0F172A),
+            fontSize: 18,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        const SizedBox(height: 18),
+        child,
+      ],
+    );
+  }
+}
+
+class _MiniTag extends StatelessWidget {
+  const _MiniTag({
+    required this.label,
+    required this.textColor,
+    required this.backgroundColor,
+  });
+
+  final String label;
+  final Color textColor;
+  final Color backgroundColor;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: backgroundColor,
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(color: textColor, fontWeight: FontWeight.w700),
+      ),
+    );
+  }
 }

@@ -348,14 +348,14 @@ test('sendText uses instance endpoint with jid number payload', async () => {
   });
 });
 
-test('normalizeWebhookPayload prefers remoteJid over senderPn for direct chats', () => {
+test('normalizeWebhookPayload prefers senderPn over remoteJid for direct chats when both differ', () => {
   const service = createService();
 
   const result = service.normalizeWebhookPayload({
     event: 'messages.upsert',
     data: {
       key: {
-        remoteJid: '18095551234@s.whatsapp.net',
+        remoteJid: '18295344286@s.whatsapp.net',
         senderPn: '18295319442@s.whatsapp.net',
         fromMe: false,
         id: 'senderpn-123',
@@ -367,8 +367,34 @@ test('normalizeWebhookPayload prefers remoteJid over senderPn for direct chats',
     },
   });
 
-  assert.equal(result?.number, '18095551234');
+  assert.equal(result?.number, '18295319442');
   assert.equal(result?.message, 'hola real');
+});
+
+test('normalizeWebhookPayload falls back to remoteJid when senderPn is the instance phone', () => {
+  const service = createService();
+
+  const result = service.normalizeWebhookPayload(
+    {
+      event: 'messages.upsert',
+      data: {
+        key: {
+          remoteJid: '18295319442@s.whatsapp.net',
+          senderPn: '18295344286@s.whatsapp.net',
+          fromMe: false,
+          id: 'remotej-fallback-123',
+        },
+        message: {
+          conversation: 'hola remoto real',
+        },
+        messageType: 'conversation',
+      },
+    },
+    '18295344286',
+  );
+
+  assert.equal(result?.number, '18295319442');
+  assert.equal(result?.message, 'hola remoto real');
 });
 
 test('normalizeWebhookPayload uses senderPn when remoteJid is a group identifier', () => {
@@ -418,6 +444,48 @@ test('normalizeWebhookPayload ignores the instance phone when resolving sender',
 
   assert.equal(result?.number, '18095551234');
   assert.equal(result?.message, 'hola desde cliente');
+});
+
+test('normalizeWebhookPayload ignores payloads that only point to the instance phone', () => {
+  const service = createService();
+
+  const result = service.normalizeWebhookPayload(
+    {
+      event: 'messages.upsert',
+      data: {
+        key: {
+          remoteJid: '18295344286@s.whatsapp.net',
+          senderPn: '18295344286@s.whatsapp.net',
+          fromMe: false,
+          id: 'self-only-123',
+        },
+        message: {
+          conversation: 'hola self only',
+        },
+        messageType: 'conversation',
+      },
+    },
+    '18295344286',
+  );
+
+  assert.equal(result, null);
+});
+
+test('getInstancePhoneNumber refreshes from evolution when local phone is missing', async () => {
+  const service = createService();
+
+  service.prisma = {
+    whatsAppInstance: {
+      findUnique: async () => ({ phone: null }),
+    },
+  };
+  service.syncInstanceFromEvolution = async () => ({
+    phone: '18295344286',
+  });
+
+  const phone = await service.getInstancePhoneNumber('demo');
+
+  assert.equal(phone, '18295344286');
 });
 
 test('processIncomingAudioMessage answers short audios as text', async () => {
