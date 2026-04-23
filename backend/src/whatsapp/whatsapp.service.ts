@@ -625,7 +625,7 @@ export class WhatsAppService implements OnModuleInit {
     }
 
     await this.processAndDeliverMessage(resolved, contactId, groupedMessage.message, 'text', {
-      outboundAddress: groupedMessage.outboundAddress || contactId,
+      outboundAddress: groupedMessage.outboundAddress || undefined,
     });
   }
 
@@ -644,7 +644,19 @@ export class WhatsAppService implements OnModuleInit {
       'En este momento no pude procesar tu mensaje. Intenta nuevamente en unos minutos.';
     const preferAudioReply =
       options?.preferAudioReply ?? (await this.hasVoiceReplyPreference(contactId));
-    const outboundAddress = options?.outboundAddress?.trim() || contactId;
+    const outboundAddress = options?.outboundAddress?.trim() || '';
+
+    if (!outboundAddress.includes('@s.whatsapp.net')) {
+      this.logger.warn(
+        JSON.stringify({
+          event: 'whatsapp_reply_skipped_invalid_jid',
+          contactId,
+          outboundAddress: outboundAddress || null,
+        }),
+      );
+      console.log('❌ No hay JID válido, se cancela respuesta');
+      return;
+    }
 
     let botReply: Awaited<ReturnType<BotService['processIncomingMessage']>>;
     try {
@@ -754,7 +766,20 @@ export class WhatsAppService implements OnModuleInit {
     incoming: NormalizedIncomingWhatsAppMessage,
   ): Promise<void> {
     const durationSeconds = incoming.audio?.seconds;
-    const outboundAddress = incoming.outboundAddress?.trim() || incoming.number;
+    const outboundAddress = incoming.outboundAddress?.trim() || '';
+
+    if (!outboundAddress.includes('@s.whatsapp.net')) {
+      this.logger.warn(
+        JSON.stringify({
+          event: 'whatsapp_audio_reply_skipped_invalid_jid',
+          contactId: incoming.number,
+          outboundAddress: outboundAddress || null,
+          messageId: incoming.messageId,
+        }),
+      );
+      console.log('❌ No hay JID válido, se cancela respuesta');
+      return;
+    }
 
     try {
       if (
@@ -1269,7 +1294,7 @@ export class WhatsAppService implements OnModuleInit {
       return null;
     }
 
-    const resolvedRecipient = this.resolveIncomingRecipient(payload, data, key, instancePhone);
+    const resolvedRecipient = this.resolveSenderJid(payload, data, key, instancePhone);
     if (!resolvedRecipient.trim()) {
       this.logger.warn(
         JSON.stringify({
@@ -2292,84 +2317,68 @@ export class WhatsAppService implements OnModuleInit {
     key: JsonRecord,
     instancePhone?: string | null,
   ): string {
-    const remoteJid = this.asString(key.remoteJid) || this.asString(data.remoteJid) || '';
-    const remoteJidAlt =
-      this.asString(key.remoteJidAlt) ||
-      this.asString(data.remoteJidAlt) ||
-      this.asString(payload.remoteJidAlt) ||
+    return this.resolveSenderJid(payload, data, key, instancePhone);
+  }
+
+  private resolveSenderJid(
+    payload: JsonRecord,
+    data?: JsonRecord,
+    key?: JsonRecord,
+    instancePhone?: string | null,
+  ): string {
+    const messageData = data ?? this.getWebhookMessageData(payload);
+    const messageKey = key ?? this.asRecord(messageData.key);
+    const remoteJid =
+      this.asString(messageKey.remoteJid) || this.asString(messageData.remoteJid) || '';
+    const participant =
+      this.asString(messageKey.participant) ||
+      this.asString(messageData.participant) ||
+      this.asString(payload.participant) ||
       '';
     const normalizedInstancePhone = this.normalizeNumber(instancePhone || '');
-    const directSenderCandidates = [
-      this.asString(key.senderPn),
-      this.asString(data.senderPn),
-      this.asString(payload.senderPn),
-      this.asString(key.participantPn),
-      this.asString(data.participantPn),
-      this.asString(payload.participantPn),
-      this.asString(key.participantAlt),
-      this.asString(data.participantAlt),
+    const candidates = [
+      participant,
+      this.asString(messageKey.participantAlt),
+      this.asString(messageData.participantAlt),
       this.asString(payload.participantAlt),
-    ].filter((value): value is string => Boolean(value));
-    const secondaryCandidates = [
-      this.asString(key.sender),
-      this.asString(data.sender),
+      this.asString(messageKey.participantPn),
+      this.asString(messageData.participantPn),
+      this.asString(payload.participantPn),
+      this.asString(messageKey.senderPn),
+      this.asString(messageData.senderPn),
+      this.asString(payload.senderPn),
+      this.asString(messageKey.sender),
+      this.asString(messageData.sender),
       this.asString(payload.sender),
-      this.asString(key.from),
-      this.asString(data.from),
-      this.asString(payload.from),
-      this.asString(key.participant),
-      this.asString(data.participant),
-      this.asString(payload.participant),
-    ].filter((value): value is string => Boolean(value));
-    const remoteJidNumber = this.normalizeNumber(remoteJid);
+      this.asString(messageKey.remoteJidAlt),
+      this.asString(messageData.remoteJidAlt),
+      this.asString(payload.remoteJidAlt),
+      remoteJid,
+    ].filter((value): value is string => Boolean(value?.trim()));
 
-    if (remoteJid.includes('@lid') && remoteJidAlt) {
-      return remoteJidAlt;
-    }
+    console.log('📥 remoteJid:', remoteJid || null);
+    console.log('📥 participant:', participant || null);
 
-    for (const candidate of directSenderCandidates) {
-      if (
-        !candidate.includes('@g.us') &&
-        !candidate.includes('@broadcast') &&
-        this.normalizeNumber(candidate) !== normalizedInstancePhone
-      ) {
-        return candidate;
+    for (const candidate of candidates) {
+      const normalizedCandidate = candidate.trim().toLowerCase();
+      if (!normalizedCandidate.includes('@s.whatsapp.net')) {
+        continue;
       }
-    }
 
-    if (
-      remoteJid.includes('@s.whatsapp.net') &&
-      remoteJidNumber !== normalizedInstancePhone &&
-      !remoteJid.includes('@g.us') &&
-      !remoteJid.includes('@broadcast')
-    ) {
-      return remoteJid;
-    }
-
-    for (const candidate of secondaryCandidates) {
-      if (
-        !candidate.includes('@g.us') &&
-        !candidate.includes('@broadcast') &&
-        this.normalizeNumber(candidate) !== normalizedInstancePhone
-      ) {
-        return candidate;
+      if (this.normalizeNumber(normalizedCandidate) === normalizedInstancePhone) {
+        continue;
       }
+
+      console.log('📤 JID FINAL:', normalizedCandidate);
+      return normalizedCandidate;
     }
 
-    if (normalizedInstancePhone) {
-      const fallbackCandidates = [remoteJidAlt, ...directSenderCandidates, remoteJid, ...secondaryCandidates]
-        .map((candidate) => this.normalizeNumber(candidate))
-        .filter((candidate) => candidate.length > 0);
-
-      if (
-        fallbackCandidates.length > 0 &&
-        fallbackCandidates.every((candidate) => candidate === normalizedInstancePhone)
-      ) {
-        return '';
-      }
+    if (remoteJid.includes('@lid')) {
+      console.log('⚠️ LID detectado, no se puede responder directamente:', remoteJid);
     }
 
-    return remoteJidAlt || remoteJid || directSenderCandidates[0] || secondaryCandidates[0] || '';
+    console.log('📤 JID FINAL:', null);
+    return '';
   }
 
   private async getInstancePhoneNumber(instanceName: string): Promise<string | null> {
@@ -2431,9 +2440,9 @@ export class WhatsAppService implements OnModuleInit {
   }
 
   private getRequiredOutboundAddress(address: string): string {
-    const normalized = this.normalizeJid(address);
-    if (!normalized) {
-      throw new HttpException('Valid number is required', HttpStatus.BAD_REQUEST);
+    const normalized = address.trim().toLowerCase();
+    if (!normalized.includes('@s.whatsapp.net')) {
+      throw new HttpException('JID invalido para envio', HttpStatus.BAD_REQUEST);
     }
 
     return normalized;
@@ -2449,20 +2458,11 @@ export class WhatsAppService implements OnModuleInit {
       return null;
     }
 
-    if (normalizedRaw.includes('@g.us')) {
-      return normalizedRaw;
-    }
-
-    if (normalizedRaw.includes('@broadcast')) {
-      return normalizedRaw;
-    }
-
-    const digits = this.normalizeNumber(normalizedRaw);
-    if (!digits) {
+    if (!normalizedRaw.includes('@s.whatsapp.net')) {
       return null;
     }
 
-    return `${digits}@s.whatsapp.net`;
+    return normalizedRaw;
   }
 
   private normalizeOutboundAddress(raw: string): string {

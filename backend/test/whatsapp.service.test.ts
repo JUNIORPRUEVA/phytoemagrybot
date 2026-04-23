@@ -276,7 +276,7 @@ test('normalizeWebhookPayload prefers remoteJidAlt for lid conversations', () =>
   assert.equal(result?.message, 'hola desde lid');
 });
 
-test('normalizeWebhookPayload strips non numeric group-like identifiers', () => {
+test('normalizeWebhookPayload ignores group-like identifiers without a real sender jid', () => {
   const service = createService();
 
   const result = service.normalizeWebhookPayload({
@@ -294,8 +294,7 @@ test('normalizeWebhookPayload strips non numeric group-like identifiers', () => 
     },
   });
 
-  assert.equal(result?.number, '120363382457717265');
-  assert.equal(result?.message, 'hola grupo');
+  assert.equal(result, null);
 });
 
 test('normalizeNumber removes lid and non digits', () => {
@@ -422,7 +421,7 @@ test('sendText uses instance endpoint with jid number payload', async () => {
     },
   });
 
-  await service.sendText(createResolvedConfig(), '18095551234', 'hola');
+  await service.sendText(createResolvedConfig(), '18095551234@s.whatsapp.net', 'hola');
 
   assert.equal(calls.length, 1);
   assert.equal(calls[0]?.path, '/message/sendText/demo');
@@ -432,26 +431,13 @@ test('sendText uses instance endpoint with jid number payload', async () => {
   });
 });
 
-test('sendText normalizes lid jid payload to s.whatsapp.net', async () => {
+test('sendText rejects lid jid payloads for outbound sends', async () => {
   const service = createService();
-  const calls: Array<{ path: string; body: Record<string, unknown> }> = [];
 
-  service.createEvolutionClient = () => ({
-    post: async (path: string, body: Record<string, unknown>) => {
-      calls.push({ path, body });
-
-      return { data: { ok: true } };
-    },
-  });
-
-  await service.sendText(createResolvedConfig(), '69132011749577@lid', 'hola lid');
-
-  assert.equal(calls.length, 1);
-  assert.equal(calls[0]?.path, '/message/sendText/demo');
-  assert.deepEqual(calls[0]?.body, {
-    number: '69132011749577@s.whatsapp.net',
-    text: 'hola lid',
-  });
+  await assert.rejects(
+    service.sendText(createResolvedConfig(), '69132011749577@lid', 'hola lid'),
+    /JID invalido para envio/,
+  );
 });
 
 test('normalizeWebhookPayload prefers senderPn over remoteJid for direct chats when both differ', () => {
@@ -551,6 +537,50 @@ test('normalizeWebhookPayload uses participantAlt when senderPn is missing and r
 
   assert.equal(result?.number, '18295319442');
   assert.equal(result?.message, 'hola por participantAlt');
+});
+
+test('normalizeWebhookPayload prioritizes participant when it contains a real jid', () => {
+  const service = createService();
+
+  const result = service.normalizeWebhookPayload({
+    event: 'messages.upsert',
+    data: {
+      key: {
+        remoteJid: '69132011749577@lid',
+        participant: '18095551234@s.whatsapp.net',
+        fromMe: false,
+        id: 'participant-real-123',
+      },
+      message: {
+        conversation: 'hola participant',
+      },
+      messageType: 'conversation',
+    },
+  });
+
+  assert.equal(result?.number, '18095551234');
+  assert.equal(result?.outboundAddress, '18095551234@s.whatsapp.net');
+});
+
+test('normalizeWebhookPayload ignores lid payloads when no real sender jid is present', () => {
+  const service = createService();
+
+  const result = service.normalizeWebhookPayload({
+    event: 'messages.upsert',
+    data: {
+      key: {
+        remoteJid: '69132011749577@lid',
+        fromMe: false,
+        id: 'lid-only-123',
+      },
+      message: {
+        conversation: 'hola lid',
+      },
+      messageType: 'conversation',
+    },
+  });
+
+  assert.equal(result, null);
 });
 
 test('normalizeWebhookPayload ignores the instance phone when resolving sender', () => {
@@ -663,6 +693,20 @@ test('enrichIncomingRecipientFromEvolution upgrades lid recipients with remoteJi
   });
   assert.equal(result.number, '18095551234');
   assert.equal(result.outboundAddress, '18095551234@s.whatsapp.net');
+});
+
+test('processAndDeliverMessage skips replies when no valid jid is available', async () => {
+  const { service, sentTexts } = createAudioFlowService();
+
+  await service.processAndDeliverMessage(
+    createResolvedConfig(),
+    '18095551234',
+    'hola',
+    'text',
+    { outboundAddress: '69132011749577@lid' },
+  );
+
+  assert.equal(sentTexts.length, 0);
 });
 
 test('enrichWebhookPayloadFromEvolution merges missing lid fields into the inbound webhook payload', async () => {
@@ -1026,7 +1070,7 @@ test('processIncomingAudioMessage answers short audios as text', async () => {
 
   await service.processIncomingAudioMessage(createResolvedConfig(), {
     number: '18095551234',
-    outboundAddress: '69132011749577@lid',
+    outboundAddress: '18095551234@s.whatsapp.net',
     message: '[audio]',
     type: 'audio',
     messageId: 'short-audio',
@@ -1039,7 +1083,7 @@ test('processIncomingAudioMessage answers short audios as text', async () => {
   });
 
   assert.equal(sentTexts.length, 1);
-  assert.equal(sentTexts[0]?.to, '69132011749577@lid');
+  assert.equal(sentTexts[0]?.to, '18095551234@s.whatsapp.net');
   assert.equal(sentTexts[0]?.text, 'Te ayudo ahora mismo');
   assert.equal(sentAudios.length, 0);
 });
@@ -1049,6 +1093,7 @@ test('processIncomingAudioMessage answers long audios as voice notes', async () 
 
   await service.processIncomingAudioMessage(createResolvedConfig(), {
     number: '18095551234',
+    outboundAddress: '18095551234@s.whatsapp.net',
     message: '[audio]',
     type: 'audio',
     messageId: 'long-audio',
@@ -1070,6 +1115,7 @@ test('processIncomingAudioMessage rejects audios longer than 60 seconds', async 
 
   await service.processIncomingAudioMessage(createResolvedConfig(), {
     number: '18095551234',
+    outboundAddress: '18095551234@s.whatsapp.net',
     message: '[audio]',
     type: 'audio',
     messageId: 'too-long-audio',
@@ -1132,6 +1178,7 @@ test('processIncomingAudioMessage only remembers voice preference after success'
 
   await service.processIncomingAudioMessage(createResolvedConfig(), {
     number: '18095551234',
+    outboundAddress: '18095551234@s.whatsapp.net',
     message: '[audio]',
     type: 'audio',
     messageId: 'failed-audio',
