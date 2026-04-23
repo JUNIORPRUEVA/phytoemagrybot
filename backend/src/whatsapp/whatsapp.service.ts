@@ -1757,6 +1757,10 @@ export class WhatsAppService implements OnModuleInit {
       queries.push({ where: { remoteJid }, page: 1, offset: 10 });
     }
 
+    if (pushName) {
+      queries.push({ page: 1, offset: 100 });
+    }
+
     for (const query of queries) {
       try {
         const response = await this.getEvolutionClient().post(
@@ -1780,6 +1784,15 @@ export class WhatsAppService implements OnModuleInit {
         );
       }
     }
+
+    this.logger.log(
+      JSON.stringify({
+        event: 'whatsapp_contact_lookup_no_match',
+        instanceName,
+        pushName: pushName || null,
+        remoteJid: remoteJid || null,
+      }),
+    );
 
     return null;
   }
@@ -1939,17 +1952,27 @@ export class WhatsAppService implements OnModuleInit {
     }
 
     const normalizedPushName = pushName.trim().toLowerCase();
+    const exactDisplayNameMatches = normalizedPushName
+      ? candidates.filter((record) =>
+          this.getEvolutionContactNames(record).some(
+            (name) => name.trim().toLowerCase() === normalizedPushName,
+          ),
+        )
+      : [];
     const exactNameMatches = normalizedPushName
       ? candidates.filter(
           (record) =>
             (this.asString(record.pushName) || '').trim().toLowerCase() === normalizedPushName,
         )
       : [];
-    const exactRealJidMatches = exactNameMatches.filter((record) => {
+    const preferredExactMatches = exactNameMatches.length
+      ? exactNameMatches
+      : exactDisplayNameMatches;
+    const exactRealJidMatches = preferredExactMatches.filter((record) => {
       const contactJid = this.extractEvolutionContactJid(record);
       return Boolean(contactJid && contactJid.includes('@s.whatsapp.net'));
     });
-    const preferredCandidates = exactNameMatches.length ? exactNameMatches : candidates;
+    const preferredCandidates = preferredExactMatches.length ? preferredExactMatches : candidates;
     const uniqueJids = new Set(
       preferredCandidates
         .map((record) => this.extractEvolutionContactJid(record))
@@ -1966,7 +1989,11 @@ export class WhatsAppService implements OnModuleInit {
       return exactRealJidMatches[0] ?? null;
     }
 
-    if (preferredCandidates.length > 1 && uniqueJids.size > 1 && exactNameMatches.length > 0) {
+    if (
+      preferredCandidates.length > 1 &&
+      uniqueJids.size > 1 &&
+      preferredExactMatches.length > 0
+    ) {
       return null;
     }
 
@@ -1982,6 +2009,18 @@ export class WhatsAppService implements OnModuleInit {
       preferredCandidates[0] ||
       null
     );
+  }
+
+  private getEvolutionContactNames(record: JsonRecord): string[] {
+    return [
+      this.asString(record.pushName),
+      this.asString(record.name),
+      this.asString(record.profileName),
+      this.asString(record.fullName),
+      this.asString(record.short),
+      this.asString(record.notify),
+      this.asString(record.integrationName),
+    ].filter((value): value is string => Boolean(value?.trim()));
   }
 
   private extractEvolutionContactJid(record: JsonRecord): string {

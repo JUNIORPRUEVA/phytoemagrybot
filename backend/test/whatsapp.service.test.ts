@@ -956,6 +956,130 @@ test('enrichWebhookPayloadFromEvolution prefers the only real jid when contact l
   assert.equal(enrichedKey.senderPn, '18095551234@s.whatsapp.net');
 });
 
+test('enrichWebhookPayloadFromEvolution falls back to unfiltered contacts and alternative name fields when filtered lookup misses', async () => {
+  const service = createService();
+  const calls: Array<{ path: string; body: Record<string, unknown> }> = [];
+
+  service.configService = {
+    get: () => undefined,
+  };
+
+  service.getEvolutionClient = () => ({
+    post: async (path: string, body: Record<string, unknown>) => {
+      calls.push({ path, body });
+
+      if (path === '/chat/findMessages/demo') {
+        return {
+          data: {
+            messages: {
+              total: 1,
+              pages: 1,
+              currentPage: 1,
+              records: [
+                {
+                  key: {
+                    remoteJid: '69132011749577@lid',
+                    fromMe: false,
+                    id: 'msg-lid-contact-name-fallback-1',
+                  },
+                  pushName: 'Junior Lopez',
+                  message: {
+                    conversation: 'Ho',
+                  },
+                  messageType: 'conversation',
+                },
+              ],
+            },
+          },
+        };
+      }
+
+      if (path === '/chat/findContacts/demo') {
+        const where = body.where as Record<string, unknown> | undefined;
+
+        if (where?.pushName) {
+          return {
+            data: {
+              contacts: {
+                total: 0,
+                pages: 0,
+                currentPage: 1,
+                records: [],
+              },
+            },
+          };
+        }
+
+        if (where?.remoteJid) {
+          return {
+            data: {
+              contacts: {
+                total: 0,
+                pages: 0,
+                currentPage: 1,
+                records: [],
+              },
+            },
+          };
+        }
+
+        return {
+          data: {
+            contacts: {
+              total: 2,
+              pages: 1,
+              currentPage: 1,
+              records: [
+                {
+                  remoteJid: '18095551234@s.whatsapp.net',
+                  name: 'Junior Lopez',
+                },
+                {
+                  remoteJid: '18885550000@s.whatsapp.net',
+                  name: 'Otro Cliente',
+                },
+              ],
+            },
+          },
+        };
+      }
+
+      throw new Error(`Unexpected path ${path}`);
+    },
+  });
+
+  const result = await service.enrichWebhookPayloadFromEvolution(
+    {
+      event: 'messages.upsert',
+      data: {
+        key: {
+          remoteJid: '69132011749577@lid',
+          fromMe: false,
+          id: 'msg-lid-contact-name-fallback-1',
+        },
+        pushName: 'Junior Lopez',
+        message: {
+          conversation: 'Ho',
+        },
+        messageType: 'conversation',
+      },
+    },
+    'demo',
+  );
+
+  const enrichedData = service.getWebhookMessageData(result);
+  const enrichedKey = enrichedData.key;
+
+  assert.equal(calls.length, 4);
+  assert.equal(calls[0]?.path, '/chat/findMessages/demo');
+  assert.deepEqual(calls[1]?.body, { where: { pushName: 'Junior Lopez' }, page: 1, offset: 10 });
+  assert.deepEqual(calls[2]?.body, { where: { remoteJid: '69132011749577@lid' }, page: 1, offset: 10 });
+  assert.deepEqual(calls[3]?.body, { page: 1, offset: 100 });
+  assert.equal(enrichedKey.remoteJidAlt, '18095551234@s.whatsapp.net');
+  assert.equal(enrichedKey.participantAlt, '18095551234@s.whatsapp.net');
+  assert.equal(enrichedKey.senderPn, '18095551234@s.whatsapp.net');
+});
+
 test('enrichWebhookPayloadFromKnownLid reuses cached lid mappings before contact lookup', async () => {
   const service = createService();
 
