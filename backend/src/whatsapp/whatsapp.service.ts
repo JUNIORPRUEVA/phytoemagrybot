@@ -6,7 +6,7 @@ import {
   Logger,
   OnModuleInit,
 } from '@nestjs/common';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { ConfigService } from '@nestjs/config';
 import { MediaFile, WhatsAppInstance } from '@prisma/client';
 import axios, { AxiosInstance } from 'axios';
@@ -30,6 +30,25 @@ import {
 type HeaderMap = Record<string, string | string[] | undefined>;
 type JsonRecord = Record<string, unknown>;
 type InstanceStatus = 'connected' | 'disconnected' | 'connecting';
+type WebhookTraceContext = {
+  traceId: string;
+  event: string | null;
+  instanceName: string | null;
+  messageId: string | null;
+  remoteJid: string | null;
+  pushName: string | null;
+  topLevelSender: string | null;
+};
+type DeliveryDiagnosticContext = {
+  traceId?: string;
+  instanceName?: string | null;
+  messageId?: string | null;
+  contactId?: string | null;
+  messageType?: 'text' | 'image' | 'audio';
+  remoteJid?: string | null;
+  recipientAddress?: string | null;
+  recipientNumber?: string | null;
+};
 
 @Injectable()
 export class WhatsAppService implements OnModuleInit {
@@ -89,26 +108,21 @@ export class WhatsAppService implements OnModuleInit {
     payload: JsonRecord,
     headers: HeaderMap,
   ): Promise<WebhookProcessingResult> {
+    const trace = this.createWebhookTraceContext(payload);
     const handledConnectionUpdate = await this.processConnectionUpdate(payload);
     if (handledConnectionUpdate) {
-      return { ok: true, accepted: true };
+      return { ok: true, accepted: true, traceId: trace.traceId };
     }
 
     if (!this.looksLikeMessageWebhook(payload)) {
-      return { ok: true, ignored: true };
+      return { ok: true, ignored: true, traceId: trace.traceId };
     }
 
-    void this.processMessageWebhook(payload, headers).catch((error: unknown) => {
-      this.logger.error(
-        JSON.stringify({
-          event: 'whatsapp_async_processing_failed',
-          error: error instanceof Error ? error.message : 'Unknown error',
-        }),
-        error instanceof Error ? error.stack : undefined,
-      );
+    void this.processMessageWebhook(payload, headers, trace).catch((error: unknown) => {
+      this.logWebhookFailure('async_processing', error, trace);
     });
 
-    return { ok: true, accepted: true };
+    return { ok: true, accepted: true, traceId: trace.traceId };
   }
 
   private async syncConfiguredWebhookOnStartup(): Promise<void> {
@@ -392,6 +406,7 @@ export class WhatsAppService implements OnModuleInit {
     resolved: ResolvedWhatsAppClient,
     to: string,
     text: string,
+    diagnostic?: DeliveryDiagnosticContext,
   ): Promise<void> {
     const instanceName = this.getRequiredInstanceName(resolved.whatsapp);
     const finalJid = this.getRequiredOutboundAddress(to);
@@ -408,9 +423,15 @@ export class WhatsAppService implements OnModuleInit {
       .then(
         () => undefined,
         (error: unknown) => {
+          this.logDeliveryFailure('evolution_send', error, diagnostic, {
+            sendAs: 'text',
+            recipientAddress: finalJid,
+            instanceName,
+          });
           this.logger.error(
             JSON.stringify({
               event: 'evolution_request_failed',
+              traceId: diagnostic?.traceId ?? null,
               action: 'sendText',
               instanceName,
               path: `/message/sendText/${instanceName}`,
@@ -432,6 +453,7 @@ export class WhatsAppService implements OnModuleInit {
     to: string,
     imageUrl: string,
     caption = '',
+    diagnostic?: DeliveryDiagnosticContext,
   ): Promise<void> {
     await this.executeEvolutionRequest(
       resolved,
@@ -445,6 +467,7 @@ export class WhatsAppService implements OnModuleInit {
         caption,
         fileName: 'image.jpg',
       },
+      diagnostic,
     );
   }
 
@@ -453,6 +476,7 @@ export class WhatsAppService implements OnModuleInit {
     to: string,
     videoUrl: string,
     caption = '',
+    diagnostic?: DeliveryDiagnosticContext,
   ): Promise<void> {
     await this.executeEvolutionRequest(
       resolved,
@@ -466,6 +490,7 @@ export class WhatsAppService implements OnModuleInit {
         caption,
         fileName: 'video.mp4',
       },
+      diagnostic,
     );
   }
 
@@ -478,6 +503,7 @@ export class WhatsAppService implements OnModuleInit {
       mimetype?: string;
       ptt?: boolean;
     },
+    diagnostic?: DeliveryDiagnosticContext,
   ): Promise<void> {
     await this.executeEvolutionRequest(
       resolved,
@@ -491,6 +517,7 @@ export class WhatsAppService implements OnModuleInit {
         ptt: options?.ptt ?? true,
         encoding: true,
       },
+      diagnostic,
     );
   }
 
@@ -528,8 +555,13 @@ export class WhatsAppService implements OnModuleInit {
     );
   }
 
-  private async processMessageWebhook(payload: JsonRecord, headers: HeaderMap): Promise<void> {
+  private async processMessageWebhook(
+    payload: JsonRecord,
+    headers: HeaderMap,
+    trace: WebhookTraceContext = this.createWebhookTraceContext(payload),
+  ): Promise<void> {
     console.log('🔥 RAW:', JSON.stringify(payload, null, 2));
+    this.logWebhookStage('received', trace);
 
     const rawData = this.getWebhookMessageData(payload);
     const rawKey = this.asRecord(rawData.key);
@@ -538,12 +570,20 @@ export class WhatsAppService implements OnModuleInit {
     this.validateWebhook(headers, resolved.whatsapp);
     const webhookInstanceName =
       this.asString(payload.instance) || resolved.whatsapp.instanceName;
+    trace = this.mergeWebhookTraceContext(trace, {
+      instanceName: webhookInstanceName || trace.instanceName,
+    });
+    this.logWebhookStage('validated', trace, {
+      webhookSecretConfigured: Boolean(resolved.whatsapp.webhookSecret?.trim()),
+    });
     await this.rememberSenderJidMapping(payload, webhookInstanceName);
 
     if (rawKey.fromMe === true || rawData.fromMe === true) {
+      this.logWebhookStage('ignored', trace, { reason: 'from_me' });
       this.logger.log(
         JSON.stringify({
           event: 'whatsapp_webhook_ignored',
+          traceId: trace.traceId,
           reason: 'from_me',
           messageId:
             this.asString(rawKey.id) ?? this.asString(rawData.messageId) ?? null,
@@ -558,7 +598,21 @@ export class WhatsAppService implements OnModuleInit {
     payload = await this.enrichWebhookPayloadFromKnownLid(payload, webhookInstanceName);
     payload = await this.enrichWebhookPayloadFromEvolution(payload, webhookInstanceName);
     payload = this.attachWebhookRoutingMetadata(payload, instancePhone);
-    this.logPreparedWebhookPayload(payload, instancePhone);
+    const recipientRouting = this.resolveWebhookRecipientRouting(payload, instancePhone);
+    this.logWebhookStage('enriched', trace, {
+      instancePhone: instancePhone ?? null,
+      recipientAddress: recipientRouting.address,
+      recipientNumber: recipientRouting.number,
+    });
+    if (!recipientRouting.address || !recipientRouting.number) {
+      this.logWebhookDiagnostic('recipient_routing_incomplete', trace, {
+        instancePhone: instancePhone ?? null,
+        recipientAddress: recipientRouting.address,
+        recipientNumber: recipientRouting.number,
+        reasons: this.buildRoutingDiagnosticReasons(payload, instancePhone, recipientRouting),
+      });
+    }
+    this.logPreparedWebhookPayload(payload, instancePhone, trace);
 
     const data = this.getWebhookMessageData(payload);
     const key = this.asRecord(data.key);
@@ -569,9 +623,17 @@ export class WhatsAppService implements OnModuleInit {
 
     let incoming = this.normalizeWebhookPayload(payload, instancePhone);
     if (!incoming) {
+      this.logWebhookStage('ignored', trace, { reason: 'unsupported_or_outbound_payload' });
+      this.logWebhookDiagnostic('normalize_failed', trace, {
+        instancePhone: instancePhone ?? null,
+        recipientAddress: recipientRouting.address,
+        recipientNumber: recipientRouting.number,
+        reasons: this.buildRoutingDiagnosticReasons(payload, instancePhone, recipientRouting),
+      });
       this.logger.log(
         JSON.stringify({
           event: 'whatsapp_webhook_ignored',
+          traceId: trace.traceId,
           reason: 'unsupported_or_outbound_payload',
         }),
       );
@@ -583,15 +645,35 @@ export class WhatsAppService implements OnModuleInit {
       resolved.whatsapp.instanceName,
       instancePhone,
     );
+    const deliveryDiagnostic = this.createDeliveryDiagnostic(trace, incoming, recipientRouting);
+    this.logWebhookStage('normalized', trace, {
+      contactId: incoming.number,
+      messageType: incoming.type,
+      outboundAddress: incoming.outboundAddress || null,
+    });
+    if (!incoming.outboundAddress?.includes('@s.whatsapp.net')) {
+      this.logWebhookDiagnostic('outbound_address_unresolved', trace, {
+        contactId: incoming.number,
+        messageType: incoming.type,
+        outboundAddress: incoming.outboundAddress || null,
+        reasons: this.buildRoutingDiagnosticReasons(
+          payload,
+          instancePhone,
+          recipientRouting,
+          incoming,
+        ),
+      });
+    }
 
     this.logger.log(
       JSON.stringify({
         event: 'whatsapp_message_received',
+        traceId: trace.traceId,
         contactId: incoming.number,
         senderNumber: incoming.number,
         senderAddress: incoming.outboundAddress || null,
-        recipientNumber: this.normalizeNumber(instancePhone || '') || null,
-        recipientAddress: this.normalizeJid(instancePhone || '') || null,
+        recipientNumber: recipientRouting.number,
+        recipientAddress: recipientRouting.address,
         pushName: incoming.pushName || null,
         type: incoming.type,
         message: incoming.message,
@@ -602,6 +684,7 @@ export class WhatsAppService implements OnModuleInit {
       this.logger.warn(
         JSON.stringify({
           event: 'whatsapp_message_duplicate_ignored',
+          traceId: trace.traceId,
           contactId: incoming.number,
           messageId: incoming.messageId,
           type: incoming.type,
@@ -639,12 +722,13 @@ export class WhatsAppService implements OnModuleInit {
     }
 
     if (incoming.type === 'audio') {
-      await this.processIncomingAudioMessage(resolved, incoming);
+      await this.processIncomingAudioMessage(resolved, incoming, deliveryDiagnostic);
       return;
     }
 
     await this.processAndDeliverMessage(resolved, incoming.number, incoming.message, incoming.type, {
       outboundAddress: incoming.outboundAddress,
+      diagnostic: deliveryDiagnostic,
     });
   }
 
@@ -669,6 +753,7 @@ export class WhatsAppService implements OnModuleInit {
     options?: {
       preferAudioReply?: boolean;
       outboundAddress?: string;
+      diagnostic?: DeliveryDiagnosticContext;
     },
   ): Promise<void> {
     const fallbackMessage =
@@ -677,11 +762,25 @@ export class WhatsAppService implements OnModuleInit {
     const preferAudioReply =
       options?.preferAudioReply ?? (await this.hasVoiceReplyPreference(contactId));
     const outboundAddress = options?.outboundAddress?.trim() || '';
+    const diagnostic = this.mergeDeliveryDiagnosticContext(options?.diagnostic, {
+      contactId,
+      messageType,
+      recipientAddress: outboundAddress || options?.diagnostic?.recipientAddress || null,
+      recipientNumber:
+        this.normalizeNumber(outboundAddress || '') ||
+        options?.diagnostic?.recipientNumber ||
+        null,
+    });
 
     if (!outboundAddress.includes('@s.whatsapp.net')) {
+      this.logDeliveryDiagnostic('delivery_validation_failed', diagnostic, {
+        outboundAddress: outboundAddress || null,
+        reasons: this.buildDeliveryDiagnosticReasons(diagnostic, outboundAddress),
+      });
       this.logger.warn(
         JSON.stringify({
           event: 'whatsapp_reply_skipped_invalid_jid',
+          traceId: diagnostic.traceId ?? null,
           contactId,
           outboundAddress: outboundAddress || null,
         }),
@@ -690,28 +789,60 @@ export class WhatsAppService implements OnModuleInit {
       return;
     }
 
+    this.logDeliveryStage('ai_processing_started', diagnostic);
     let botReply: Awaited<ReturnType<BotService['processIncomingMessage']>>;
     try {
       botReply = await this.botService.processIncomingMessage(contactId, message);
     } catch (error) {
+      this.logDeliveryFailure('ai_processing', error, diagnostic);
       this.logger.error(
         JSON.stringify({
           event: 'ai_processing_failed',
+          traceId: diagnostic.traceId ?? null,
           contactId,
           messageType,
         }),
         error instanceof Error ? error.stack : undefined,
       );
 
-      await this.sendText(resolved, outboundAddress, fallbackMessage);
+      await this.sendText(resolved, outboundAddress, fallbackMessage, diagnostic);
       return;
     }
 
+    this.logDeliveryStage('ai_processing_completed', diagnostic, {
+      replyType: botReply.replyType,
+      mediaCount: botReply.mediaFiles.length,
+      intent: botReply.intent,
+      hotLead: botReply.hotLead,
+    });
+
     if (botReply.mediaFiles.length > 0) {
-      await this.deliverMatchedMedia(resolved, outboundAddress, botReply.mediaFiles, botReply.reply);
+      this.logDeliveryStage('evolution_send_attempt', diagnostic, {
+        sendAs: 'media',
+        mediaCount: botReply.mediaFiles.length,
+      });
+      try {
+        await this.deliverMatchedMedia(
+          resolved,
+          outboundAddress,
+          botReply.mediaFiles,
+          botReply.reply,
+          diagnostic,
+        );
+      } catch (error) {
+        this.logDeliveryFailure('evolution_send', error, diagnostic, {
+          sendAs: 'media',
+        });
+        throw error;
+      }
+      this.logDeliveryStage('evolution_send_completed', diagnostic, {
+        sendAs: 'media',
+        mediaCount: botReply.mediaFiles.length,
+      });
       this.logger.log(
         JSON.stringify({
           event: 'whatsapp_reply_sent',
+          traceId: diagnostic.traceId ?? null,
           contactId,
           intent: botReply.intent,
           hotLead: botReply.hotLead,
@@ -735,14 +866,21 @@ export class WhatsAppService implements OnModuleInit {
           baseUrl: resolved.whatsapp.elevenLabsBaseUrl,
         });
 
+        this.logDeliveryStage('evolution_send_attempt', diagnostic, {
+          sendAs: 'audio',
+        });
         await this.sendAudioWithRetry(resolved, outboundAddress, audio.buffer, {
           fileName: audio.fileName,
           mimetype: audio.mimetype,
           ptt: true,
+        }, diagnostic);
+        this.logDeliveryStage('evolution_send_completed', diagnostic, {
+          sendAs: 'audio',
         });
         this.logger.log(
           JSON.stringify({
             event: 'whatsapp_reply_sent',
+            traceId: diagnostic.traceId ?? null,
             contactId,
             intent: botReply.intent,
             hotLead: botReply.hotLead,
@@ -752,9 +890,13 @@ export class WhatsAppService implements OnModuleInit {
         );
         return;
       } catch (error) {
+        this.logDeliveryFailure('voice_generation_or_send', error, diagnostic, {
+          sendAs: 'audio',
+        });
         this.logger.error(
           JSON.stringify({
             event: 'voice_generation_failed',
+            traceId: diagnostic.traceId ?? null,
             contactId,
           }),
           error instanceof Error ? error.stack : undefined,
@@ -762,10 +904,24 @@ export class WhatsAppService implements OnModuleInit {
       }
     }
 
-    await this.sendText(resolved, outboundAddress, botReply.reply);
+    this.logDeliveryStage('evolution_send_attempt', diagnostic, {
+      sendAs: 'text',
+    });
+    try {
+      await this.sendText(resolved, outboundAddress, botReply.reply, diagnostic);
+    } catch (error) {
+      this.logDeliveryFailure('evolution_send', error, diagnostic, {
+        sendAs: 'text',
+      });
+      throw error;
+    }
+    this.logDeliveryStage('evolution_send_completed', diagnostic, {
+      sendAs: 'text',
+    });
     this.logger.log(
       JSON.stringify({
         event: 'whatsapp_reply_sent',
+        traceId: diagnostic.traceId ?? null,
         contactId,
         intent: botReply.intent,
         hotLead: botReply.hotLead,
@@ -780,30 +936,45 @@ export class WhatsAppService implements OnModuleInit {
     contactId: string,
     mediaFiles: MediaFile[],
     message: string,
+    diagnostic?: DeliveryDiagnosticContext,
   ): Promise<void> {
     for (const [index, media] of mediaFiles.entries()) {
       const caption = index === 0 ? message : media.title;
 
       if (media.fileType === 'video') {
-        await this.sendVideo(resolved, contactId, media.fileUrl, caption);
+        await this.sendVideo(resolved, contactId, media.fileUrl, caption, diagnostic);
         continue;
       }
 
-      await this.sendImage(resolved, contactId, media.fileUrl, caption);
+      await this.sendImage(resolved, contactId, media.fileUrl, caption, diagnostic);
     }
   }
 
   private async processIncomingAudioMessage(
     resolved: ResolvedWhatsAppClient,
     incoming: NormalizedIncomingWhatsAppMessage,
+    diagnostic?: DeliveryDiagnosticContext,
   ): Promise<void> {
     const durationSeconds = incoming.audio?.seconds;
     const outboundAddress = incoming.outboundAddress?.trim() || '';
+    const mergedDiagnostic = this.mergeDeliveryDiagnosticContext(diagnostic, {
+      contactId: incoming.number,
+      messageType: incoming.type,
+      messageId: incoming.messageId,
+      recipientAddress: outboundAddress || diagnostic?.recipientAddress || null,
+      recipientNumber:
+        this.normalizeNumber(outboundAddress || '') || diagnostic?.recipientNumber || null,
+    });
 
     if (!outboundAddress.includes('@s.whatsapp.net')) {
+      this.logDeliveryDiagnostic('audio_delivery_validation_failed', mergedDiagnostic, {
+        outboundAddress: outboundAddress || null,
+        reasons: this.buildDeliveryDiagnosticReasons(mergedDiagnostic, outboundAddress),
+      });
       this.logger.warn(
         JSON.stringify({
           event: 'whatsapp_audio_reply_skipped_invalid_jid',
+          traceId: mergedDiagnostic.traceId ?? null,
           contactId: incoming.number,
           outboundAddress: outboundAddress || null,
           messageId: incoming.messageId,
@@ -822,6 +993,7 @@ export class WhatsAppService implements OnModuleInit {
           resolved,
           outboundAddress,
           'Tu nota de voz supera los 60 segundos. Enviamela mas corta, por favor.',
+          mergedDiagnostic,
         );
         return;
       }
@@ -832,6 +1004,7 @@ export class WhatsAppService implements OnModuleInit {
           resolved,
           outboundAddress,
           'No pude entender tu nota de voz. Si puedes, mandamela otra vez o escribeme.',
+          mergedDiagnostic,
         );
         return;
       }
@@ -839,6 +1012,7 @@ export class WhatsAppService implements OnModuleInit {
       this.logger.log(
         JSON.stringify({
           event: 'whatsapp_audio_transcribed',
+          traceId: mergedDiagnostic.traceId ?? null,
           contactId: incoming.number,
           pushName: incoming.pushName,
           seconds: durationSeconds ?? null,
@@ -849,12 +1023,15 @@ export class WhatsAppService implements OnModuleInit {
       await this.processAndDeliverMessage(resolved, incoming.number, transcript, 'audio', {
         preferAudioReply: this.shouldReplyWithVoiceForAudio(incoming),
         outboundAddress,
+        diagnostic: mergedDiagnostic,
       });
       await this.rememberVoiceReplyPreference(incoming.number);
     } catch (error) {
+      this.logDeliveryFailure('audio_processing', error, mergedDiagnostic);
       this.logger.error(
         JSON.stringify({
           event: 'audio_processing_failed',
+          traceId: mergedDiagnostic.traceId ?? null,
           contactId: incoming.number,
           messageId: incoming.messageId,
         }),
@@ -865,6 +1042,7 @@ export class WhatsAppService implements OnModuleInit {
         resolved,
         outboundAddress,
         'No pude procesar tu audio ahora mismo. Si quieres, escribeme el mensaje.',
+        mergedDiagnostic,
       );
     }
   }
@@ -1070,18 +1248,23 @@ export class WhatsAppService implements OnModuleInit {
       mimetype?: string;
       ptt?: boolean;
     },
+    diagnostic?: DeliveryDiagnosticContext,
   ): Promise<void> {
     try {
-      await this.sendAudio(resolved, to, audio, options);
+      await this.sendAudio(resolved, to, audio, options, diagnostic);
     } catch (error) {
+      this.logDeliveryFailure('audio_send_retry', error, diagnostic, {
+        recipientAddress: to,
+      });
       this.logger.warn(
         JSON.stringify({
           event: 'whatsapp_audio_retry',
+          traceId: diagnostic?.traceId ?? null,
           contactId: to,
           error: error instanceof Error ? error.message : 'Unknown error',
         }),
       );
-      await this.sendAudio(resolved, to, audio, options);
+      await this.sendAudio(resolved, to, audio, options, diagnostic);
     }
   }
 
@@ -2052,6 +2235,30 @@ export class WhatsAppService implements OnModuleInit {
     );
   }
 
+  private resolveWebhookRecipientRouting(
+    payload: JsonRecord,
+    instancePhone?: string | null,
+  ): { address: string | null; number: string | null } {
+    const data = this.getWebhookMessageData(payload);
+    const normalizedRecipientAddress =
+      this.normalizeJid(instancePhone || '') ||
+      this.normalizeJid(this.asString(data.recipientAddress) || '') ||
+      this.normalizeJid(this.asString(payload.recipientAddress) || '') ||
+      this.normalizeJid(this.asString(payload.sender) || '') ||
+      this.normalizeJid(this.asString(payload.from) || '') ||
+      null;
+    const normalizedRecipientNumber =
+      this.asString(data.recipientNumber) ||
+      this.asString(payload.recipientNumber) ||
+      this.normalizeNumber(normalizedRecipientAddress || '') ||
+      null;
+
+    return {
+      address: normalizedRecipientAddress,
+      number: normalizedRecipientNumber,
+    };
+  }
+
   private attachWebhookRoutingMetadata(
     payload: JsonRecord,
     instancePhone?: string | null,
@@ -2060,8 +2267,9 @@ export class WhatsAppService implements OnModuleInit {
     const key = this.asRecord(data.key);
     const senderAddress = this.resolveIncomingRecipient(payload, data, key, instancePhone).trim();
     const senderNumber = this.normalizeNumber(senderAddress);
-    const recipientAddress = this.normalizeJid(instancePhone || '') || '';
-    const recipientNumber = this.normalizeNumber(instancePhone || '');
+    const recipientRouting = this.resolveWebhookRecipientRouting(payload, instancePhone);
+    const recipientAddress = recipientRouting.address || '';
+    const recipientNumber = recipientRouting.number || '';
     const hasDistinctRouting = Boolean(
       senderNumber && recipientNumber && senderNumber !== recipientNumber,
     );
@@ -2099,9 +2307,14 @@ export class WhatsAppService implements OnModuleInit {
     };
   }
 
-  private logPreparedWebhookPayload(payload: JsonRecord, instancePhone?: string | null): void {
+  private logPreparedWebhookPayload(
+    payload: JsonRecord,
+    instancePhone?: string | null,
+    trace?: WebhookTraceContext,
+  ): void {
     const data = this.getWebhookMessageData(payload);
     const key = this.asRecord(data.key);
+    const recipientRouting = this.resolveWebhookRecipientRouting(payload, instancePhone);
     const resolvedSenderAddress =
       this.asString(data.senderAddress) ||
       this.asString(payload.senderAddress) ||
@@ -2110,20 +2323,13 @@ export class WhatsAppService implements OnModuleInit {
       this.asString(data.senderNumber) ||
       this.asString(payload.senderNumber) ||
       this.normalizeNumber(resolvedSenderAddress);
-    const recipientAddress =
-      this.asString(data.recipientAddress) ||
-      this.asString(payload.recipientAddress) ||
-      this.normalizeJid(instancePhone || '') ||
-      null;
-    const recipientNumber =
-      this.asString(data.recipientNumber) ||
-      this.asString(payload.recipientNumber) ||
-      this.normalizeNumber(instancePhone || '') ||
-      null;
+    const recipientAddress = recipientRouting.address;
+    const recipientNumber = recipientRouting.number;
 
     this.logger.log(
       JSON.stringify({
         event: 'whatsapp_webhook_payload_ready',
+        traceId: trace?.traceId ?? null,
         messageId: this.asString(key.id) || this.asString(data.messageId) || null,
         pushName: this.asString(data.pushName) || null,
         resolvedSenderAddress: resolvedSenderAddress || null,
@@ -2323,6 +2529,7 @@ export class WhatsAppService implements OnModuleInit {
     action: 'sendText' | 'sendImage' | 'sendAudio' | 'sendVideo',
     path: string,
     body: JsonRecord,
+    diagnostic?: DeliveryDiagnosticContext,
   ): Promise<void> {
     const instanceName = this.getRequiredInstanceName(resolved.whatsapp);
     const finalJid = this.getRequiredOutboundAddress(this.asString(body.number) || '');
@@ -2337,9 +2544,16 @@ export class WhatsAppService implements OnModuleInit {
     return this.createEvolutionClient(resolved.whatsapp).post(path, body).then(
       () => undefined,
       (error: unknown) => {
+        this.logDeliveryFailure('evolution_send', error, diagnostic, {
+          action,
+          instanceName,
+          path,
+          recipientAddress: finalJid,
+        });
         this.logger.error(
           JSON.stringify({
             event: 'evolution_request_failed',
+            traceId: diagnostic?.traceId ?? null,
             action,
             instanceName,
             path,
@@ -2780,6 +2994,303 @@ export class WhatsAppService implements OnModuleInit {
   private normalizeOptionalInstanceField(value?: string | null): string | null {
     const normalized = value?.trim();
     return normalized ? normalized : null;
+  }
+
+  private createWebhookTraceContext(payload: JsonRecord): WebhookTraceContext {
+    const data = this.getWebhookMessageData(payload);
+    const key = this.asRecord(data.key);
+
+    return {
+      traceId: randomUUID(),
+      event: this.asString(payload.event) || null,
+      instanceName: this.asString(payload.instance) || null,
+      messageId: this.asString(key.id) || this.asString(data.messageId) || null,
+      remoteJid: this.asString(key.remoteJid) || this.asString(data.remoteJid) || null,
+      pushName: this.asString(data.pushName) || this.asString(payload.pushName) || null,
+      topLevelSender: this.asString(payload.sender) || this.asString(payload.from) || null,
+    };
+  }
+
+  private mergeWebhookTraceContext(
+    trace: WebhookTraceContext,
+    patch: Partial<WebhookTraceContext>,
+  ): WebhookTraceContext {
+    return {
+      ...trace,
+      ...patch,
+    };
+  }
+
+  private mergeDeliveryDiagnosticContext(
+    diagnostic?: DeliveryDiagnosticContext,
+    patch?: Partial<DeliveryDiagnosticContext>,
+  ): DeliveryDiagnosticContext {
+    return {
+      ...(diagnostic ?? {}),
+      ...(patch ?? {}),
+    };
+  }
+
+  private createDeliveryDiagnostic(
+    trace: WebhookTraceContext,
+    incoming: NormalizedIncomingWhatsAppMessage,
+    recipientRouting: { address: string | null; number: string | null },
+  ): DeliveryDiagnosticContext {
+    return {
+      traceId: trace.traceId,
+      instanceName: trace.instanceName,
+      messageId: incoming.messageId,
+      contactId: incoming.number,
+      messageType: incoming.type,
+      remoteJid: trace.remoteJid,
+      recipientAddress: recipientRouting.address,
+      recipientNumber: recipientRouting.number,
+    };
+  }
+
+  private logWebhookStage(
+    stage: string,
+    trace: WebhookTraceContext,
+    details: JsonRecord = {},
+  ): void {
+    this.logger.log(
+      JSON.stringify({
+        event: 'whatsapp_pipeline_stage',
+        traceId: trace.traceId,
+        stage,
+        eventName: trace.event,
+        instanceName: trace.instanceName,
+        messageId: trace.messageId,
+        remoteJid: trace.remoteJid,
+        pushName: trace.pushName,
+        topLevelSender: trace.topLevelSender,
+        ...details,
+      }),
+    );
+  }
+
+  private logWebhookDiagnostic(
+    reason: string,
+    trace: WebhookTraceContext,
+    details: JsonRecord = {},
+  ): void {
+    this.logger.warn(
+      JSON.stringify({
+        event: 'whatsapp_pipeline_diagnostic',
+        traceId: trace.traceId,
+        reason,
+        eventName: trace.event,
+        instanceName: trace.instanceName,
+        messageId: trace.messageId,
+        remoteJid: trace.remoteJid,
+        pushName: trace.pushName,
+        topLevelSender: trace.topLevelSender,
+        ...details,
+      }),
+    );
+  }
+
+  private logWebhookFailure(
+    stage: string,
+    error: unknown,
+    trace: WebhookTraceContext,
+    details: JsonRecord = {},
+  ): void {
+    const errorPayload = this.describeError(error);
+
+    this.logger.error(
+      JSON.stringify({
+        event: 'whatsapp_pipeline_failure',
+        traceId: trace.traceId,
+        stage,
+        eventName: trace.event,
+        instanceName: trace.instanceName,
+        messageId: trace.messageId,
+        remoteJid: trace.remoteJid,
+        pushName: trace.pushName,
+        topLevelSender: trace.topLevelSender,
+        ...errorPayload,
+        ...details,
+      }),
+      error instanceof Error ? error.stack : undefined,
+    );
+  }
+
+  private logDeliveryStage(
+    stage: string,
+    diagnostic?: DeliveryDiagnosticContext,
+    details: JsonRecord = {},
+  ): void {
+    if (!diagnostic?.traceId) {
+      return;
+    }
+
+    this.logger.log(
+      JSON.stringify({
+        event: 'whatsapp_delivery_stage',
+        traceId: diagnostic.traceId,
+        stage,
+        instanceName: diagnostic.instanceName ?? null,
+        messageId: diagnostic.messageId ?? null,
+        contactId: diagnostic.contactId ?? null,
+        messageType: diagnostic.messageType ?? null,
+        remoteJid: diagnostic.remoteJid ?? null,
+        recipientAddress: diagnostic.recipientAddress ?? null,
+        recipientNumber: diagnostic.recipientNumber ?? null,
+        ...details,
+      }),
+    );
+  }
+
+  private logDeliveryDiagnostic(
+    reason: string,
+    diagnostic?: DeliveryDiagnosticContext,
+    details: JsonRecord = {},
+  ): void {
+    this.logger.warn(
+      JSON.stringify({
+        event: 'whatsapp_delivery_diagnostic',
+        traceId: diagnostic?.traceId ?? null,
+        reason,
+        instanceName: diagnostic?.instanceName ?? null,
+        messageId: diagnostic?.messageId ?? null,
+        contactId: diagnostic?.contactId ?? null,
+        messageType: diagnostic?.messageType ?? null,
+        remoteJid: diagnostic?.remoteJid ?? null,
+        recipientAddress: diagnostic?.recipientAddress ?? null,
+        recipientNumber: diagnostic?.recipientNumber ?? null,
+        ...details,
+      }),
+    );
+  }
+
+  private logDeliveryFailure(
+    stage: string,
+    error: unknown,
+    diagnostic?: DeliveryDiagnosticContext,
+    details: JsonRecord = {},
+  ): void {
+    const errorPayload = this.describeError(error);
+
+    this.logger.error(
+      JSON.stringify({
+        event: 'whatsapp_delivery_failure',
+        traceId: diagnostic?.traceId ?? null,
+        stage,
+        instanceName: diagnostic?.instanceName ?? null,
+        messageId: diagnostic?.messageId ?? null,
+        contactId: diagnostic?.contactId ?? null,
+        messageType: diagnostic?.messageType ?? null,
+        remoteJid: diagnostic?.remoteJid ?? null,
+        recipientAddress: diagnostic?.recipientAddress ?? null,
+        recipientNumber: diagnostic?.recipientNumber ?? null,
+        ...errorPayload,
+        ...details,
+      }),
+      error instanceof Error ? error.stack : undefined,
+    );
+  }
+
+  private buildRoutingDiagnosticReasons(
+    payload: JsonRecord,
+    instancePhone: string | null | undefined,
+    recipientRouting: { address: string | null; number: string | null },
+    incoming?: NormalizedIncomingWhatsAppMessage | null,
+  ): string[] {
+    const data = this.getWebhookMessageData(payload);
+    const key = this.asRecord(data.key);
+    const remoteJid = this.asString(key.remoteJid) || this.asString(data.remoteJid) || '';
+    const reasons = new Set<string>();
+
+    if (!instancePhone?.trim()) {
+      reasons.add('instance_phone_missing');
+    }
+
+    if (remoteJid.includes('@lid')) {
+      reasons.add('remote_jid_is_lid');
+    }
+
+    if (!this.hasWebhookSenderMetadata(payload)) {
+      reasons.add('missing_sender_metadata');
+    }
+
+    if (!(this.asString(payload.sender) || this.asString(payload.from))) {
+      reasons.add('top_level_sender_missing');
+    }
+
+    if (!recipientRouting.address) {
+      reasons.add('recipient_address_unresolved');
+    }
+
+    if (!recipientRouting.number) {
+      reasons.add('recipient_number_unresolved');
+    }
+
+    if (incoming && !incoming.outboundAddress?.includes('@s.whatsapp.net')) {
+      reasons.add('outbound_address_not_real_jid');
+    }
+
+    return [...reasons];
+  }
+
+  private buildDeliveryDiagnosticReasons(
+    diagnostic: DeliveryDiagnosticContext | undefined,
+    outboundAddress: string,
+  ): string[] {
+    const reasons = new Set<string>();
+
+    if (!diagnostic?.recipientAddress) {
+      reasons.add('recipient_address_unresolved');
+    }
+
+    if (!diagnostic?.recipientNumber) {
+      reasons.add('recipient_number_unresolved');
+    }
+
+    if (!outboundAddress.trim()) {
+      reasons.add('outbound_address_missing');
+    }
+
+    if (outboundAddress.trim() && !outboundAddress.includes('@s.whatsapp.net')) {
+      reasons.add('outbound_address_not_real_jid');
+    }
+
+    return [...reasons];
+  }
+
+  private describeError(error: unknown): JsonRecord {
+    if (axios.isAxiosError(error)) {
+      return {
+        errorType: 'axios',
+        errorMessage: error.message,
+        errorCode: error.code ?? null,
+        status: error.response?.status ?? null,
+        responseData: error.response?.data ?? null,
+      };
+    }
+
+    if (error instanceof HttpException) {
+      return {
+        errorType: 'http_exception',
+        errorMessage: error.message,
+        status: error.getStatus(),
+        responseData: error.getResponse(),
+      };
+    }
+
+    if (error instanceof Error) {
+      return {
+        errorType: 'error',
+        errorMessage: error.message,
+        errorCode:
+          'code' in error ? this.stringifyScalar((error as Error & { code?: unknown }).code) : null,
+      };
+    }
+
+    return {
+      errorType: typeof error,
+      errorMessage: this.stringifyScalar(error),
+    };
   }
 
   private getRequiredEnv(name: 'EVOLUTION_URL' | 'AUTHENTICATION_API_KEY'): string {

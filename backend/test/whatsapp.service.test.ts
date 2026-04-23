@@ -634,6 +634,32 @@ test('normalizeWebhookPayload ignores payloads that only point to the instance p
   assert.equal(result, null);
 });
 
+test('attachWebhookRoutingMetadata derives recipient number from webhook sender when instance phone is unavailable', () => {
+  const service = createService();
+
+  const result = service.attachWebhookRoutingMetadata({
+    event: 'messages.upsert',
+    sender: '18295344286@s.whatsapp.net',
+    data: {
+      key: {
+        remoteJid: '69132011749577@lid',
+        remoteJidAlt: '18295319442@s.whatsapp.net',
+        fromMe: false,
+        id: 'recipient-fallback-123',
+      },
+      message: {
+        conversation: 'hola recipient fallback',
+      },
+      messageType: 'conversation',
+    },
+  });
+
+  assert.equal(result.recipientAddress, '18295344286@s.whatsapp.net');
+  assert.equal(result.recipientNumber, '18295344286');
+  assert.equal(result.data.recipientAddress, '18295344286@s.whatsapp.net');
+  assert.equal(result.data.recipientNumber, '18295344286');
+});
+
 test('enrichIncomingRecipientFromEvolution upgrades lid recipients with remoteJidAlt from Evolution messages', async () => {
   const service = createService();
   const calls: Array<{ path: string; body: Record<string, unknown> }> = [];
@@ -1504,6 +1530,136 @@ test('processMessageWebhook ignores outbound fromMe payloads before enrichment',
 
   assert.equal(enrichCalls, 0);
   assert.equal(normalizeCalls, 0);
+});
+
+test('acceptWebhook returns a trace id for inbound message processing', async () => {
+  const service = createService();
+
+  service.processConnectionUpdate = async () => false;
+  service.looksLikeMessageWebhook = () => true;
+  service.processMessageWebhook = async () => undefined;
+
+  const result = await service.acceptWebhook(
+    {
+      event: 'messages.upsert',
+      data: {
+        key: {
+          remoteJid: '18095551234@s.whatsapp.net',
+          fromMe: false,
+          id: 'trace-accept-1',
+        },
+        message: {
+          conversation: 'hola trace',
+        },
+      },
+    },
+    {},
+  );
+
+  assert.equal(result.accepted, true);
+  assert.match(result.traceId ?? '', /^[0-9a-f-]{36}$/i);
+});
+
+test('processMessageWebhook emits precise routing diagnostics when recipient data is missing', async () => {
+  const service = createService();
+  const warnings: Array<Record<string, unknown>> = [];
+
+  service.logger = {
+    log: () => undefined,
+    warn: (message: string) => {
+      warnings.push(JSON.parse(message) as Record<string, unknown>);
+    },
+    error: () => undefined,
+  };
+  service.resolveConfig = async () => createResolvedConfig();
+  service.validateWebhook = () => undefined;
+  service.rememberSenderJidMapping = async () => undefined;
+  service.getInstancePhoneNumber = async () => null;
+  service.enrichWebhookPayloadFromKnownLid = async (payload: Record<string, unknown>) => payload;
+  service.enrichWebhookPayloadFromEvolution = async (payload: Record<string, unknown>) => payload;
+
+  await service.processMessageWebhook(
+    {
+      event: 'messages.upsert',
+      data: {
+        key: {
+          remoteJid: '69132011749577@lid',
+          fromMe: false,
+          id: 'missing-routing-1',
+        },
+        message: {
+          conversation: 'hola sin ruta',
+        },
+        messageType: 'conversation',
+      },
+    },
+    {},
+  );
+
+  const incompleteRouting = warnings.find(
+    (entry) =>
+      entry.event === 'whatsapp_pipeline_diagnostic' &&
+      entry.reason === 'recipient_routing_incomplete',
+  );
+  const normalizeFailed = warnings.find(
+    (entry) =>
+      entry.event === 'whatsapp_pipeline_diagnostic' &&
+      entry.reason === 'normalize_failed',
+  );
+
+  assert.ok(incompleteRouting);
+  assert.ok(normalizeFailed);
+  assert.deepEqual(incompleteRouting?.reasons, [
+    'instance_phone_missing',
+    'remote_jid_is_lid',
+    'missing_sender_metadata',
+    'top_level_sender_missing',
+    'recipient_address_unresolved',
+    'recipient_number_unresolved',
+  ]);
+});
+
+test('processAndDeliverMessage logs ordered delivery stages before sending to Evolution', async () => {
+  const { service } = createAudioFlowService();
+  const loggedStages: string[] = [];
+
+  service.logger = {
+    log: (message: string) => {
+      const payload = JSON.parse(message) as Record<string, unknown>;
+      if (payload.event === 'whatsapp_delivery_stage') {
+        loggedStages.push(String(payload.stage));
+      }
+    },
+    warn: () => undefined,
+    error: () => undefined,
+  };
+
+  await service.processAndDeliverMessage(
+    createResolvedConfig(),
+    '18095551234',
+    'hola orden',
+    'text',
+    {
+      outboundAddress: '18095551234@s.whatsapp.net',
+      diagnostic: {
+        traceId: 'trace-order-1',
+        instanceName: 'demo',
+        messageId: 'msg-order-1',
+        contactId: '18095551234',
+        messageType: 'text',
+        remoteJid: '18095551234@s.whatsapp.net',
+        recipientAddress: '18295344286@s.whatsapp.net',
+        recipientNumber: '18295344286',
+      },
+    },
+  );
+
+  assert.deepEqual(loggedStages, [
+    'ai_processing_started',
+    'ai_processing_completed',
+    'evolution_send_attempt',
+    'evolution_send_completed',
+  ]);
 });
 
 test('processIncomingAudioMessage only remembers voice preference after success', async () => {

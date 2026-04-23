@@ -102,4 +102,5 @@ export interface WebhookProcessingResult {
   deliveredAs?: 'text' | 'audio' | 'image' | 'video';
   contactId?: string;
   messageType?: IncomingWhatsAppMessageType;
+  traceId?: string;
 }
