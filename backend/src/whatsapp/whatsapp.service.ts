@@ -517,7 +517,7 @@ export class WhatsAppService implements OnModuleInit {
     this.validateWebhook(headers, resolved.whatsapp);
     const instancePhone = await this.getInstancePhoneNumber(resolved.whatsapp.instanceName);
 
-    const incoming = this.normalizeWebhookPayload(payload, instancePhone);
+    let incoming = this.normalizeWebhookPayload(payload, instancePhone);
     if (!incoming) {
       this.logger.log(
         JSON.stringify({
@@ -527,6 +527,12 @@ export class WhatsAppService implements OnModuleInit {
       );
       return;
     }
+
+    incoming = await this.enrichIncomingRecipientFromEvolution(
+      incoming,
+      resolved.whatsapp.instanceName,
+      instancePhone,
+    );
 
     this.logger.log(
       JSON.stringify({
@@ -1354,6 +1360,132 @@ export class WhatsAppService implements OnModuleInit {
       audio: type === 'audio' ? this.extractAudioMetadata(message) : undefined,
       rawPayload: payload,
     };
+  }
+
+  private async enrichIncomingRecipientFromEvolution(
+    incoming: NormalizedIncomingWhatsAppMessage,
+    instanceName: string,
+    instancePhone?: string | null,
+  ): Promise<NormalizedIncomingWhatsAppMessage> {
+    const currentRecipient = incoming.outboundAddress?.trim() || '';
+    if (!incoming.messageId?.trim() || !currentRecipient.includes('@lid')) {
+      return incoming;
+    }
+
+    const enrichedRecipient = await this.resolveIncomingRecipientFromEvolutionMessage(
+      instanceName,
+      incoming.messageId,
+      instancePhone,
+    );
+
+    if (!enrichedRecipient || enrichedRecipient === currentRecipient) {
+      return incoming;
+    }
+
+    const normalizedNumber = this.normalizeNumber(enrichedRecipient);
+    if (!normalizedNumber) {
+      return incoming;
+    }
+
+    this.logger.log(
+      JSON.stringify({
+        event: 'whatsapp_recipient_enriched_from_evolution',
+        messageId: incoming.messageId,
+        previousRecipient: currentRecipient,
+        resolvedRecipient: enrichedRecipient,
+        contactId: normalizedNumber,
+      }),
+    );
+
+    return {
+      ...incoming,
+      number: normalizedNumber,
+      outboundAddress: enrichedRecipient,
+    };
+  }
+
+  private async resolveIncomingRecipientFromEvolutionMessage(
+    instanceName: string,
+    messageId: string,
+    instancePhone?: string | null,
+  ): Promise<string | null> {
+    if (!instanceName.trim() || !messageId.trim() || typeof this.configService?.get !== 'function') {
+      return null;
+    }
+
+    try {
+      const response = await this.getEvolutionClient().post(`/chat/findMessages/${instanceName}`, {
+        where: {
+          key: {
+            id: messageId,
+          },
+        },
+        page: 1,
+        offset: 1,
+      });
+
+      const messages = this.extractEvolutionRecords(response.data, ['messages']);
+      for (const item of messages) {
+        const payload = this.asRecord(item);
+        const data = this.getWebhookMessageData(payload);
+        const key = this.asRecord(data.key);
+        const resolvedRecipient = this.resolveIncomingRecipient(payload, data, key, instancePhone).trim();
+
+        if (resolvedRecipient) {
+          return resolvedRecipient;
+        }
+      }
+    } catch (error) {
+      this.logger.warn(
+        JSON.stringify({
+          event: 'whatsapp_recipient_enrichment_failed',
+          instanceName,
+          messageId,
+          error: error instanceof Error ? error.message : 'Unknown error',
+        }),
+      );
+    }
+
+    return null;
+  }
+
+  private extractEvolutionRecords(payload: unknown, preferredKeys: string[] = []): unknown[] {
+    if (Array.isArray(payload)) {
+      return payload;
+    }
+
+    const record = this.asRecord(payload);
+    const candidates = [
+      ...preferredKeys.map((key) => record[key]),
+      record.data,
+      record.response,
+      record.result,
+      record.records,
+    ];
+
+    for (const candidate of candidates) {
+      if (Array.isArray(candidate)) {
+        return candidate;
+      }
+
+      const nested = this.asRecord(candidate);
+      for (const key of preferredKeys) {
+        const value = nested[key];
+        if (Array.isArray(value)) {
+          return value;
+        }
+      }
+
+      if (Array.isArray(nested.data)) {
+        return nested.data;
+      }
+
+      if (Array.isArray(nested.response)) {
+        return nested.response;
+      }
+    }
+
+    return [];
   }
 
   private extractAudioMetadata(message: JsonRecord) {

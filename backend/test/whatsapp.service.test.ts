@@ -605,6 +605,67 @@ test('normalizeWebhookPayload ignores payloads that only point to the instance p
   assert.equal(result, null);
 });
 
+test('enrichIncomingRecipientFromEvolution upgrades lid recipients with remoteJidAlt from Evolution messages', async () => {
+  const service = createService();
+  const calls: Array<{ path: string; body: Record<string, unknown> }> = [];
+
+  service.configService = {
+    get: () => undefined,
+  };
+
+  service.getEvolutionClient = () => ({
+    post: async (path: string, body: Record<string, unknown>) => {
+      calls.push({ path, body });
+
+      return {
+        data: {
+          messages: [
+            {
+              key: {
+                remoteJid: '69132011749577@lid',
+                remoteJidAlt: '18095551234@s.whatsapp.net',
+                fromMe: false,
+                id: 'msg-lid-1',
+              },
+              message: {
+                conversation: 'Holaa',
+              },
+              messageType: 'conversation',
+            },
+          ],
+        },
+      };
+    },
+  });
+
+  const result = await service.enrichIncomingRecipientFromEvolution(
+    {
+      number: '69132011749577',
+      outboundAddress: '69132011749577@lid',
+      message: 'Holaa',
+      type: 'text',
+      messageId: 'msg-lid-1',
+      rawPayload: {},
+    },
+    'demo',
+    '18295344286',
+  );
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0]?.path, '/chat/findMessages/demo');
+  assert.deepEqual(calls[0]?.body, {
+    where: {
+      key: {
+        id: 'msg-lid-1',
+      },
+    },
+    page: 1,
+    offset: 1,
+  });
+  assert.equal(result.number, '18095551234');
+  assert.equal(result.outboundAddress, '18095551234@s.whatsapp.net');
+});
+
 test('getInstancePhoneNumber refreshes from evolution when local phone is missing', async () => {
   const service = createService();
 
