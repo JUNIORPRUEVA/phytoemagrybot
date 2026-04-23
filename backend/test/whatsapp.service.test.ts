@@ -730,6 +730,122 @@ test('enrichWebhookPayloadFromEvolution merges missing lid fields into the inbou
   assert.equal(enrichedKey.senderPn, '18095551234@s.whatsapp.net');
 });
 
+test('enrichWebhookPayloadFromEvolution falls back to contact lookup when message lookup lacks sender fields', async () => {
+  const service = createService();
+  const calls: Array<{ path: string; body: Record<string, unknown> }> = [];
+
+  service.configService = {
+    get: () => undefined,
+  };
+
+  service.getEvolutionClient = () => ({
+    post: async (path: string, body: Record<string, unknown>) => {
+      calls.push({ path, body });
+
+      if (path === '/chat/findMessages/demo') {
+        return {
+          data: {
+            messages: [
+              {
+                key: {
+                  remoteJid: '69132011749577@lid',
+                  fromMe: false,
+                  id: 'msg-lid-contact-fallback-1',
+                },
+                pushName: 'Junior Lopez',
+                message: {
+                  conversation: 'Ho',
+                },
+                messageType: 'conversation',
+              },
+            ],
+          },
+        };
+      }
+
+      if (path === '/chat/findContacts/demo') {
+        return {
+          data: {
+            contacts: [
+              {
+                remoteJid: '18095551234@s.whatsapp.net',
+                pushName: 'Junior Lopez',
+              },
+            ],
+          },
+        };
+      }
+
+      throw new Error(`Unexpected path ${path}`);
+    },
+  });
+
+  const result = await service.enrichWebhookPayloadFromEvolution(
+    {
+      event: 'messages.upsert',
+      data: {
+        key: {
+          remoteJid: '69132011749577@lid',
+          fromMe: false,
+          id: 'msg-lid-contact-fallback-1',
+        },
+        pushName: 'Junior Lopez',
+        message: {
+          conversation: 'Ho',
+        },
+        messageType: 'conversation',
+      },
+    },
+    'demo',
+  );
+
+  const enrichedData = service.getWebhookMessageData(result);
+  const enrichedKey = enrichedData.key;
+
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0]?.path, '/chat/findMessages/demo');
+  assert.equal(calls[1]?.path, '/chat/findContacts/demo');
+  assert.equal(enrichedKey.remoteJidAlt, '18095551234@s.whatsapp.net');
+  assert.equal(enrichedKey.participantAlt, '18095551234@s.whatsapp.net');
+  assert.equal(enrichedKey.senderPn, '18095551234@s.whatsapp.net');
+});
+
+test('attachWebhookRoutingMetadata exposes distinct sender and recipient numbers in the webhook payload', () => {
+  const service = createService();
+
+  const result = service.attachWebhookRoutingMetadata(
+    {
+      event: 'messages.upsert',
+      data: {
+        key: {
+          remoteJid: '69132011749577@lid',
+          remoteJidAlt: '18095551234@s.whatsapp.net',
+          fromMe: false,
+          id: 'routing-meta-1',
+        },
+        pushName: 'Junior Lopez',
+        message: {
+          conversation: 'Ho',
+        },
+        messageType: 'conversation',
+      },
+    },
+    '18295344286@s.whatsapp.net',
+  );
+
+  const enrichedData = service.getWebhookMessageData(result);
+
+  assert.equal(result.senderNumber, '18095551234');
+  assert.equal(result.senderAddress, '18095551234@s.whatsapp.net');
+  assert.equal(result.recipientNumber, '18295344286');
+  assert.equal(result.recipientAddress, '18295344286@s.whatsapp.net');
+  assert.equal(enrichedData.senderNumber, '18095551234');
+  assert.equal(enrichedData.senderAddress, '18095551234@s.whatsapp.net');
+  assert.equal(enrichedData.recipientNumber, '18295344286');
+  assert.equal(enrichedData.recipientAddress, '18295344286@s.whatsapp.net');
+  assert.notEqual(result.senderNumber, result.recipientNumber);
+});
+
 test('getInstancePhoneNumber refreshes from evolution when local phone is missing', async () => {
   const service = createService();
 

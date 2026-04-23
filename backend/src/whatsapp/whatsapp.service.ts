@@ -513,6 +513,8 @@ export class WhatsAppService implements OnModuleInit {
     this.validateWebhook(headers, resolved.whatsapp);
     const instancePhone = await this.getInstancePhoneNumber(resolved.whatsapp.instanceName);
     payload = await this.enrichWebhookPayloadFromEvolution(payload, resolved.whatsapp.instanceName);
+    payload = this.attachWebhookRoutingMetadata(payload, instancePhone);
+    this.logPreparedWebhookPayload(payload, instancePhone);
 
     const data = this.getWebhookMessageData(payload);
     const key = this.asRecord(data.key);
@@ -542,6 +544,11 @@ export class WhatsAppService implements OnModuleInit {
       JSON.stringify({
         event: 'whatsapp_message_received',
         contactId: incoming.number,
+        senderNumber: incoming.number,
+        senderAddress: incoming.outboundAddress || null,
+        recipientNumber: this.normalizeNumber(instancePhone || '') || null,
+        recipientAddress: this.normalizeJid(instancePhone || '') || null,
+        pushName: incoming.pushName || null,
         type: incoming.type,
         message: incoming.message,
       }),
@@ -1309,6 +1316,11 @@ export class WhatsAppService implements OnModuleInit {
       JSON.stringify({
         event: 'whatsapp_recipient_resolved',
         contactId: number,
+        senderNumber: number,
+        senderAddress: resolvedRecipient,
+        recipientNumber: this.normalizeNumber(instancePhone || '') || null,
+        recipientAddress: this.normalizeJid(instancePhone || '') || null,
+        pushName: pushName || null,
         resolvedRecipient,
         instancePhone: instancePhone ?? null,
         remoteJid: remoteJid || null,
@@ -1433,93 +1445,399 @@ export class WhatsAppService implements OnModuleInit {
       return payload;
     }
 
+    let enrichedPayload = payload;
     const evolutionPayload = await this.findEvolutionMessagePayload(instanceName, messageId);
-    if (!evolutionPayload) {
-      return payload;
+    if (evolutionPayload) {
+      enrichedPayload = this.mergeWebhookPayloadWithSenderFields(payload, evolutionPayload);
+
+      const enrichedData = this.getWebhookMessageData(enrichedPayload);
+      const enrichedKey = this.asRecord(enrichedData.key);
+      this.logger.log(
+        JSON.stringify({
+          event: 'whatsapp_webhook_payload_enriched',
+          source: 'message_lookup',
+          messageId,
+          remoteJid,
+          remoteJidAlt: this.asString(enrichedKey.remoteJidAlt) || null,
+          senderPn: this.asString(enrichedKey.senderPn) || null,
+          participantPn: this.asString(enrichedKey.participantPn) || null,
+          participantAlt: this.asString(enrichedKey.participantAlt) || null,
+        }),
+      );
     }
 
-    const evolutionData = this.getWebhookMessageData(evolutionPayload);
-    const evolutionKey = this.asRecord(evolutionData.key);
-    const mergedKey = {
-      ...evolutionKey,
-      ...key,
-      remoteJidAlt:
-        this.asString(key.remoteJidAlt) ||
-        this.asString(evolutionKey.remoteJidAlt) ||
-        this.asString(evolutionData.remoteJidAlt) ||
-        this.asString(evolutionPayload.remoteJidAlt),
-      senderPn:
-        this.asString(key.senderPn) ||
-        this.asString(evolutionKey.senderPn) ||
-        this.asString(evolutionData.senderPn) ||
-        this.asString(evolutionPayload.senderPn),
-      participantPn:
-        this.asString(key.participantPn) ||
-        this.asString(evolutionKey.participantPn) ||
-        this.asString(evolutionData.participantPn) ||
-        this.asString(evolutionPayload.participantPn),
-      participantAlt:
-        this.asString(key.participantAlt) ||
-        this.asString(evolutionKey.participantAlt) ||
-        this.asString(evolutionData.participantAlt) ||
-        this.asString(evolutionPayload.participantAlt),
-    } satisfies JsonRecord;
+    if (this.hasWebhookSenderMetadata(enrichedPayload)) {
+      return enrichedPayload;
+    }
 
-    const mergedData = {
-      ...evolutionData,
-      ...data,
-      key: mergedKey,
-      remoteJidAlt:
-        this.asString(data.remoteJidAlt) ||
-        this.asString(evolutionData.remoteJidAlt) ||
-        this.asString(evolutionPayload.remoteJidAlt),
-      senderPn:
-        this.asString(data.senderPn) ||
-        this.asString(evolutionData.senderPn) ||
-        this.asString(evolutionPayload.senderPn),
-      participantPn:
-        this.asString(data.participantPn) ||
-        this.asString(evolutionData.participantPn) ||
-        this.asString(evolutionPayload.participantPn),
-      participantAlt:
-        this.asString(data.participantAlt) ||
-        this.asString(evolutionData.participantAlt) ||
-        this.asString(evolutionPayload.participantAlt),
-    } satisfies JsonRecord;
+    const contactPayload = await this.findEvolutionContactPayload(instanceName, enrichedPayload);
+    const contactJid = contactPayload ? this.extractEvolutionContactJid(contactPayload) : '';
+    if (!contactJid || contactJid.includes('@lid')) {
+      return enrichedPayload;
+    }
+
+    const contactEnrichedPayload = this.mergeWebhookPayloadWithResolvedContact(
+      enrichedPayload,
+      contactJid,
+    );
+    const contactData = this.getWebhookMessageData(contactEnrichedPayload);
+    const contactKey = this.asRecord(contactData.key);
 
     this.logger.log(
       JSON.stringify({
         event: 'whatsapp_webhook_payload_enriched',
+        source: 'contact_lookup',
         messageId,
         remoteJid,
-        remoteJidAlt: this.asString(mergedKey.remoteJidAlt) || null,
-        senderPn: this.asString(mergedKey.senderPn) || null,
-        participantPn: this.asString(mergedKey.participantPn) || null,
-        participantAlt: this.asString(mergedKey.participantAlt) || null,
+        contactRemoteJid: contactJid,
+        remoteJidAlt: this.asString(contactKey.remoteJidAlt) || null,
+        senderPn: this.asString(contactKey.senderPn) || null,
+        participantPn: this.asString(contactKey.participantPn) || null,
+        participantAlt: this.asString(contactKey.participantAlt) || null,
       }),
     );
 
+    return contactEnrichedPayload;
+  }
+
+  private mergeWebhookPayloadWithSenderFields(
+    payload: JsonRecord,
+    sourcePayload: JsonRecord,
+  ): JsonRecord {
+    const data = this.getWebhookMessageData(payload);
+    const key = this.asRecord(data.key);
+    const sourceData = this.getWebhookMessageData(sourcePayload);
+    const sourceKey = this.asRecord(sourceData.key);
+    const mergedKey = {
+      ...sourceKey,
+      ...key,
+      remoteJidAlt:
+        this.asString(key.remoteJidAlt) ||
+        this.asString(sourceKey.remoteJidAlt) ||
+        this.asString(sourceData.remoteJidAlt) ||
+        this.asString(sourcePayload.remoteJidAlt),
+      senderPn:
+        this.asString(key.senderPn) ||
+        this.asString(sourceKey.senderPn) ||
+        this.asString(sourceData.senderPn) ||
+        this.asString(sourcePayload.senderPn),
+      participantPn:
+        this.asString(key.participantPn) ||
+        this.asString(sourceKey.participantPn) ||
+        this.asString(sourceData.participantPn) ||
+        this.asString(sourcePayload.participantPn),
+      participantAlt:
+        this.asString(key.participantAlt) ||
+        this.asString(sourceKey.participantAlt) ||
+        this.asString(sourceData.participantAlt) ||
+        this.asString(sourcePayload.participantAlt),
+    } satisfies JsonRecord;
+
+    const mergedData = {
+      ...sourceData,
+      ...data,
+      key: mergedKey,
+      remoteJidAlt:
+        this.asString(data.remoteJidAlt) ||
+        this.asString(sourceData.remoteJidAlt) ||
+        this.asString(sourcePayload.remoteJidAlt),
+      senderPn:
+        this.asString(data.senderPn) ||
+        this.asString(sourceData.senderPn) ||
+        this.asString(sourcePayload.senderPn),
+      participantPn:
+        this.asString(data.participantPn) ||
+        this.asString(sourceData.participantPn) ||
+        this.asString(sourcePayload.participantPn),
+      participantAlt:
+        this.asString(data.participantAlt) ||
+        this.asString(sourceData.participantAlt) ||
+        this.asString(sourcePayload.participantAlt),
+    } satisfies JsonRecord;
+
     return {
-      ...evolutionPayload,
+      ...sourcePayload,
       ...payload,
       data: mergedData,
       remoteJidAlt:
         this.asString(payload.remoteJidAlt) ||
-        this.asString(evolutionPayload.remoteJidAlt) ||
+        this.asString(sourcePayload.remoteJidAlt) ||
         this.asString(mergedData.remoteJidAlt),
       senderPn:
         this.asString(payload.senderPn) ||
-        this.asString(evolutionPayload.senderPn) ||
+        this.asString(sourcePayload.senderPn) ||
         this.asString(mergedData.senderPn),
       participantPn:
         this.asString(payload.participantPn) ||
-        this.asString(evolutionPayload.participantPn) ||
+        this.asString(sourcePayload.participantPn) ||
         this.asString(mergedData.participantPn),
       participantAlt:
         this.asString(payload.participantAlt) ||
-        this.asString(evolutionPayload.participantAlt) ||
+        this.asString(sourcePayload.participantAlt) ||
         this.asString(mergedData.participantAlt),
     };
+  }
+
+  private mergeWebhookPayloadWithResolvedContact(
+    payload: JsonRecord,
+    contactJid: string,
+  ): JsonRecord {
+    const sourcePayload = {
+      remoteJidAlt: contactJid,
+      senderPn: contactJid,
+      participantPn: contactJid,
+      participantAlt: contactJid,
+      data: {
+        remoteJidAlt: contactJid,
+        senderPn: contactJid,
+        participantPn: contactJid,
+        participantAlt: contactJid,
+        key: {
+          remoteJidAlt: contactJid,
+          senderPn: contactJid,
+          participantPn: contactJid,
+          participantAlt: contactJid,
+        },
+      },
+    } satisfies JsonRecord;
+
+    return this.mergeWebhookPayloadWithSenderFields(payload, sourcePayload);
+  }
+
+  private hasWebhookSenderMetadata(payload: JsonRecord): boolean {
+    const data = this.getWebhookMessageData(payload);
+    const key = this.asRecord(data.key);
+
+    return [
+      this.asString(key.remoteJidAlt),
+      this.asString(data.remoteJidAlt),
+      this.asString(payload.remoteJidAlt),
+      this.asString(key.senderPn),
+      this.asString(data.senderPn),
+      this.asString(payload.senderPn),
+      this.asString(key.participantAlt),
+      this.asString(data.participantAlt),
+      this.asString(payload.participantAlt),
+      this.asString(key.participantPn),
+      this.asString(data.participantPn),
+      this.asString(payload.participantPn),
+    ].some((value) => Boolean(value?.trim()));
+  }
+
+  private async findEvolutionContactPayload(
+    instanceName: string,
+    payload: JsonRecord,
+  ): Promise<JsonRecord | null> {
+    if (!instanceName.trim() || typeof this.configService?.get !== 'function') {
+      return null;
+    }
+
+    const data = this.getWebhookMessageData(payload);
+    const key = this.asRecord(data.key);
+    const pushName = this.asString(data.pushName) || this.asString(payload.pushName) || '';
+    const remoteJid = this.asString(key.remoteJid) || this.asString(data.remoteJid) || '';
+    const queries: Array<Record<string, unknown>> = [];
+
+    if (pushName) {
+      queries.push({ where: { pushName }, page: 1, offset: 10 });
+    }
+
+    if (remoteJid) {
+      queries.push({ where: { remoteJid }, page: 1, offset: 10 });
+    }
+
+    for (const query of queries) {
+      try {
+        const response = await this.getEvolutionClient().post(
+          `/chat/findContacts/${instanceName}`,
+          query,
+        );
+        const records = this.extractEvolutionRecords(response.data, ['contacts']);
+        const match = this.pickBestEvolutionContact(records, remoteJid, pushName);
+        if (match) {
+          return match;
+        }
+      } catch (error) {
+        this.logger.warn(
+          JSON.stringify({
+            event: 'whatsapp_contact_lookup_failed',
+            instanceName,
+            pushName: pushName || null,
+            remoteJid: remoteJid || null,
+            error: error instanceof Error ? error.message : 'Unknown error',
+          }),
+        );
+      }
+    }
+
+    return null;
+  }
+
+  private pickBestEvolutionContact(
+    records: unknown[],
+    remoteJid: string,
+    pushName: string,
+  ): JsonRecord | null {
+    const candidates = records
+      .map((record) => this.asRecord(record))
+      .filter((record) => {
+        const contactJid = this.extractEvolutionContactJid(record);
+        return Boolean(
+          contactJid && !contactJid.includes('@g.us') && !contactJid.includes('@broadcast'),
+        );
+      });
+
+    if (!candidates.length) {
+      return null;
+    }
+
+    const normalizedPushName = pushName.trim().toLowerCase();
+    const exactNameMatches = normalizedPushName
+      ? candidates.filter(
+          (record) =>
+            (this.asString(record.pushName) || '').trim().toLowerCase() === normalizedPushName,
+        )
+      : [];
+    const preferredCandidates = exactNameMatches.length ? exactNameMatches : candidates;
+    const uniqueJids = new Set(
+      preferredCandidates
+        .map((record) => this.extractEvolutionContactJid(record))
+        .filter((value): value is string => Boolean(value)),
+    );
+
+    if (preferredCandidates.length > 1 && uniqueJids.size > 1 && exactNameMatches.length > 0) {
+      return null;
+    }
+
+    return (
+      preferredCandidates.find((record) => {
+        const contactJid = this.extractEvolutionContactJid(record);
+        return Boolean(contactJid && !contactJid.includes('@lid'));
+      }) ||
+      preferredCandidates.find((record) => {
+        const contactJid = this.extractEvolutionContactJid(record);
+        return Boolean(contactJid && contactJid === remoteJid);
+      }) ||
+      preferredCandidates[0] ||
+      null
+    );
+  }
+
+  private extractEvolutionContactJid(record: JsonRecord): string {
+    return (
+      this.asString(record.remoteJid) ||
+      this.asString(record.jid) ||
+      this.asString(record.wuid) ||
+      this.asString(record.id) ||
+      this.asString(record.phone) ||
+      ''
+    );
+  }
+
+  private attachWebhookRoutingMetadata(
+    payload: JsonRecord,
+    instancePhone?: string | null,
+  ): JsonRecord {
+    const data = this.getWebhookMessageData(payload);
+    const key = this.asRecord(data.key);
+    const senderAddress = this.resolveIncomingRecipient(payload, data, key, instancePhone).trim();
+    const senderNumber = this.normalizeNumber(senderAddress);
+    const recipientAddress = this.normalizeJid(instancePhone || '') || '';
+    const recipientNumber = this.normalizeNumber(instancePhone || '');
+    const hasDistinctRouting = Boolean(
+      senderNumber && recipientNumber && senderNumber !== recipientNumber,
+    );
+
+    if (senderNumber && recipientNumber && senderNumber === recipientNumber) {
+      this.logger.warn(
+        JSON.stringify({
+          event: 'whatsapp_webhook_routing_numbers_conflict',
+          senderNumber,
+          recipientNumber,
+          senderAddress: senderAddress || null,
+          recipientAddress: recipientAddress || null,
+          remoteJid: this.asString(key.remoteJid) || this.asString(data.remoteJid) || null,
+        }),
+      );
+    }
+
+    const resolvedSenderAddress = hasDistinctRouting ? senderAddress : '';
+    const resolvedSenderNumber = hasDistinctRouting ? senderNumber : '';
+    const mergedData = {
+      ...data,
+      senderNumber: resolvedSenderNumber || null,
+      senderAddress: resolvedSenderAddress || null,
+      recipientNumber: recipientNumber || null,
+      recipientAddress: recipientAddress || null,
+    } satisfies JsonRecord;
+
+    return {
+      ...payload,
+      data: mergedData,
+      senderNumber: resolvedSenderNumber || null,
+      senderAddress: resolvedSenderAddress || null,
+      recipientNumber: recipientNumber || null,
+      recipientAddress: recipientAddress || null,
+    };
+  }
+
+  private logPreparedWebhookPayload(payload: JsonRecord, instancePhone?: string | null): void {
+    const data = this.getWebhookMessageData(payload);
+    const key = this.asRecord(data.key);
+    const resolvedSenderAddress =
+      this.asString(data.senderAddress) ||
+      this.asString(payload.senderAddress) ||
+      this.resolveIncomingRecipient(payload, data, key, instancePhone);
+    const resolvedSenderNumber =
+      this.asString(data.senderNumber) ||
+      this.asString(payload.senderNumber) ||
+      this.normalizeNumber(resolvedSenderAddress);
+    const recipientAddress =
+      this.asString(data.recipientAddress) ||
+      this.asString(payload.recipientAddress) ||
+      this.normalizeJid(instancePhone || '') ||
+      null;
+    const recipientNumber =
+      this.asString(data.recipientNumber) ||
+      this.asString(payload.recipientNumber) ||
+      this.normalizeNumber(instancePhone || '') ||
+      null;
+
+    this.logger.log(
+      JSON.stringify({
+        event: 'whatsapp_webhook_payload_ready',
+        messageId: this.asString(key.id) || this.asString(data.messageId) || null,
+        pushName: this.asString(data.pushName) || null,
+        resolvedSenderAddress: resolvedSenderAddress || null,
+        resolvedSenderNumber: resolvedSenderNumber || null,
+        recipientAddress,
+        recipientNumber,
+        senderAndRecipientMatch:
+          Boolean(resolvedSenderNumber && recipientNumber && resolvedSenderNumber === recipientNumber),
+        instancePhone: instancePhone ?? null,
+        remoteJid: this.asString(key.remoteJid) || this.asString(data.remoteJid) || null,
+        remoteJidAlt:
+          this.asString(key.remoteJidAlt) ||
+          this.asString(data.remoteJidAlt) ||
+          this.asString(payload.remoteJidAlt) ||
+          null,
+        senderPn:
+          this.asString(key.senderPn) ||
+          this.asString(data.senderPn) ||
+          this.asString(payload.senderPn) ||
+          null,
+        participantPn:
+          this.asString(key.participantPn) ||
+          this.asString(data.participantPn) ||
+          this.asString(payload.participantPn) ||
+          null,
+        participantAlt:
+          this.asString(key.participantAlt) ||
+          this.asString(data.participantAlt) ||
+          this.asString(payload.participantAlt) ||
+          null,
+      }),
+    );
   }
 
   private async findEvolutionMessagePayload(
