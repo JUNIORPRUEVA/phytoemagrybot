@@ -1453,6 +1453,14 @@ export class WhatsAppService {
       return remoteJidAlt;
     }
 
+    if (
+      remoteJid.includes('@s.whatsapp.net') &&
+      !remoteJid.includes('@g.us') &&
+      !remoteJid.includes('@broadcast')
+    ) {
+      return remoteJid;
+    }
+
     for (const candidate of prioritizedCandidates) {
       if (!candidate.includes('@g.us') && !candidate.includes('@broadcast')) {
         return candidate;

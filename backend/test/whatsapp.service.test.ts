@@ -348,14 +348,14 @@ test('sendText uses instance endpoint with jid number payload', async () => {
   });
 });
 
-test('normalizeWebhookPayload prefers senderPn over remoteJid when available', () => {
+test('normalizeWebhookPayload prefers remoteJid over senderPn for direct chats', () => {
   const service = createService();
 
   const result = service.normalizeWebhookPayload({
     event: 'messages.upsert',
     data: {
       key: {
-        remoteJid: '69132011749577@s.whatsapp.net',
+        remoteJid: '18095551234@s.whatsapp.net',
         senderPn: '18295319442@s.whatsapp.net',
         fromMe: false,
         id: 'senderpn-123',
@@ -367,8 +367,31 @@ test('normalizeWebhookPayload prefers senderPn over remoteJid when available', (
     },
   });
 
-  assert.equal(result?.number, '18295319442');
+  assert.equal(result?.number, '18095551234');
   assert.equal(result?.message, 'hola real');
+});
+
+test('normalizeWebhookPayload uses senderPn when remoteJid is a group identifier', () => {
+  const service = createService();
+
+  const result = service.normalizeWebhookPayload({
+    event: 'messages.upsert',
+    data: {
+      key: {
+        remoteJid: '120363382457717265@g.us',
+        senderPn: '18295319442@s.whatsapp.net',
+        fromMe: false,
+        id: 'group-senderpn-123',
+      },
+      message: {
+        conversation: 'hola grupo real',
+      },
+      messageType: 'conversation',
+    },
+  });
+
+  assert.equal(result?.number, '18295319442');
+  assert.equal(result?.message, 'hola grupo real');
 });
 
 test('processIncomingAudioMessage answers short audios as text', async () => {
