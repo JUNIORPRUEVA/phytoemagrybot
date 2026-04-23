@@ -452,6 +452,13 @@ export class WhatsAppService {
   }
 
   private async processMessageWebhook(payload: JsonRecord, headers: HeaderMap): Promise<void> {
+    const data = this.getWebhookMessageData(payload);
+    const key = this.asRecord(data.key);
+
+    if (key.fromMe === true || data.fromMe === true) {
+      return;
+    }
+
     const resolved = await this.resolveConfig();
     this.validateWebhook(headers, resolved.whatsapp);
     const instancePhone = await this.getInstancePhoneNumber(resolved.whatsapp.instanceName);
