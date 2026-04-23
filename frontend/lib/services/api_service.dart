@@ -88,7 +88,7 @@ class ClientConfigData {
       webhookSecret.isNotEmpty &&
       webhookUrl.isNotEmpty;
 
-    bool get webhookReady => webhookSecret.isNotEmpty && webhookUrl.isNotEmpty;
+  bool get webhookReady => webhookSecret.isNotEmpty && webhookUrl.isNotEmpty;
 
   bool get botReady => backendOnline && openaiConfigured && whatsappConfigured;
 
@@ -176,14 +176,25 @@ class ClientConfigData {
     required bool backendOnline,
     required String backendStatus,
   }) {
-    final configurations = (json['configurations'] as Map<String, dynamic>?) ?? <String, dynamic>{};
-    final whatsapp = (configurations['whatsapp'] as Map<String, dynamic>?) ?? <String, dynamic>{};
-    final ai = (configurations['ai'] as Map<String, dynamic>?) ?? <String, dynamic>{};
-    final bot = (configurations['bot'] as Map<String, dynamic>?) ?? <String, dynamic>{};
+    final configurations =
+        (json['configurations'] as Map<String, dynamic>?) ??
+        <String, dynamic>{};
+    final whatsapp =
+        (configurations['whatsapp'] as Map<String, dynamic>?) ??
+        <String, dynamic>{};
+    final ai =
+        (configurations['ai'] as Map<String, dynamic>?) ?? <String, dynamic>{};
+    final bot =
+        (configurations['bot'] as Map<String, dynamic>?) ?? <String, dynamic>{};
     final elevenlabs =
-        (configurations['elevenlabs'] as Map<String, dynamic>?) ?? <String, dynamic>{};
-    final prompts = (configurations['prompts'] as Map<String, dynamic>?) ?? <String, dynamic>{};
-    final branding = (configurations['branding'] as Map<String, dynamic>?) ?? <String, dynamic>{};
+        (configurations['elevenlabs'] as Map<String, dynamic>?) ??
+        <String, dynamic>{};
+    final prompts =
+        (configurations['prompts'] as Map<String, dynamic>?) ??
+        <String, dynamic>{};
+    final branding =
+        (configurations['branding'] as Map<String, dynamic>?) ??
+        <String, dynamic>{};
 
     return ClientConfigData(
       id: (json['id'] as int?) ?? 1,
@@ -293,7 +304,8 @@ class WhatsAppChannelData {
       connected: (json['connected'] as bool?) ?? false,
       qrCode: json['qrCode'] as String?,
       qrCodeBase64: json['qrCodeBase64'] as String?,
-      details: (json['details'] as Map<String, dynamic>?) ?? <String, dynamic>{},
+      details:
+          (json['details'] as Map<String, dynamic>?) ?? <String, dynamic>{},
     );
   }
 }
@@ -349,7 +361,8 @@ class ManagedWhatsAppInstanceData {
   final DateTime? updatedAt;
 
   bool get isConnecting => status == 'connecting';
-  String get label => (displayName?.trim().isNotEmpty ?? false) ? displayName!.trim() : name;
+  String get label =>
+      (displayName?.trim().isNotEmpty ?? false) ? displayName!.trim() : name;
 
   factory ManagedWhatsAppInstanceData.fromJson(Map<String, dynamic> json) {
     return ManagedWhatsAppInstanceData(
@@ -483,7 +496,8 @@ class ConversationContextData {
   final ConversationSummarySnapshotData summary;
 
   factory ConversationContextData.fromJson(Map<String, dynamic> json) {
-    final rawMessages = (json['messages'] as List<dynamic>?) ?? const <dynamic>[];
+    final rawMessages =
+        (json['messages'] as List<dynamic>?) ?? const <dynamic>[];
 
     return ConversationContextData(
       messages: rawMessages
@@ -575,7 +589,8 @@ class MediaFileData {
 }
 
 class ApiService {
-  ApiService({this.baseUrl = defaultBaseUrl, http.Client? client}) : _client = client ?? http.Client();
+  ApiService({this.baseUrl = defaultBaseUrl, http.Client? client})
+    : _client = client ?? http.Client();
 
   static const String defaultBaseUrl =
       'https://ai-business-platform-phytoemagrybot-backend.onqyr1.easypanel.host';
@@ -656,9 +671,7 @@ class ApiService {
           'fallbackMessage': fallbackMessage,
           'audioVoiceId': audioVoiceId,
         },
-        'elevenlabs': <String, dynamic>{
-          'baseUrl': elevenLabsBaseUrl,
-        },
+        'elevenlabs': <String, dynamic>{'baseUrl': elevenLabsBaseUrl},
         'ai': <String, dynamic>{
           'modelName': aiModelName,
           'temperature': aiTemperature,
@@ -670,7 +683,9 @@ class ApiService {
           'spamGroupWindowMs': spamGroupWindowMs,
           'allowAudioReplies': allowAudioReplies,
         },
-        if (companyName != null || companyDetails != null || companyLogoUrl != null)
+        if (companyName != null ||
+            companyDetails != null ||
+            companyLogoUrl != null)
           'branding': <String, dynamic>{
             if (companyName != null) 'companyName': companyName,
             if (companyDetails != null) 'companyDetails': companyDetails,
@@ -760,7 +775,10 @@ class ApiService {
 
   Future<ApiHealthData> getHealth() async {
     try {
-      final response = await _client.get(_buildUri('/health'), headers: _headers);
+      final response = await _client.get(
+        _buildUri('/health'),
+        headers: _headers,
+      );
       final data = _decodeResponse(response);
       return ApiHealthData(
         online: (data['status'] as String?) == 'ok',
@@ -850,7 +868,9 @@ class ApiService {
     );
   }
 
-  Future<List<MemoryContactListItemData>> getMemoryContacts({String? query}) async {
+  Future<List<MemoryContactListItemData>> getMemoryContacts({
+    String? query,
+  }) async {
     final uri = _buildUri('/memory/contacts').replace(
       queryParameters: <String, String>{
         if (query != null && query.trim().isNotEmpty) 'query': query.trim(),
@@ -894,16 +914,23 @@ class ApiService {
   }
 
   Future<WhatsAppChannelData> getWhatsAppChannel() async {
-    final response = await _client.get(_buildUri('/whatsapp/channel'), headers: _headers);
+    final response = await _client.get(
+      _buildUri('/whatsapp/channel'),
+      headers: _headers,
+    );
     return WhatsAppChannelData.fromJson(_decodeResponse(response));
   }
 
-  Future<ManagedWhatsAppInstanceData> createInstance(String instanceName) async {
+  Future<ManagedWhatsAppInstanceData> createInstance(
+    String instanceName, {
+    required String phone,
+  }) async {
     final response = await _client.post(
       _buildUri('/whatsapp/create'),
       headers: _headers,
       body: jsonEncode(<String, dynamic>{
         'instanceName': instanceName,
+        'phone': phone.trim(),
       }),
     );
 
@@ -911,10 +938,16 @@ class ApiService {
   }
 
   Future<List<ManagedWhatsAppInstanceData>> getInstances() async {
-    final response = await _client.get(_buildUri('/whatsapp/list'), headers: _headers);
+    final response = await _client.get(
+      _buildUri('/whatsapp/list'),
+      headers: _headers,
+    );
     final decoded = _decodeListResponse(response);
     return decoded
-        .map((Map<String, dynamic> item) => ManagedWhatsAppInstanceData.fromJson(item))
+        .map(
+          (Map<String, dynamic> item) =>
+              ManagedWhatsAppInstanceData.fromJson(item),
+        )
         .toList();
   }
 
@@ -927,12 +960,16 @@ class ApiService {
     return WhatsAppQrData.fromJson(_decodeResponse(response));
   }
 
-  Future<WhatsAppWebhookData> setWebhook(String instanceName, {String? webhookUrl}) async {
+  Future<WhatsAppWebhookData> setWebhook(
+    String instanceName, {
+    String? webhookUrl,
+  }) async {
     final response = await _client.post(
       _buildUri('/whatsapp/webhook/${Uri.encodeComponent(instanceName)}'),
       headers: _headers,
       body: jsonEncode(<String, dynamic>{
-        if (webhookUrl != null && webhookUrl.trim().isNotEmpty) 'webhook': webhookUrl.trim(),
+        if (webhookUrl != null && webhookUrl.trim().isNotEmpty)
+          'webhook': webhookUrl.trim(),
         'events': <String>['messages.upsert'],
       }),
     );
@@ -966,7 +1003,9 @@ class ApiService {
     return ManagedWhatsAppInstanceData.fromJson(_decodeResponse(response));
   }
 
-  Future<DeleteWhatsAppInstanceResponse> deleteInstance(String instanceName) async {
+  Future<DeleteWhatsAppInstanceResponse> deleteInstance(
+    String instanceName,
+  ) async {
     final response = await _client.delete(
       _buildUri('/whatsapp/delete/${Uri.encodeComponent(instanceName)}'),
       headers: _headers,
@@ -976,12 +1015,18 @@ class ApiService {
   }
 
   Future<WhatsAppChannelData> createWhatsAppInstance() async {
-    final response = await _client.post(_buildUri('/whatsapp/channel/instance'), headers: _headers);
+    final response = await _client.post(
+      _buildUri('/whatsapp/channel/instance'),
+      headers: _headers,
+    );
     return WhatsAppChannelData.fromJson(_decodeResponse(response));
   }
 
   Future<WhatsAppChannelData> refreshWhatsAppQr() async {
-    final response = await _client.post(_buildUri('/whatsapp/channel/qr'), headers: _headers);
+    final response = await _client.post(
+      _buildUri('/whatsapp/channel/qr'),
+      headers: _headers,
+    );
     return WhatsAppChannelData.fromJson(_decodeResponse(response));
   }
 
@@ -1036,9 +1081,9 @@ class ApiService {
   }
 
   Map<String, String> get _headers => const <String, String>{
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-      };
+    'Content-Type': 'application/json',
+    'Accept': 'application/json',
+  };
 
   Map<String, dynamic> _decodeResponse(http.Response response) {
     final decoded = response.body.isEmpty
@@ -1066,7 +1111,9 @@ class ApiService {
   }
 
   List<Map<String, dynamic>> _decodeListResponse(http.Response response) {
-    final decoded = response.body.isEmpty ? <dynamic>[] : jsonDecode(response.body) as List<dynamic>;
+    final decoded = response.body.isEmpty
+        ? <dynamic>[]
+        : jsonDecode(response.body) as List<dynamic>;
 
     if (response.statusCode >= 200 && response.statusCode < 300) {
       return decoded.whereType<Map<String, dynamic>>().toList();

@@ -30,7 +30,10 @@ class ConnectWhatsAppPage extends GestionWhatsAppPage {
 }
 
 class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
-  final TextEditingController _instanceNameController = TextEditingController();
+  final TextEditingController _newInstanceNameController =
+      TextEditingController();
+  final TextEditingController _newInstancePhoneController =
+      TextEditingController();
   final TextEditingController _displayNameController = TextEditingController();
   final TextEditingController _phoneController = TextEditingController();
 
@@ -83,7 +86,8 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
   @override
   void dispose() {
     _refreshTimer?.cancel();
-    _instanceNameController.dispose();
+    _newInstanceNameController.dispose();
+    _newInstancePhoneController.dispose();
     _displayNameController.dispose();
     _phoneController.dispose();
     super.dispose();
@@ -122,9 +126,6 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
 
   void _applyConfig(ClientConfigData config) {
     _config = config;
-    if (_instanceNameController.text.trim().isEmpty) {
-      _instanceNameController.text = config.instanceName;
-    }
   }
 
   Future<void> _loadInstances({
@@ -165,7 +166,6 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
         _instances = instances;
         _selectedInstanceName = nextSelectedName;
         _qrCodeBase64 = nextQrCodeBase64;
-        _instanceNameController.text = nextSelectedName ?? _config.instanceName;
         _displayNameController.text = selected?.displayName ?? '';
         _phoneController.text = selected?.phone ?? '';
         if (!preserveMessage) {
@@ -216,9 +216,18 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
   }
 
   Future<void> _createInstance() async {
-    final instanceName = _instanceNameController.text.trim();
+    final instanceName = _newInstanceNameController.text.trim();
+    final phone = _newInstancePhoneController.text.trim();
     if (instanceName.isEmpty) {
       _showMessage('Ingresa un nombre de instancia.', isError: true);
+      return;
+    }
+
+    if (phone.isEmpty) {
+      _showMessage(
+        'Ingresa el numero de telefono de la instancia.',
+        isError: true,
+      );
       return;
     }
 
@@ -232,7 +241,10 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
       if (preparedConfig == null) {
         return;
       }
-      final created = await widget.apiService.createInstance(instanceName);
+      final created = await widget.apiService.createInstance(
+        instanceName,
+        phone: phone,
+      );
       final webhook = await widget.apiService.setWebhook(
         created.name,
         webhookUrl: preparedConfig.webhookUrl,
@@ -243,7 +255,8 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
         return;
       }
 
-      _instanceNameController.clear();
+      _newInstanceNameController.clear();
+      _newInstancePhoneController.clear();
       _selectedInstanceName = created.name;
       _qrCodeBase64 = qr.qrCodeBase64;
       _webhookMessage = webhook.message;
@@ -275,7 +288,7 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
 
   Future<void> _configureWebhook() async {
     final instanceName =
-        _selectedInstanceName ?? _instanceNameController.text.trim();
+        _selectedInstanceName ?? _newInstanceNameController.text.trim();
     if (instanceName.isEmpty) {
       _showMessage(
         'Selecciona o escribe una instancia para configurar el webhook.',
@@ -331,7 +344,7 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
 
   Future<void> _verifyWebhook() async {
     final instanceName =
-        _selectedInstanceName ?? _instanceNameController.text.trim();
+        _selectedInstanceName ?? _newInstanceNameController.text.trim();
     if (instanceName.isEmpty) {
       _showMessage(
         'Selecciona una instancia para verificar el webhook.',
@@ -568,7 +581,6 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
   Future<void> _showQrFor(String instanceName) async {
     setState(() {
       _selectedInstanceName = instanceName;
-      _instanceNameController.text = instanceName;
       _errorMessage = null;
     });
 
@@ -584,7 +596,6 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
 
       setState(() {
         _selectedInstanceName = status.name;
-        _instanceNameController.text = status.name;
         _displayNameController.text = status.displayName ?? '';
         _phoneController.text = status.phone ?? '';
         _qrCodeBase64 = status.connected ? null : qr?.qrCodeBase64;
@@ -622,9 +633,6 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
         return;
       }
 
-      setState(() {
-        _instanceNameController.text = instanceName;
-      });
       _showMessage('Instancia activa actualizada correctamente.');
     } catch (error) {
       if (!mounted) {
@@ -860,11 +868,22 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
                         constraints: BoxConstraints(
                           maxWidth: compact ? 420 : 380,
                         ),
-                        child: AppTextField(
-                          label: 'Nombre de instancia',
-                          controller: _instanceNameController,
-                          hintText: 'phytoemagry-main',
-                          enabled: !_isCreating && !_isDeleting,
+                        child: Column(
+                          children: <Widget>[
+                            AppTextField(
+                              label: 'Nombre de instancia',
+                              controller: _newInstanceNameController,
+                              hintText: 'phytoemagry-main',
+                              enabled: !_isCreating && !_isDeleting,
+                            ),
+                            const SizedBox(height: 14),
+                            AppTextField(
+                              label: 'Telefono',
+                              controller: _newInstancePhoneController,
+                              hintText: '8090000000',
+                              enabled: !_isCreating && !_isDeleting,
+                            ),
+                          ],
                         ),
                       ),
                       const SizedBox(height: 16),

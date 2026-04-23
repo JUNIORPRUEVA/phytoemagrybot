@@ -361,7 +361,6 @@ test('setWebhook requests rich Evolution payload options and broad events', asyn
         'MESSAGES_DELETE',
         'MESSAGES_EDITED',
         'SEND_MESSAGE',
-        'SEND_MESSAGE_UPDATE',
         'CONTACTS_SET',
         'CONTACTS_UPSERT',
         'CONTACTS_UPDATE',
@@ -372,7 +371,7 @@ test('setWebhook requests rich Evolution payload options and broad events', asyn
         'PRESENCE_UPDATE',
         'CONNECTION_UPDATE',
         'GROUPS_UPSERT',
-        'GROUPS_UPDATE',
+        'GROUP_UPDATE',
         'GROUP_PARTICIPANTS_UPDATE',
         'CALL',
       ],
@@ -881,17 +880,30 @@ test('getInstancePhoneNumber refreshes from evolution when local phone is missin
 test('createInstance syncs Evolution state before validating local connected instances', async () => {
   const service = createService();
   const calls: Array<{ path: string; body: Record<string, unknown> }> = [];
+  const upsertCalls: Array<{ where: { name: string }; update: Record<string, unknown>; create: Record<string, unknown> }> = [];
 
   service.prisma = {
     whatsAppInstance: {
       findUnique: async () => null,
       findFirst: async ({ where }: { where: { status: string } }) =>
         where.status === 'connected' ? null : null,
-      create: async ({ data }: { data: Record<string, unknown> }) => ({
-        id: 1,
-        name: data.name,
-        status: data.status,
-      }),
+      upsert: async ({
+        where,
+        update,
+        create,
+      }: {
+        where: { name: string };
+        update: Record<string, unknown>;
+        create: Record<string, unknown>;
+      }) => {
+        upsertCalls.push({ where, update, create });
+        return {
+          id: 1,
+          name: create.name,
+          status: create.status,
+          phone: create.phone,
+        };
+      },
     },
   };
   let syncCalls = 0;
@@ -917,12 +929,34 @@ test('createInstance syncs Evolution state before validating local connected ins
     updatedAt: new Date().toISOString(),
   });
 
-  const result = await service.createInstance('demo-new');
+  const result = await service.createInstance('demo-new', {
+    phone: '8090000000',
+  });
 
   assert.equal(syncCalls, 1);
   assert.equal(calls.length, 1);
   assert.equal(calls[0]?.path, '/instance/create');
+  assert.deepEqual(upsertCalls, [
+    {
+      where: { name: 'demo-new' },
+      update: { phone: '8090000000' },
+      create: {
+        name: 'demo-new',
+        status: 'connecting',
+        phone: '8090000000',
+      },
+    },
+  ]);
   assert.equal(result.name, 'demo-new');
+});
+
+test('normalizeWebhookEvents converts legacy aliases to Evolution supported enums', () => {
+  const service = createService();
+
+  assert.deepEqual(service.normalizeWebhookEvents(['send.message.update', 'groups.update']), [
+    'SEND_MESSAGE',
+    'GROUP_UPDATE',
+  ]);
 });
 
 test('deleteInstance clears configured instance when removing the active one', async () => {

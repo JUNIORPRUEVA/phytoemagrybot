@@ -45,7 +45,6 @@ export class WhatsAppService implements OnModuleInit {
     'messages.delete',
     'messages.edited',
     'send.message',
-    'send.message.update',
     'contacts.set',
     'contacts.upsert',
     'contacts.update',
@@ -130,8 +129,12 @@ export class WhatsAppService implements OnModuleInit {
     }
   }
 
-  async createInstance(name: string): Promise<ManagedWhatsAppInstance> {
+  async createInstance(
+    name: string,
+    input?: { phone?: string | null },
+  ): Promise<ManagedWhatsAppInstance> {
     const instanceName = this.normalizeInstanceName(name);
+    const normalizedPhone = this.normalizeOptionalInstanceField(input?.phone);
 
     await this.syncInstancesFromEvolution();
 
@@ -162,10 +165,15 @@ export class WhatsAppService implements OnModuleInit {
       this.handleEvolutionError(error, 'No fue posible crear la instancia en Evolution.');
     }
 
-    await this.prisma.whatsAppInstance.create({
-      data: {
+    await this.prisma.whatsAppInstance.upsert({
+      where: { name: instanceName },
+      update: {
+        ...(normalizedPhone ? { phone: normalizedPhone } : {}),
+      },
+      create: {
         name: instanceName,
         status: 'connecting',
+        phone: normalizedPhone,
       },
     });
 
@@ -2129,7 +2137,12 @@ export class WhatsAppService implements OnModuleInit {
   private normalizeWebhookEvents(events?: string[]): string[] {
     const source = events?.length ? events : WhatsAppService.DEFAULT_WEBHOOK_EVENTS;
 
-    return [...new Set(source.map((event) => event.trim()).filter((event) => event.length > 0))].map((event) => {
+    return [
+      ...new Set(
+        source
+          .map((event) => event.trim())
+          .filter((event) => event.length > 0)
+          .map((event) => {
       const normalized = event.trim();
       if (normalized.toLowerCase() === 'messages.upsert') {
         return 'MESSAGES_UPSERT';
@@ -2156,7 +2169,7 @@ export class WhatsAppService implements OnModuleInit {
       }
 
       if (normalized.toLowerCase() === 'send.message.update') {
-        return 'SEND_MESSAGE_UPDATE';
+        return 'SEND_MESSAGE';
       }
 
       if (normalized.toLowerCase() === 'contacts.set') {
@@ -2200,7 +2213,7 @@ export class WhatsAppService implements OnModuleInit {
       }
 
       if (normalized.toLowerCase() === 'groups.update') {
-        return 'GROUPS_UPDATE';
+        return 'GROUP_UPDATE';
       }
 
       if (normalized.toLowerCase() === 'group-participants.update') {
@@ -2212,7 +2225,9 @@ export class WhatsAppService implements OnModuleInit {
       }
 
       return normalized;
-    });
+          }),
+      ),
+    ];
   }
 
   private extractPhone(data: JsonRecord): string | null {

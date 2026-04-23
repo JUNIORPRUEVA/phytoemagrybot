@@ -10,7 +10,9 @@ export class WhatsAppChannelController {
 
   @Post('create')
   createInstance(@Body() body: CreateInstanceDto) {
-    return this.whatsAppService.createInstance(body.instanceName);
+    return this.whatsAppService.createInstance(body.instanceName, {
+      phone: body.phone,
+    });
   }
 
   @Get('list')

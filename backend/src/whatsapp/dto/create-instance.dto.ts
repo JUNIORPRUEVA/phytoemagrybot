@@ -4,4 +4,8 @@ export class CreateInstanceDto {
   @IsString()
   @IsNotEmpty()
   instanceName!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  phone!: string;
 }
