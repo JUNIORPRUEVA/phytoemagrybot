@@ -1201,6 +1201,11 @@ export class WhatsAppService {
             this.asString(data.participantPn) ||
             this.asString(payload.participantPn) ||
             null,
+          participantAlt:
+            this.asString(key.participantAlt) ||
+            this.asString(data.participantAlt) ||
+            this.asString(payload.participantAlt) ||
+            null,
           sender:
             this.asString(key.sender) ||
             this.asString(data.sender) ||
@@ -1250,6 +1255,11 @@ export class WhatsAppService {
           this.asString(key.participantPn) ||
           this.asString(data.participantPn) ||
           this.asString(payload.participantPn) ||
+          null,
+        participantAlt:
+          this.asString(key.participantAlt) ||
+          this.asString(data.participantAlt) ||
+          this.asString(payload.participantAlt) ||
           null,
         sender:
           this.asString(key.sender) ||
@@ -1472,14 +1482,32 @@ export class WhatsAppService {
   private extractPhone(data: JsonRecord): string | null {
     const instance = this.asRecord(data.instance);
     const instanceData = this.asRecord(data.instanceData);
+    const me = this.asRecord(data.me);
+    const instanceMe = this.asRecord(instance.me);
+    const instanceDataMe = this.asRecord(instanceData.me);
 
     return (
       this.asString(data.number) ||
       this.asString(data.phone) ||
+      this.asString(data.wuid) ||
+      this.asString(data.ownerJid) ||
+      this.asString(data.wid) ||
+      this.asString(me.id) ||
+      this.asString(me.lid) ||
       this.asString(instance.number) ||
       this.asString(instance.phone) ||
+      this.asString(instance.wuid) ||
+      this.asString(instance.ownerJid) ||
+      this.asString(instance.wid) ||
+      this.asString(instanceMe.id) ||
+      this.asString(instanceMe.lid) ||
       this.asString(instanceData.number) ||
       this.asString(instanceData.phone) ||
+      this.asString(instanceData.wuid) ||
+      this.asString(instanceData.ownerJid) ||
+      this.asString(instanceData.wid) ||
+      this.asString(instanceDataMe.id) ||
+      this.asString(instanceDataMe.lid) ||
       null
     );
   }
@@ -1527,6 +1555,9 @@ export class WhatsAppService {
       this.asString(key.participantPn),
       this.asString(data.participantPn),
       this.asString(payload.participantPn),
+      this.asString(key.participantAlt),
+      this.asString(data.participantAlt),
+      this.asString(payload.participantAlt),
     ].filter((value): value is string => Boolean(value));
     const secondaryCandidates = [
       this.asString(key.sender),

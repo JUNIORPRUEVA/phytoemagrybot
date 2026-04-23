@@ -420,6 +420,32 @@ test('normalizeWebhookPayload uses senderPn when remoteJid is a group identifier
   assert.equal(result?.message, 'hola grupo real');
 });
 
+test('normalizeWebhookPayload uses participantAlt when senderPn is missing and remoteJid is the instance phone', () => {
+  const service = createService();
+
+  const result = service.normalizeWebhookPayload(
+    {
+      event: 'messages.upsert',
+      data: {
+        key: {
+          remoteJid: '18295344286@s.whatsapp.net',
+          participantAlt: '18295319442@s.whatsapp.net',
+          fromMe: false,
+          id: 'participantalt-123',
+        },
+        message: {
+          conversation: 'hola por participantAlt',
+        },
+        messageType: 'conversation',
+      },
+    },
+    '18295344286',
+  );
+
+  assert.equal(result?.number, '18295319442');
+  assert.equal(result?.message, 'hola por participantAlt');
+});
+
 test('normalizeWebhookPayload ignores the instance phone when resolving sender', () => {
   const service = createService();
 
@@ -486,6 +512,37 @@ test('getInstancePhoneNumber refreshes from evolution when local phone is missin
   const phone = await service.getInstancePhoneNumber('demo');
 
   assert.equal(phone, '18295344286');
+});
+
+test('extractPhone accepts Evolution wuid and ownerJid variants', () => {
+  const service = createService();
+
+  assert.equal(
+    service.extractPhone({
+      wuid: '18295344286@s.whatsapp.net',
+    }),
+    '18295344286@s.whatsapp.net',
+  );
+
+  assert.equal(
+    service.extractPhone({
+      instanceData: {
+        ownerJid: '18295344286@s.whatsapp.net',
+      },
+    }),
+    '18295344286@s.whatsapp.net',
+  );
+
+  assert.equal(
+    service.extractPhone({
+      instance: {
+        me: {
+          id: '18295344286@s.whatsapp.net',
+        },
+      },
+    }),
+    '18295344286@s.whatsapp.net',
+  );
 });
 
 test('processIncomingAudioMessage answers short audios as text', async () => {
