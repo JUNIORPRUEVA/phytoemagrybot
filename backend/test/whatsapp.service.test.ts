@@ -394,6 +394,32 @@ test('normalizeWebhookPayload uses senderPn when remoteJid is a group identifier
   assert.equal(result?.message, 'hola grupo real');
 });
 
+test('normalizeWebhookPayload ignores the instance phone when resolving sender', () => {
+  const service = createService();
+
+  const result = service.normalizeWebhookPayload(
+    {
+      event: 'messages.upsert',
+      data: {
+        key: {
+          remoteJid: '18295344286@s.whatsapp.net',
+          senderPn: '18095551234@s.whatsapp.net',
+          fromMe: false,
+          id: 'instance-phone-123',
+        },
+        message: {
+          conversation: 'hola desde cliente',
+        },
+        messageType: 'conversation',
+      },
+    },
+    '18295344286',
+  );
+
+  assert.equal(result?.number, '18095551234');
+  assert.equal(result?.message, 'hola desde cliente');
+});
+
 test('processIncomingAudioMessage answers short audios as text', async () => {
   const { service, sentTexts, sentAudios } = createAudioFlowService();
 

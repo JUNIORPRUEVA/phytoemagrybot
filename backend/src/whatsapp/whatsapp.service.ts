@@ -454,8 +454,9 @@ export class WhatsAppService {
   private async processMessageWebhook(payload: JsonRecord, headers: HeaderMap): Promise<void> {
     const resolved = await this.resolveConfig();
     this.validateWebhook(headers, resolved.whatsapp);
+    const instancePhone = await this.getInstancePhoneNumber(resolved.whatsapp.instanceName);
 
-    const incoming = this.normalizeWebhookPayload(payload);
+    const incoming = this.normalizeWebhookPayload(payload, instancePhone);
     if (!incoming) {
       this.logger.log(
         JSON.stringify({
@@ -1154,6 +1155,7 @@ export class WhatsAppService {
 
   private normalizeWebhookPayload(
     payload: JsonRecord,
+    instancePhone?: string | null,
   ): NormalizedIncomingWhatsAppMessage | null {
     const event = typeof payload.event === 'string' ? payload.event : undefined;
     if (event && event.toLowerCase() !== 'messages.upsert') {
@@ -1170,7 +1172,9 @@ export class WhatsAppService {
       return null;
     }
 
-    const number = this.normalizeNumber(this.resolveIncomingRecipient(payload, data, key));
+    const number = this.normalizeNumber(
+      this.resolveIncomingRecipient(payload, data, key, instancePhone),
+    );
 
     if (!number) {
       throw new BadRequestException('Incoming payload does not contain a valid phone number');
@@ -1423,6 +1427,7 @@ export class WhatsAppService {
     payload: JsonRecord,
     data: JsonRecord,
     key: JsonRecord,
+    instancePhone?: string | null,
   ): string {
     const remoteJid = this.asString(key.remoteJid) || this.asString(data.remoteJid) || '';
     const remoteJidAlt =
@@ -1430,6 +1435,7 @@ export class WhatsAppService {
       this.asString(data.remoteJidAlt) ||
       this.asString(payload.remoteJidAlt) ||
       '';
+    const normalizedInstancePhone = this.normalizeNumber(instancePhone || '');
     const prioritizedCandidates = [
       remoteJidAlt,
       this.asString(key.senderPn),
@@ -1455,6 +1461,7 @@ export class WhatsAppService {
 
     if (
       remoteJid.includes('@s.whatsapp.net') &&
+      this.normalizeNumber(remoteJid) !== normalizedInstancePhone &&
       !remoteJid.includes('@g.us') &&
       !remoteJid.includes('@broadcast')
     ) {
@@ -1462,12 +1469,34 @@ export class WhatsAppService {
     }
 
     for (const candidate of prioritizedCandidates) {
-      if (!candidate.includes('@g.us') && !candidate.includes('@broadcast')) {
+      if (
+        !candidate.includes('@g.us') &&
+        !candidate.includes('@broadcast') &&
+        this.normalizeNumber(candidate) !== normalizedInstancePhone
+      ) {
         return candidate;
       }
     }
 
     return remoteJid || prioritizedCandidates[0] || '';
+  }
+
+  private async getInstancePhoneNumber(instanceName: string): Promise<string | null> {
+    const normalizedName = instanceName.trim();
+    if (!normalizedName) {
+      return null;
+    }
+
+    if (!this.prisma?.whatsAppInstance?.findUnique) {
+      return null;
+    }
+
+    const instance = await this.prisma.whatsAppInstance.findUnique({
+      where: { name: normalizedName },
+      select: { phone: true },
+    });
+
+    return instance?.phone?.trim() || null;
   }
 
   private normalizeNumber(raw: string): string {
