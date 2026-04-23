@@ -433,7 +433,7 @@ test('sendText uses instance endpoint with jid number payload', async () => {
   });
 });
 
-test('sendText preserves lid jid payload', async () => {
+test('sendText normalizes lid jid payload to s.whatsapp.net', async () => {
   const service = createService();
   const calls: Array<{ path: string; body: Record<string, unknown> }> = [];
 
@@ -450,7 +450,7 @@ test('sendText preserves lid jid payload', async () => {
   assert.equal(calls.length, 1);
   assert.equal(calls[0]?.path, '/message/sendText/demo');
   assert.deepEqual(calls[0]?.body, {
-    number: '69132011749577@lid',
+    number: '69132011749577@s.whatsapp.net',
     text: 'hola lid',
   });
 });

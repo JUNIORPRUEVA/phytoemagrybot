@@ -372,14 +372,15 @@ export class WhatsAppService implements OnModuleInit {
     text: string,
   ): Promise<void> {
     const instanceName = this.getRequiredInstanceName(resolved.whatsapp);
-    const jid = this.getRequiredOutboundAddress(to);
+    const finalJid = this.getRequiredOutboundAddress(to);
 
-    console.log('📤 Enviando a:', jid);
+    console.log('JID FINAL:', finalJid);
+    console.log('📤 Enviando a:', finalJid);
     console.log('📦 Instancia:', instanceName);
 
     await this.createEvolutionClient(resolved.whatsapp)
       .post(`/message/sendText/${instanceName}`, {
-        number: jid,
+        number: finalJid,
         text,
       })
       .then(
@@ -391,7 +392,7 @@ export class WhatsAppService implements OnModuleInit {
               action: 'sendText',
               instanceName,
               path: `/message/sendText/${instanceName}`,
-              jid,
+              jid: finalJid,
               mediatype: null,
               hasApiBaseUrl: Boolean(resolved.whatsapp.apiBaseUrl?.trim()),
               hasApiKey: Boolean(resolved.whatsapp.apiKey?.trim()),
@@ -1544,12 +1545,13 @@ export class WhatsAppService implements OnModuleInit {
     body: JsonRecord,
   ): Promise<void> {
     const instanceName = this.getRequiredInstanceName(resolved.whatsapp);
-    const number = this.getRequiredOutboundAddress(this.asString(body.number) || '');
+    const finalJid = this.getRequiredOutboundAddress(this.asString(body.number) || '');
     const apiBaseUrl = this.getRequiredWhatsAppConfig(resolved.whatsapp.apiBaseUrl, 'EVOLUTION_URL');
     const apiKey = this.getRequiredWhatsAppConfig(resolved.whatsapp.apiKey, 'AUTHENTICATION_API_KEY');
 
-    body.number = number;
-    console.log('📤 Enviando a:', number);
+    body.number = finalJid;
+    console.log('JID FINAL:', finalJid);
+    console.log('📤 Enviando a:', finalJid);
     console.log('📦 Instancia:', instanceName);
 
     return this.createEvolutionClient(resolved.whatsapp).post(path, body).then(
@@ -1561,7 +1563,7 @@ export class WhatsAppService implements OnModuleInit {
             action,
             instanceName,
             path,
-            number,
+            number: finalJid,
             mediatype: this.asString(body.mediatype) || null,
             hasApiBaseUrl: Boolean(apiBaseUrl),
             hasApiKey: Boolean(apiKey),
@@ -1948,12 +1950,38 @@ export class WhatsAppService implements OnModuleInit {
   }
 
   private getRequiredOutboundAddress(address: string): string {
-    const normalized = this.normalizeOutboundAddress(address);
+    const normalized = this.normalizeJid(address);
     if (!normalized) {
       throw new HttpException('Valid number is required', HttpStatus.BAD_REQUEST);
     }
 
     return normalized;
+  }
+
+  private normalizeJid(jid: string): string | null {
+    if (!jid) {
+      return null;
+    }
+
+    const normalizedRaw = jid.trim().toLowerCase();
+    if (!normalizedRaw) {
+      return null;
+    }
+
+    if (normalizedRaw.includes('@g.us')) {
+      return normalizedRaw;
+    }
+
+    if (normalizedRaw.includes('@broadcast')) {
+      return normalizedRaw;
+    }
+
+    const digits = this.normalizeNumber(normalizedRaw);
+    if (!digits) {
+      return null;
+    }
+
+    return `${digits}@s.whatsapp.net`;
   }
 
   private normalizeOutboundAddress(raw: string): string {
@@ -1962,28 +1990,7 @@ export class WhatsAppService implements OnModuleInit {
       return '';
     }
 
-    if (normalizedRaw === 'status@broadcast') {
-      return normalizedRaw;
-    }
-
-    const digits = this.normalizeNumber(normalizedRaw);
-    if (!digits) {
-      return '';
-    }
-
-    if (normalizedRaw.includes('@g.us')) {
-      return `${digits}@g.us`;
-    }
-
-    if (normalizedRaw.includes('@broadcast')) {
-      return `${digits}@broadcast`;
-    }
-
-    if (normalizedRaw.includes('@lid')) {
-      return `${digits}@lid`;
-    }
-
-    return `${digits}@s.whatsapp.net`;
+    return this.normalizeJid(normalizedRaw) || '';
   }
 
   private getRequiredWhatsAppConfig(
