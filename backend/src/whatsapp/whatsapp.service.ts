@@ -506,6 +506,8 @@ export class WhatsAppService implements OnModuleInit {
   }
 
   private async processMessageWebhook(payload: JsonRecord, headers: HeaderMap): Promise<void> {
+    console.log('🔥 RAW:', JSON.stringify(payload, null, 2));
+
     const data = this.getWebhookMessageData(payload);
     const key = this.asRecord(data.key);
 
@@ -943,14 +945,7 @@ export class WhatsAppService implements OnModuleInit {
   private getWebhookMessageData(payload: JsonRecord): JsonRecord {
     const data = this.asRecord(payload.data);
 
-    if (
-      Object.keys(this.asRecord(data.message)).length > 0 ||
-      Object.keys(this.asRecord(data.key)).length > 0
-    ) {
-      return data;
-    }
-
-    return payload;
+    return Object.keys(data).length > 0 ? data : payload;
   }
 
   private buildAudioFileName(messageId: string | null, mimetype?: string): string {
@@ -1241,8 +1236,13 @@ export class WhatsAppService implements OnModuleInit {
     const data = this.getWebhookMessageData(payload);
     const key = this.asRecord(data.key);
     const message = this.asRecord(data.message);
-    const fromMe = Boolean(key.fromMe ?? data.fromMe);
+    const remoteJid = this.asString(key.remoteJid) || this.asString(data.remoteJid) || '';
+    const fromMe = key.fromMe === true || data.fromMe === true;
     const pushName = this.asString(data.pushName);
+    const textMessage =
+      this.asString(message.conversation) ||
+      this.asString(this.asRecord(message.extendedTextMessage).text) ||
+      '';
 
     if (!Object.keys(message).length || fromMe) {
       return null;
@@ -1254,7 +1254,7 @@ export class WhatsAppService implements OnModuleInit {
         JSON.stringify({
           event: 'whatsapp_recipient_resolution_failed',
           instancePhone: instancePhone ?? null,
-          remoteJid: this.asString(key.remoteJid) || this.asString(data.remoteJid) || null,
+          remoteJid: remoteJid || null,
           remoteJidAlt:
             this.asString(key.remoteJidAlt) ||
             this.asString(data.remoteJidAlt) ||
@@ -1309,7 +1309,7 @@ export class WhatsAppService implements OnModuleInit {
         contactId: number,
         resolvedRecipient,
         instancePhone: instancePhone ?? null,
-        remoteJid: this.asString(key.remoteJid) || this.asString(data.remoteJid) || null,
+        remoteJid: remoteJid || null,
         remoteJidAlt:
           this.asString(key.remoteJidAlt) ||
           this.asString(data.remoteJidAlt) ||
@@ -1344,7 +1344,7 @@ export class WhatsAppService implements OnModuleInit {
     );
 
     const type = this.detectMessageType(message, this.asString(data.messageType));
-    const text = this.extractMessageText(message);
+    const text = textMessage || this.extractMessageText(message);
 
     if (type === 'text' && !text.trim()) {
       throw new BadRequestException('Incoming text message content is empty');
