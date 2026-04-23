@@ -843,6 +843,21 @@ test('enrichWebhookPayloadFromEvolution falls back to contact lookup when messag
       }
 
       if (path === '/chat/findContacts/demo') {
+        const where = body.where as Record<string, unknown> | undefined;
+
+        if (where?.pushName) {
+          return {
+            data: {
+              contacts: {
+                total: 0,
+                pages: 0,
+                currentPage: 1,
+                records: [],
+              },
+            },
+          };
+        }
+
         return {
           data: {
             contacts: {
@@ -886,12 +901,133 @@ test('enrichWebhookPayloadFromEvolution falls back to contact lookup when messag
   const enrichedData = service.getWebhookMessageData(result);
   const enrichedKey = enrichedData.key;
 
-  assert.equal(calls.length, 2);
+  assert.equal(calls.length, 3);
   assert.equal(calls[0]?.path, '/chat/findMessages/demo');
   assert.equal(calls[1]?.path, '/chat/findContacts/demo');
   assert.equal(enrichedKey.remoteJidAlt, '18095551234@s.whatsapp.net');
   assert.equal(enrichedKey.participantAlt, '18095551234@s.whatsapp.net');
   assert.equal(enrichedKey.senderPn, '18095551234@s.whatsapp.net');
+});
+
+test('enrichWebhookPayloadFromEvolution resolves group participant lid through contact lookup', async () => {
+  const service = createService();
+  const calls: Array<{ path: string; body: Record<string, unknown> }> = [];
+
+  service.configService = {
+    get: () => undefined,
+  };
+
+  service.getEvolutionClient = () => ({
+    post: async (path: string, body: Record<string, unknown>) => {
+      calls.push({ path, body });
+
+      if (path === '/chat/findMessages/demo') {
+        return {
+          data: {
+            messages: {
+              total: 1,
+              pages: 1,
+              currentPage: 1,
+              records: [
+                {
+                  key: {
+                    remoteJid: '120363382457717265@g.us',
+                    participant: '180685096620065@lid',
+                    fromMe: false,
+                    id: 'group-participant-lid-1',
+                  },
+                  pushName: 'Mayra Torres',
+                  message: {
+                    conversation: 'Hola grupo',
+                  },
+                  messageType: 'conversation',
+                },
+              ],
+            },
+          },
+        };
+      }
+
+      if (path === '/chat/findContacts/demo') {
+        const where = body.where as Record<string, unknown> | undefined;
+
+        if (where?.pushName) {
+          return {
+            data: {
+              contacts: {
+                total: 0,
+                pages: 0,
+                currentPage: 1,
+                records: [],
+              },
+            },
+          };
+        }
+
+        return {
+          data: {
+            contacts: {
+              total: 1,
+              pages: 1,
+              currentPage: 1,
+              records: [
+                {
+                  remoteJid: '18095551234@s.whatsapp.net',
+                  pushName: 'Mayra Torres',
+                },
+              ],
+            },
+          },
+        };
+      }
+
+      throw new Error(`Unexpected path ${path}`);
+    },
+  });
+
+  const result = await service.enrichWebhookPayloadFromEvolution(
+    {
+      event: 'messages.upsert',
+      data: {
+        key: {
+          remoteJid: '120363382457717265@g.us',
+          participant: '180685096620065@lid',
+          fromMe: false,
+          id: 'group-participant-lid-1',
+        },
+        pushName: 'Mayra Torres',
+        message: {
+          conversation: 'Hola grupo',
+        },
+        messageType: 'conversation',
+      },
+      sender: '18295344286@s.whatsapp.net',
+    },
+    'demo',
+  );
+
+  const enrichedData = service.getWebhookMessageData(result);
+  const enrichedKey = enrichedData.key;
+  const normalized = service.normalizeWebhookPayload(result, '18295344286@s.whatsapp.net');
+
+  assert.equal(calls.length, 3);
+  assert.equal(calls[0]?.path, '/chat/findMessages/demo');
+  assert.deepEqual(calls[1]?.body, {
+    where: { pushName: 'Mayra Torres' },
+    page: 1,
+    offset: 10,
+  });
+  assert.deepEqual(calls[2]?.body, {
+    where: { remoteJid: '180685096620065@lid' },
+    page: 1,
+    offset: 10,
+  });
+  assert.equal(enrichedKey.remoteJidAlt, '18095551234@s.whatsapp.net');
+  assert.equal(enrichedKey.participantAlt, '18095551234@s.whatsapp.net');
+  assert.equal(enrichedKey.participantPn, '18095551234@s.whatsapp.net');
+  assert.equal(enrichedKey.senderPn, '18095551234@s.whatsapp.net');
+  assert.equal(normalized?.number, '18095551234');
+  assert.equal(normalized?.outboundAddress, '18095551234@s.whatsapp.net');
 });
 
 test('enrichWebhookPayloadFromEvolution prefers the only real jid when contact lookup returns duplicate exact-name matches', async () => {

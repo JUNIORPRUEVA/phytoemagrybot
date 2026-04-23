@@ -1690,6 +1690,11 @@ export class WhatsAppService implements OnModuleInit {
     const key = this.asRecord(data.key);
     const messageId = this.asString(key.id) ?? this.asString(data.messageId) ?? '';
     const remoteJid = this.asString(key.remoteJid) || this.asString(data.remoteJid) || '';
+    const participant =
+      this.asString(key.participant) ||
+      this.asString(data.participant) ||
+      this.asString(payload.participant) ||
+      '';
     const alreadyEnriched = [
       this.asString(key.remoteJidAlt),
       this.asString(data.remoteJidAlt),
@@ -1705,7 +1710,9 @@ export class WhatsAppService implements OnModuleInit {
       this.asString(payload.participantPn),
     ].some((value) => Boolean(value?.trim()));
 
-    if (!instanceName.trim() || !messageId.trim() || !remoteJid.includes('@lid') || alreadyEnriched) {
+    const requiresLidEnrichment = remoteJid.includes('@lid') || participant.includes('@lid');
+
+    if (!instanceName.trim() || !messageId.trim() || !requiresLidEnrichment || alreadyEnriched) {
       return payload;
     }
 
@@ -1938,14 +1945,20 @@ export class WhatsAppService implements OnModuleInit {
     const key = this.asRecord(data.key);
     const pushName = this.asString(data.pushName) || this.asString(payload.pushName) || '';
     const remoteJid = this.asString(key.remoteJid) || this.asString(data.remoteJid) || '';
+    const participant =
+      this.asString(key.participant) ||
+      this.asString(data.participant) ||
+      this.asString(payload.participant) ||
+      '';
+    const lookupJid = participant || remoteJid;
     const queries: Array<Record<string, unknown>> = [];
 
     if (pushName) {
       queries.push({ where: { pushName }, page: 1, offset: 10 });
     }
 
-    if (remoteJid) {
-      queries.push({ where: { remoteJid }, page: 1, offset: 10 });
+    if (lookupJid) {
+      queries.push({ where: { remoteJid: lookupJid }, page: 1, offset: 10 });
     }
 
     if (pushName) {
@@ -1958,6 +1971,8 @@ export class WhatsAppService implements OnModuleInit {
         instanceName,
         pushName: pushName || null,
         remoteJid: remoteJid || null,
+        participant: participant || null,
+        lookupJid: lookupJid || null,
         queryCount: queries.length,
       }),
     );
@@ -1969,7 +1984,7 @@ export class WhatsAppService implements OnModuleInit {
           query,
         );
         const records = this.extractEvolutionRecords(response.data, ['contacts']);
-        const match = this.pickBestEvolutionContact(records, remoteJid, pushName);
+        const match = this.pickBestEvolutionContact(records, lookupJid, pushName);
         if (match) {
           return match;
         }
@@ -1980,6 +1995,8 @@ export class WhatsAppService implements OnModuleInit {
             instanceName,
             pushName: pushName || null,
             remoteJid: remoteJid || null,
+            participant: participant || null,
+            lookupJid: lookupJid || null,
             error: error instanceof Error ? error.message : 'Unknown error',
           }),
         );
@@ -1992,6 +2009,8 @@ export class WhatsAppService implements OnModuleInit {
         instanceName,
         pushName: pushName || null,
         remoteJid: remoteJid || null,
+        participant: participant || null,
+        lookupJid: lookupJid || null,
       }),
     );
 
@@ -2136,7 +2155,7 @@ export class WhatsAppService implements OnModuleInit {
 
   private pickBestEvolutionContact(
     records: unknown[],
-    remoteJid: string,
+    lookupJid: string,
     pushName: string,
   ): JsonRecord | null {
     const candidates = records
@@ -2205,7 +2224,7 @@ export class WhatsAppService implements OnModuleInit {
       }) ||
       preferredCandidates.find((record) => {
         const contactJid = this.extractEvolutionContactJid(record);
-        return Boolean(contactJid && contactJid === remoteJid);
+        return Boolean(contactJid && contactJid === lookupJid);
       }) ||
       preferredCandidates[0] ||
       null
