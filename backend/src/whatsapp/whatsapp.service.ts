@@ -521,6 +521,22 @@ export class WhatsAppService implements OnModuleInit {
   private async processMessageWebhook(payload: JsonRecord, headers: HeaderMap): Promise<void> {
     console.log('🔥 RAW:', JSON.stringify(payload, null, 2));
 
+    const rawData = this.getWebhookMessageData(payload);
+    const rawKey = this.asRecord(rawData.key);
+    if (rawKey.fromMe === true || rawData.fromMe === true) {
+      this.logger.log(
+        JSON.stringify({
+          event: 'whatsapp_webhook_ignored',
+          reason: 'from_me',
+          messageId:
+            this.asString(rawKey.id) ?? this.asString(rawData.messageId) ?? null,
+          remoteJid:
+            this.asString(rawKey.remoteJid) ?? this.asString(rawData.remoteJid) ?? null,
+        }),
+      );
+      return;
+    }
+
     const resolved = await this.resolveConfig();
     this.validateWebhook(headers, resolved.whatsapp);
     const instancePhone = await this.getInstancePhoneNumber(resolved.whatsapp.instanceName);

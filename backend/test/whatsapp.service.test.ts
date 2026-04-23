@@ -1169,6 +1169,43 @@ test('processMessageWebhook ignores duplicate inbound message ids', async () => 
   assert.equal(audioProcessCalls, 1);
 });
 
+test('processMessageWebhook ignores outbound fromMe payloads before enrichment', async () => {
+  const service = createService();
+  let enrichCalls = 0;
+  let normalizeCalls = 0;
+
+  service.resolveConfig = async () => createResolvedConfig();
+  service.validateWebhook = () => undefined;
+  service.enrichWebhookPayloadFromEvolution = async () => {
+    enrichCalls += 1;
+    return {};
+  };
+  service.normalizeWebhookPayload = () => {
+    normalizeCalls += 1;
+    return null;
+  };
+
+  await service.processMessageWebhook(
+    {
+      event: 'messages.upsert',
+      data: {
+        key: {
+          remoteJid: '18295319442@s.whatsapp.net',
+          fromMe: true,
+          id: 'fromme-123',
+        },
+        message: {
+          conversation: 'hola saliente',
+        },
+      },
+    },
+    {},
+  );
+
+  assert.equal(enrichCalls, 0);
+  assert.equal(normalizeCalls, 0);
+});
+
 test('processIncomingAudioMessage only remembers voice preference after success', async () => {
   const { service, voiceService, getRememberedVoicePreferences } = createAudioFlowService();
 
