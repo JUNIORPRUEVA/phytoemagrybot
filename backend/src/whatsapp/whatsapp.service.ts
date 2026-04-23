@@ -509,16 +509,17 @@ export class WhatsAppService implements OnModuleInit {
   private async processMessageWebhook(payload: JsonRecord, headers: HeaderMap): Promise<void> {
     console.log('🔥 RAW:', JSON.stringify(payload, null, 2));
 
+    const resolved = await this.resolveConfig();
+    this.validateWebhook(headers, resolved.whatsapp);
+    const instancePhone = await this.getInstancePhoneNumber(resolved.whatsapp.instanceName);
+    payload = await this.enrichWebhookPayloadFromEvolution(payload, resolved.whatsapp.instanceName);
+
     const data = this.getWebhookMessageData(payload);
     const key = this.asRecord(data.key);
 
     if (key.fromMe === true || data.fromMe === true) {
       return;
     }
-
-    const resolved = await this.resolveConfig();
-    this.validateWebhook(headers, resolved.whatsapp);
-    const instancePhone = await this.getInstancePhoneNumber(resolved.whatsapp.instanceName);
 
     let incoming = this.normalizeWebhookPayload(payload, instancePhone);
     if (!incoming) {
@@ -1405,11 +1406,126 @@ export class WhatsAppService implements OnModuleInit {
     };
   }
 
-  private async resolveIncomingRecipientFromEvolutionMessage(
+  private async enrichWebhookPayloadFromEvolution(
+    payload: JsonRecord,
+    instanceName: string,
+  ): Promise<JsonRecord> {
+    const data = this.getWebhookMessageData(payload);
+    const key = this.asRecord(data.key);
+    const messageId = this.asString(key.id) ?? this.asString(data.messageId) ?? '';
+    const remoteJid = this.asString(key.remoteJid) || this.asString(data.remoteJid) || '';
+    const alreadyEnriched = [
+      this.asString(key.remoteJidAlt),
+      this.asString(data.remoteJidAlt),
+      this.asString(payload.remoteJidAlt),
+      this.asString(key.senderPn),
+      this.asString(data.senderPn),
+      this.asString(payload.senderPn),
+      this.asString(key.participantAlt),
+      this.asString(data.participantAlt),
+      this.asString(payload.participantAlt),
+      this.asString(key.participantPn),
+      this.asString(data.participantPn),
+      this.asString(payload.participantPn),
+    ].some((value) => Boolean(value?.trim()));
+
+    if (!instanceName.trim() || !messageId.trim() || !remoteJid.includes('@lid') || alreadyEnriched) {
+      return payload;
+    }
+
+    const evolutionPayload = await this.findEvolutionMessagePayload(instanceName, messageId);
+    if (!evolutionPayload) {
+      return payload;
+    }
+
+    const evolutionData = this.getWebhookMessageData(evolutionPayload);
+    const evolutionKey = this.asRecord(evolutionData.key);
+    const mergedKey = {
+      ...evolutionKey,
+      ...key,
+      remoteJidAlt:
+        this.asString(key.remoteJidAlt) ||
+        this.asString(evolutionKey.remoteJidAlt) ||
+        this.asString(evolutionData.remoteJidAlt) ||
+        this.asString(evolutionPayload.remoteJidAlt),
+      senderPn:
+        this.asString(key.senderPn) ||
+        this.asString(evolutionKey.senderPn) ||
+        this.asString(evolutionData.senderPn) ||
+        this.asString(evolutionPayload.senderPn),
+      participantPn:
+        this.asString(key.participantPn) ||
+        this.asString(evolutionKey.participantPn) ||
+        this.asString(evolutionData.participantPn) ||
+        this.asString(evolutionPayload.participantPn),
+      participantAlt:
+        this.asString(key.participantAlt) ||
+        this.asString(evolutionKey.participantAlt) ||
+        this.asString(evolutionData.participantAlt) ||
+        this.asString(evolutionPayload.participantAlt),
+    } satisfies JsonRecord;
+
+    const mergedData = {
+      ...evolutionData,
+      ...data,
+      key: mergedKey,
+      remoteJidAlt:
+        this.asString(data.remoteJidAlt) ||
+        this.asString(evolutionData.remoteJidAlt) ||
+        this.asString(evolutionPayload.remoteJidAlt),
+      senderPn:
+        this.asString(data.senderPn) ||
+        this.asString(evolutionData.senderPn) ||
+        this.asString(evolutionPayload.senderPn),
+      participantPn:
+        this.asString(data.participantPn) ||
+        this.asString(evolutionData.participantPn) ||
+        this.asString(evolutionPayload.participantPn),
+      participantAlt:
+        this.asString(data.participantAlt) ||
+        this.asString(evolutionData.participantAlt) ||
+        this.asString(evolutionPayload.participantAlt),
+    } satisfies JsonRecord;
+
+    this.logger.log(
+      JSON.stringify({
+        event: 'whatsapp_webhook_payload_enriched',
+        messageId,
+        remoteJid,
+        remoteJidAlt: this.asString(mergedKey.remoteJidAlt) || null,
+        senderPn: this.asString(mergedKey.senderPn) || null,
+        participantPn: this.asString(mergedKey.participantPn) || null,
+        participantAlt: this.asString(mergedKey.participantAlt) || null,
+      }),
+    );
+
+    return {
+      ...evolutionPayload,
+      ...payload,
+      data: mergedData,
+      remoteJidAlt:
+        this.asString(payload.remoteJidAlt) ||
+        this.asString(evolutionPayload.remoteJidAlt) ||
+        this.asString(mergedData.remoteJidAlt),
+      senderPn:
+        this.asString(payload.senderPn) ||
+        this.asString(evolutionPayload.senderPn) ||
+        this.asString(mergedData.senderPn),
+      participantPn:
+        this.asString(payload.participantPn) ||
+        this.asString(evolutionPayload.participantPn) ||
+        this.asString(mergedData.participantPn),
+      participantAlt:
+        this.asString(payload.participantAlt) ||
+        this.asString(evolutionPayload.participantAlt) ||
+        this.asString(mergedData.participantAlt),
+    };
+  }
+
+  private async findEvolutionMessagePayload(
     instanceName: string,
     messageId: string,
-    instancePhone?: string | null,
-  ): Promise<string | null> {
+  ): Promise<JsonRecord | null> {
     if (!instanceName.trim() || !messageId.trim() || typeof this.configService?.get !== 'function') {
       return null;
     }
@@ -1425,26 +1541,37 @@ export class WhatsAppService implements OnModuleInit {
         offset: 1,
       });
 
-      const messages = this.extractEvolutionRecords(response.data, ['messages']);
-      for (const item of messages) {
-        const payload = this.asRecord(item);
-        const data = this.getWebhookMessageData(payload);
-        const key = this.asRecord(data.key);
-        const resolvedRecipient = this.resolveIncomingRecipient(payload, data, key, instancePhone).trim();
-
-        if (resolvedRecipient) {
-          return resolvedRecipient;
-        }
-      }
+      const [message] = this.extractEvolutionRecords(response.data, ['messages']);
+      return message ? this.asRecord(message) : null;
     } catch (error) {
       this.logger.warn(
         JSON.stringify({
-          event: 'whatsapp_recipient_enrichment_failed',
+          event: 'whatsapp_webhook_payload_enrichment_failed',
           instanceName,
           messageId,
           error: error instanceof Error ? error.message : 'Unknown error',
         }),
       );
+      return null;
+    }
+  }
+
+  private async resolveIncomingRecipientFromEvolutionMessage(
+    instanceName: string,
+    messageId: string,
+    instancePhone?: string | null,
+  ): Promise<string | null> {
+    const payload = await this.findEvolutionMessagePayload(instanceName, messageId);
+    if (!payload) {
+      return null;
+    }
+
+    const data = this.getWebhookMessageData(payload);
+    const key = this.asRecord(data.key);
+    const resolvedRecipient = this.resolveIncomingRecipient(payload, data, key, instancePhone).trim();
+
+    if (resolvedRecipient) {
+      return resolvedRecipient;
     }
 
     return null;

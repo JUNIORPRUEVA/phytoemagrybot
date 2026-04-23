@@ -666,6 +666,70 @@ test('enrichIncomingRecipientFromEvolution upgrades lid recipients with remoteJi
   assert.equal(result.outboundAddress, '18095551234@s.whatsapp.net');
 });
 
+test('enrichWebhookPayloadFromEvolution merges missing lid fields into the inbound webhook payload', async () => {
+  const service = createService();
+  const calls: Array<{ path: string; body: Record<string, unknown> }> = [];
+
+  service.configService = {
+    get: () => undefined,
+  };
+
+  service.getEvolutionClient = () => ({
+    post: async (path: string, body: Record<string, unknown>) => {
+      calls.push({ path, body });
+
+      return {
+        data: {
+          messages: [
+            {
+              key: {
+                remoteJid: '69132011749577@lid',
+                remoteJidAlt: '18095551234@s.whatsapp.net',
+                participantAlt: '18095551234@s.whatsapp.net',
+                senderPn: '18095551234@s.whatsapp.net',
+                fromMe: false,
+                id: 'msg-lid-enrich-1',
+              },
+              message: {
+                conversation: 'Klk',
+              },
+              messageType: 'conversation',
+            },
+          ],
+        },
+      };
+    },
+  });
+
+  const result = await service.enrichWebhookPayloadFromEvolution(
+    {
+      event: 'messages.upsert',
+      data: {
+        key: {
+          remoteJid: '69132011749577@lid',
+          fromMe: false,
+          id: 'msg-lid-enrich-1',
+        },
+        message: {
+          conversation: 'Klk',
+        },
+        messageType: 'conversation',
+      },
+      sender: '18295344286@s.whatsapp.net',
+    },
+    'demo',
+  );
+
+  const enrichedData = service.getWebhookMessageData(result);
+  const enrichedKey = enrichedData.key;
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0]?.path, '/chat/findMessages/demo');
+  assert.equal(enrichedKey.remoteJidAlt, '18095551234@s.whatsapp.net');
+  assert.equal(enrichedKey.participantAlt, '18095551234@s.whatsapp.net');
+  assert.equal(enrichedKey.senderPn, '18095551234@s.whatsapp.net');
+});
+
 test('getInstancePhoneNumber refreshes from evolution when local phone is missing', async () => {
   const service = createService();
 
