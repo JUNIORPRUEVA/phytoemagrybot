@@ -36,7 +36,8 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
 
   Timer? _refreshTimer;
   ClientConfigData _config = ClientConfigData.empty();
-  List<ManagedWhatsAppInstanceData> _instances = const <ManagedWhatsAppInstanceData>[];
+  List<ManagedWhatsAppInstanceData> _instances =
+      const <ManagedWhatsAppInstanceData>[];
   String? _selectedInstanceName;
   String? _qrCodeBase64;
   bool _isLoading = true;
@@ -141,18 +142,7 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
 
     try {
       final instances = await widget.apiService.getInstances();
-      ManagedWhatsAppInstanceData? selected;
-
-      if (_selectedInstanceName != null) {
-        for (final item in instances) {
-          if (item.name == _selectedInstanceName) {
-            selected = item;
-            break;
-          }
-        }
-      }
-
-      selected ??= instances.isNotEmpty ? instances.first : null;
+      final selected = _resolvePreferredInstance(instances);
       final nextSelectedName = selected?.name;
       String? nextQrCodeBase64 = _qrCodeBase64;
 
@@ -160,11 +150,9 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
         nextQrCodeBase64 = null;
       } else if (selected.connected) {
         nextQrCodeBase64 = null;
-      } else if (
-        nextSelectedName != _selectedInstanceName ||
-        nextQrCodeBase64 == null ||
-        nextQrCodeBase64.isEmpty
-      ) {
+      } else if (nextSelectedName != _selectedInstanceName ||
+          nextQrCodeBase64 == null ||
+          nextQrCodeBase64.isEmpty) {
         final qr = await widget.apiService.getQr(selected.name);
         nextQrCodeBase64 = qr.qrCodeBase64;
       }
@@ -177,14 +165,13 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
         _instances = instances;
         _selectedInstanceName = nextSelectedName;
         _qrCodeBase64 = nextQrCodeBase64;
+        _instanceNameController.text = nextSelectedName ?? _config.instanceName;
+        _displayNameController.text = selected?.displayName ?? '';
+        _phoneController.text = selected?.phone ?? '';
         if (!preserveMessage) {
           _errorMessage = null;
         }
       });
-
-      if (nextSelectedName != null) {
-        unawaited(_persistInstanceNameIfNeeded(nextSelectedName));
-      }
     } catch (error) {
       if (!mounted) {
         return;
@@ -202,6 +189,30 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
         _isLoading = false;
       });
     }
+  }
+
+  ManagedWhatsAppInstanceData? _resolvePreferredInstance(
+    List<ManagedWhatsAppInstanceData> instances,
+  ) {
+    ManagedWhatsAppInstanceData? findByName(String? name) {
+      final normalized = name?.trim() ?? '';
+      if (normalized.isEmpty) {
+        return null;
+      }
+
+      for (final item in instances) {
+        if (item.name == normalized) {
+          return item;
+        }
+      }
+
+      return null;
+    }
+
+    return findByName(_selectedInstanceName) ??
+        findByName(_config.instanceName) ??
+        instances.where((item) => item.connected).firstOrNull ??
+        (instances.isNotEmpty ? instances.first : null);
   }
 
   Future<void> _createInstance() async {
@@ -263,9 +274,13 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
   }
 
   Future<void> _configureWebhook() async {
-    final instanceName = _selectedInstanceName ?? _instanceNameController.text.trim();
+    final instanceName =
+        _selectedInstanceName ?? _instanceNameController.text.trim();
     if (instanceName.isEmpty) {
-      _showMessage('Selecciona o escribe una instancia para configurar el webhook.', isError: true);
+      _showMessage(
+        'Selecciona o escribe una instancia para configurar el webhook.',
+        isError: true,
+      );
       return;
     }
 
@@ -315,9 +330,13 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
   }
 
   Future<void> _verifyWebhook() async {
-    final instanceName = _selectedInstanceName ?? _instanceNameController.text.trim();
+    final instanceName =
+        _selectedInstanceName ?? _instanceNameController.text.trim();
     if (instanceName.isEmpty) {
-      _showMessage('Selecciona una instancia para verificar el webhook.', isError: true);
+      _showMessage(
+        'Selecciona una instancia para verificar el webhook.',
+        isError: true,
+      );
       return;
     }
 
@@ -377,16 +396,25 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
   }
 
   Future<ClientConfigData?> _ensureChannelConfig(String instanceName) async {
-    final needsPrompt = !_hasEvolutionConfig || _config.webhookUrl.trim().isEmpty;
+    final needsPrompt =
+        !_hasEvolutionConfig || _config.webhookUrl.trim().isEmpty;
 
     if (!needsPrompt) {
       return _persistInstanceNameIfNeeded(instanceName);
     }
 
-    final evolutionUrlController = TextEditingController(text: _config.evolutionApiUrl);
-    final evolutionApiKeyController = TextEditingController(text: _config.evolutionApiKey);
-    final webhookSecretController = TextEditingController(text: _config.webhookSecret);
-    final webhookUrlController = TextEditingController(text: _config.webhookUrl);
+    final evolutionUrlController = TextEditingController(
+      text: _config.evolutionApiUrl,
+    );
+    final evolutionApiKeyController = TextEditingController(
+      text: _config.evolutionApiKey,
+    );
+    final webhookSecretController = TextEditingController(
+      text: _config.webhookSecret,
+    );
+    final webhookUrlController = TextEditingController(
+      text: _config.webhookUrl,
+    );
 
     final values = await showDialog<_ChannelConfigValues>(
       context: context,
@@ -466,8 +494,12 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
       return null;
     }
 
-    if (values.evolutionApiUrl.isEmpty || values.evolutionApiKey.isEmpty || values.webhookUrl.isEmpty) {
-      throw ApiException('La URL de Evolution, el API key y la URL del webhook son obligatorios.');
+    if (values.evolutionApiUrl.isEmpty ||
+        values.evolutionApiKey.isEmpty ||
+        values.webhookUrl.isEmpty) {
+      throw ApiException(
+        'La URL de Evolution, el API key y la URL del webhook son obligatorios.',
+      );
     }
 
     final updatedConfig = await widget.apiService.saveChannelSettings(
@@ -490,17 +522,21 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
     return updatedConfig;
   }
 
-  Future<ClientConfigData> _persistInstanceNameIfNeeded(String instanceName) async {
+  Future<ClientConfigData> _persistInstanceNameIfNeeded(
+    String instanceName,
+  ) async {
     final normalizedInstanceName = instanceName.trim();
     if (normalizedInstanceName.isEmpty) {
       return _config;
     }
 
-    if (_isPersistingInstanceName || _config.instanceName.trim() == normalizedInstanceName) {
+    if (_isPersistingInstanceName ||
+        _config.instanceName.trim() == normalizedInstanceName) {
       return _config;
     }
 
-    if (_config.evolutionApiUrl.trim().isEmpty || _config.evolutionApiKey.trim().isEmpty) {
+    if (_config.evolutionApiUrl.trim().isEmpty ||
+        _config.evolutionApiKey.trim().isEmpty) {
       return _config;
     }
 
@@ -538,7 +574,9 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
 
     try {
       final status = await widget.apiService.getStatus(instanceName);
-      final qr = status.connected ? null : await widget.apiService.getQr(instanceName);
+      final qr = status.connected
+          ? null
+          : await widget.apiService.getQr(instanceName);
 
       if (!mounted) {
         return;
@@ -567,7 +605,10 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
   Future<void> _useSelectedInstance() async {
     final instanceName = _selectedInstanceName?.trim() ?? '';
     if (instanceName.isEmpty) {
-      _showMessage('Selecciona una instancia para usarla en el bot.', isError: true);
+      _showMessage(
+        'Selecciona una instancia para usarla en el bot.',
+        isError: true,
+      );
       return;
     }
 
@@ -668,7 +709,9 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
       await _loadInstances(showLoader: false, preserveMessage: true);
       widget.onConfigUpdated();
       _showMessage(
-        response.message.isEmpty ? 'Instancia eliminada correctamente.' : response.message,
+        response.message.isEmpty
+            ? 'Instancia eliminada correctamente.'
+            : response.message,
       );
     } catch (error) {
       if (!mounted) {
@@ -690,12 +733,15 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
   }
 
   Future<void> _confirmDelete(String instanceName) async {
-    final confirmed = await showDialog<bool>(
+    final confirmed =
+        await showDialog<bool>(
           context: context,
           builder: (BuildContext context) {
             return AlertDialog(
               title: const Text('Eliminar instancia'),
-              content: Text('Se eliminará la instancia $instanceName de Evolution y de la base de datos.'),
+              content: Text(
+                'Se eliminará la instancia $instanceName de Evolution y de la base de datos.',
+              ),
               actions: <Widget>[
                 TextButton(
                   onPressed: () => Navigator.of(context).pop(false),
@@ -703,7 +749,9 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
                 ),
                 FilledButton(
                   onPressed: () => Navigator.of(context).pop(true),
-                  style: FilledButton.styleFrom(backgroundColor: const Color(0xFFB91C1C)),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: const Color(0xFFB91C1C),
+                  ),
                   child: const Text('Eliminar'),
                 ),
               ],
@@ -723,7 +771,9 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
     }
 
     try {
-      final normalized = value.contains(',') ? value.split(',').last.trim() : value.trim();
+      final normalized = value.contains(',')
+          ? value.split(',').last.trim()
+          : value.trim();
       return base64Decode(normalized);
     } catch (_) {
       return null;
@@ -736,7 +786,9 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
     messenger.showSnackBar(
       SnackBar(
         content: Text(message),
-        backgroundColor: isError ? const Color(0xFF9F1239) : const Color(0xFF166534),
+        backgroundColor: isError
+            ? const Color(0xFF9F1239)
+            : const Color(0xFF166534),
       ),
     );
   }
@@ -756,7 +808,9 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
           child: ConstrainedBox(
             constraints: BoxConstraints(maxWidth: bodyWidth),
             child: Column(
-              crossAxisAlignment: compact ? CrossAxisAlignment.start : CrossAxisAlignment.center,
+              crossAxisAlignment: compact
+                  ? CrossAxisAlignment.start
+                  : CrossAxisAlignment.center,
               children: <Widget>[
                 if (compact)
                   const Padding(
@@ -774,27 +828,38 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
                   Padding(
                     padding: const EdgeInsets.only(bottom: 16),
                     child: _InlineNotice(
-                      message: 'Si faltan datos base del canal, se solicitaran al crear o configurar el webhook.',
+                      message:
+                          'Si faltan datos base del canal, se solicitaran al crear o configurar el webhook.',
                       color: Color(0xFFD97706),
                     ),
                   ),
                 if (_errorMessage != null)
                   Padding(
                     padding: const EdgeInsets.only(bottom: 16),
-                    child: _InlineNotice(message: _errorMessage!, color: const Color(0xFFDC2626)),
+                    child: _InlineNotice(
+                      message: _errorMessage!,
+                      color: const Color(0xFFDC2626),
+                    ),
                   ),
                 if (_webhookMessage != null)
                   Padding(
                     padding: const EdgeInsets.only(bottom: 16),
-                    child: _InlineNotice(message: _webhookMessage!, color: const Color(0xFF166534)),
+                    child: _InlineNotice(
+                      message: _webhookMessage!,
+                      color: const Color(0xFF166534),
+                    ),
                   ),
                 _ChannelSection(
                   title: 'Nueva instancia',
                   child: Column(
-                    crossAxisAlignment: compact ? CrossAxisAlignment.start : CrossAxisAlignment.center,
+                    crossAxisAlignment: compact
+                        ? CrossAxisAlignment.start
+                        : CrossAxisAlignment.center,
                     children: <Widget>[
                       ConstrainedBox(
-                        constraints: BoxConstraints(maxWidth: compact ? 420 : 380),
+                        constraints: BoxConstraints(
+                          maxWidth: compact ? 420 : 380,
+                        ),
                         child: AppTextField(
                           label: 'Nombre de instancia',
                           controller: _instanceNameController,
@@ -804,21 +869,39 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
                       ),
                       const SizedBox(height: 16),
                       Wrap(
-                        alignment: compact ? WrapAlignment.start : WrapAlignment.center,
+                        alignment: compact
+                            ? WrapAlignment.start
+                            : WrapAlignment.center,
                         spacing: 10,
                         runSpacing: 10,
                         children: <Widget>[
                           ElevatedButton(
-                            onPressed: _isLoading || _isCreating || _isDeleting ? null : _createInstance,
-                            child: Text(_isCreating ? 'Creando...' : 'Crear instancia'),
+                            onPressed: _isLoading || _isCreating || _isDeleting
+                                ? null
+                                : _createInstance,
+                            child: Text(
+                              _isCreating ? 'Creando...' : 'Crear instancia',
+                            ),
                           ),
                           OutlinedButton(
-                            onPressed: _isLoading || _isConfiguringWebhook ? null : _configureWebhook,
-                            child: Text(_isConfiguringWebhook ? 'Configurando...' : 'Configurar webhook'),
+                            onPressed: _isLoading || _isConfiguringWebhook
+                                ? null
+                                : _configureWebhook,
+                            child: Text(
+                              _isConfiguringWebhook
+                                  ? 'Configurando...'
+                                  : 'Configurar webhook',
+                            ),
                           ),
                           OutlinedButton(
-                            onPressed: _isLoading || _isCheckingWebhook ? null : _verifyWebhook,
-                            child: Text(_isCheckingWebhook ? 'Verificando...' : 'Verificar webhook'),
+                            onPressed: _isLoading || _isCheckingWebhook
+                                ? null
+                                : _verifyWebhook,
+                            child: Text(
+                              _isCheckingWebhook
+                                  ? 'Verificando...'
+                                  : 'Verificar webhook',
+                            ),
                           ),
                         ],
                       ),
@@ -836,27 +919,37 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
                           ),
                         )
                       : _instances.isEmpty
-                          ? const Text(
-                              'Todavia no hay instancias registradas.',
-                              textAlign: TextAlign.start,
-                              style: TextStyle(color: Color(0xFF64748B), height: 1.5),
-                            )
-                          : Column(
-                              children: _instances
-                                  .map(
-                                    (ManagedWhatsAppInstanceData instance) => Padding(
-                                      padding: const EdgeInsets.only(bottom: 12),
-                                      child: _InstanceTile(
-                                        instance: instance,
-                                        selected: instance.name == _selectedInstanceName,
-                                        configured: instance.name == _config.instanceName.trim(),
-                                        onShowQr: () => _showQrFor(instance.name),
-                                        onDelete: _isDeleting ? null : () => _confirmDelete(instance.name),
-                                      ),
-                                    ),
-                                  )
-                                  .toList(),
-                            ),
+                      ? const Text(
+                          'Todavia no hay instancias registradas.',
+                          textAlign: TextAlign.start,
+                          style: TextStyle(
+                            color: Color(0xFF64748B),
+                            height: 1.5,
+                          ),
+                        )
+                      : Column(
+                          children: _instances
+                              .map(
+                                (
+                                  ManagedWhatsAppInstanceData instance,
+                                ) => Padding(
+                                  padding: const EdgeInsets.only(bottom: 12),
+                                  child: _InstanceTile(
+                                    instance: instance,
+                                    selected:
+                                        instance.name == _selectedInstanceName,
+                                    configured:
+                                        instance.name ==
+                                        _config.instanceName.trim(),
+                                    onShowQr: () => _showQrFor(instance.name),
+                                    onDelete: _isDeleting
+                                        ? null
+                                        : () => _confirmDelete(instance.name),
+                                  ),
+                                ),
+                              )
+                              .toList(),
+                        ),
                 ),
                 const SizedBox(height: 18),
                 _ChannelSection(
@@ -864,14 +957,23 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
                   child: selectedInstance == null
                       ? Text(
                           'Selecciona una instancia para ver su detalle.',
-                          textAlign: compact ? TextAlign.start : TextAlign.center,
-                          style: const TextStyle(color: Color(0xFF64748B), height: 1.5),
+                          textAlign: compact
+                              ? TextAlign.start
+                              : TextAlign.center,
+                          style: const TextStyle(
+                            color: Color(0xFF64748B),
+                            height: 1.5,
+                          ),
                         )
                       : Column(
-                          crossAxisAlignment: compact ? CrossAxisAlignment.start : CrossAxisAlignment.center,
+                          crossAxisAlignment: compact
+                              ? CrossAxisAlignment.start
+                              : CrossAxisAlignment.center,
                           children: <Widget>[
                             Wrap(
-                              alignment: compact ? WrapAlignment.start : WrapAlignment.center,
+                              alignment: compact
+                                  ? WrapAlignment.start
+                                  : WrapAlignment.center,
                               spacing: 10,
                               runSpacing: 10,
                               children: <Widget>[
@@ -887,21 +989,31 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
                                 ),
                                 _StatusBadge(
                                   label: 'Telefono',
-                                  value: selectedInstance.phone?.isNotEmpty == true ? selectedInstance.phone! : 'Sin detectar',
+                                  value:
+                                      selectedInstance.phone?.isNotEmpty == true
+                                      ? selectedInstance.phone!
+                                      : 'Sin detectar',
                                   color: const Color(0xFF475569),
                                 ),
                                 _StatusBadge(
                                   label: 'Webhook',
-                                  value: selectedInstance.webhookReady ? 'Activo' : 'Pendiente',
-                                  color: selectedInstance.webhookReady ? const Color(0xFF166534) : const Color(0xFFD97706),
+                                  value: selectedInstance.webhookReady
+                                      ? 'Activo'
+                                      : 'Pendiente',
+                                  color: selectedInstance.webhookReady
+                                      ? const Color(0xFF166534)
+                                      : const Color(0xFFD97706),
                                 ),
                               ],
                             ),
-                            if (selectedInstance.webhookTarget?.isNotEmpty == true) ...<Widget>[
+                            if (selectedInstance.webhookTarget?.isNotEmpty ==
+                                true) ...<Widget>[
                               const SizedBox(height: 14),
                               Text(
                                 selectedInstance.webhookTarget!,
-                                textAlign: compact ? TextAlign.start : TextAlign.center,
+                                textAlign: compact
+                                    ? TextAlign.start
+                                    : TextAlign.center,
                                 style: const TextStyle(
                                   color: Color(0xFF64748B),
                                   height: 1.4,
@@ -911,7 +1023,9 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
                             ],
                             const SizedBox(height: 22),
                             Wrap(
-                              alignment: compact ? WrapAlignment.start : WrapAlignment.center,
+                              alignment: compact
+                                  ? WrapAlignment.start
+                                  : WrapAlignment.center,
                               spacing: 14,
                               runSpacing: 14,
                               children: <Widget>[
@@ -937,21 +1051,32 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
                             ),
                             const SizedBox(height: 16),
                             Wrap(
-                              alignment: compact ? WrapAlignment.start : WrapAlignment.center,
+                              alignment: compact
+                                  ? WrapAlignment.start
+                                  : WrapAlignment.center,
                               spacing: 10,
                               runSpacing: 10,
                               children: <Widget>[
                                 FilledButton(
-                                  onPressed: _isEditingInstance ? null : _saveSelectedInstanceMetadata,
-                                  child: Text(_isEditingInstance ? 'Guardando...' : 'Guardar cambios'),
+                                  onPressed: _isEditingInstance
+                                      ? null
+                                      : _saveSelectedInstanceMetadata,
+                                  child: Text(
+                                    _isEditingInstance
+                                        ? 'Guardando...'
+                                        : 'Guardar cambios',
+                                  ),
                                 ),
                                 FilledButton(
-                                  onPressed: _isLoading ? null : _useSelectedInstance,
+                                  onPressed: _isLoading
+                                      ? null
+                                      : _useSelectedInstance,
                                   child: const Text('Usar esta instancia'),
                                 ),
                               ],
                             ),
-                            if (_config.instanceName.trim() == selectedInstance.name) ...<Widget>[
+                            if (_config.instanceName.trim() ==
+                                selectedInstance.name) ...<Widget>[
                               const SizedBox(height: 14),
                               const _InlineNotice(
                                 message: 'Esta es la instancia activa del bot.',
@@ -963,7 +1088,9 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
                               const _ConnectedChannelState()
                             else if (qrImageBytes != null)
                               Align(
-                                alignment: compact ? Alignment.centerLeft : Alignment.center,
+                                alignment: compact
+                                    ? Alignment.centerLeft
+                                    : Alignment.center,
                                 child: ColoredBox(
                                   color: Colors.white,
                                   child: Padding(
@@ -979,8 +1106,13 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
                             else
                               Text(
                                 'Todavia no hay un QR disponible para esta instancia.',
-                                textAlign: compact ? TextAlign.start : TextAlign.center,
-                                style: const TextStyle(color: Color(0xFF64748B), height: 1.5),
+                                textAlign: compact
+                                    ? TextAlign.start
+                                    : TextAlign.center,
+                                style: const TextStyle(
+                                  color: Color(0xFF64748B),
+                                  height: 1.5,
+                                ),
                               ),
                           ],
                         ),
@@ -1039,7 +1171,9 @@ class _InstanceTile extends StatelessWidget {
       'connecting' => const Color(0xFFFEF3C7),
       _ => const Color(0xFFF1F5F9),
     };
-    final Color border = selected ? const Color(0xFF2563EB) : const Color(0xFFE2E8F0);
+    final Color border = selected
+        ? const Color(0xFF2563EB)
+        : const Color(0xFFE2E8F0);
     final Color statusColor = switch (instance.status) {
       'connected' => const Color(0xFF166534),
       'connecting' => const Color(0xFFB45309),
@@ -1050,12 +1184,17 @@ class _InstanceTile extends StatelessWidget {
       padding: EdgeInsets.symmetric(vertical: compact ? 14 : 16),
       decoration: BoxDecoration(
         border: Border(
-          bottom: BorderSide(color: selected ? border : const Color(0xFFE2E8F0), width: selected ? 1.5 : 1),
+          bottom: BorderSide(
+            color: selected ? border : const Color(0xFFE2E8F0),
+            width: selected ? 1.5 : 1,
+          ),
         ),
       ),
       child: Flex(
         direction: compact ? Axis.vertical : Axis.horizontal,
-        crossAxisAlignment: compact ? CrossAxisAlignment.start : CrossAxisAlignment.center,
+        crossAxisAlignment: compact
+            ? CrossAxisAlignment.start
+            : CrossAxisAlignment.center,
         children: <Widget>[
           Expanded(
             child: Column(
@@ -1066,7 +1205,10 @@ class _InstanceTile extends StatelessWidget {
                     Container(
                       width: 10,
                       height: 10,
-                      decoration: BoxDecoration(color: statusColor, shape: BoxShape.circle),
+                      decoration: BoxDecoration(
+                        color: statusColor,
+                        shape: BoxShape.circle,
+                      ),
                     ),
                     const SizedBox(width: 10),
                     Expanded(
@@ -1082,19 +1224,28 @@ class _InstanceTile extends StatelessWidget {
                   ],
                 ),
                 const SizedBox(height: 8),
-                if (instance.displayName?.trim().isNotEmpty == true && instance.displayName!.trim() != instance.name)
+                if (instance.displayName?.trim().isNotEmpty == true &&
+                    instance.displayName!.trim() != instance.name)
                   Padding(
                     padding: const EdgeInsets.only(bottom: 6),
                     child: Text(
                       instance.name,
-                      style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 12, fontWeight: FontWeight.w500),
+                      style: const TextStyle(
+                        color: Color(0xFF94A3B8),
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                      ),
                     ),
                   ),
                 Wrap(
                   spacing: 8,
                   runSpacing: 8,
                   children: <Widget>[
-                    _MiniTag(label: instance.status, textColor: statusColor, backgroundColor: accent),
+                    _MiniTag(
+                      label: instance.status,
+                      textColor: statusColor,
+                      backgroundColor: accent,
+                    ),
                     if (configured)
                       const _MiniTag(
                         label: 'activa',
@@ -1104,7 +1255,10 @@ class _InstanceTile extends StatelessWidget {
                     if (instance.phone?.isNotEmpty == true)
                       Text(
                         instance.phone!,
-                        style: const TextStyle(color: Color(0xFF64748B), fontSize: 13),
+                        style: const TextStyle(
+                          color: Color(0xFF64748B),
+                          fontSize: 13,
+                        ),
                       ),
                   ],
                 ),
@@ -1223,7 +1377,11 @@ class _InlineNotice extends StatelessWidget {
         Expanded(
           child: Text(
             message,
-            style: TextStyle(color: color, fontWeight: FontWeight.w600, height: 1.45),
+            style: TextStyle(
+              color: color,
+              fontWeight: FontWeight.w600,
+              height: 1.45,
+            ),
           ),
         ),
       ],
@@ -1256,7 +1414,9 @@ class _ChannelSection extends StatelessWidget {
     final compact = MediaQuery.sizeOf(context).width < 760;
 
     return Column(
-      crossAxisAlignment: compact ? CrossAxisAlignment.start : CrossAxisAlignment.center,
+      crossAxisAlignment: compact
+          ? CrossAxisAlignment.start
+          : CrossAxisAlignment.center,
       children: <Widget>[
         const Divider(height: 1, color: Color(0xFFE2E8F0)),
         const SizedBox(height: 22),

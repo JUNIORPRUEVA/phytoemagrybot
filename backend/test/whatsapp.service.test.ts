@@ -878,6 +878,84 @@ test('getInstancePhoneNumber refreshes from evolution when local phone is missin
   assert.equal(phone, '18295344286');
 });
 
+test('createInstance syncs Evolution state before validating local connected instances', async () => {
+  const service = createService();
+  const calls: Array<{ path: string; body: Record<string, unknown> }> = [];
+
+  service.prisma = {
+    whatsAppInstance: {
+      findUnique: async () => null,
+      findFirst: async ({ where }: { where: { status: string } }) =>
+        where.status === 'connected' ? null : null,
+      create: async ({ data }: { data: Record<string, unknown> }) => ({
+        id: 1,
+        name: data.name,
+        status: data.status,
+      }),
+    },
+  };
+  let syncCalls = 0;
+  service.syncInstancesFromEvolution = async () => {
+    syncCalls += 1;
+  };
+  service.getEvolutionClient = () => ({
+    post: async (path: string, body: Record<string, unknown>) => {
+      calls.push({ path, body });
+      return { data: { instance: { instanceName: 'demo-new' } } };
+    },
+  });
+  service.waitForManagedStatus = async (name: string) => ({
+    id: 1,
+    name,
+    displayName: null,
+    status: 'connecting',
+    phone: null,
+    connected: false,
+    webhookReady: false,
+    webhookTarget: null,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  });
+
+  const result = await service.createInstance('demo-new');
+
+  assert.equal(syncCalls, 1);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0]?.path, '/instance/create');
+  assert.equal(result.name, 'demo-new');
+});
+
+test('deleteInstance clears configured instance when removing the active one', async () => {
+  const service = createService();
+  let deletedName = '';
+  const clearedInstanceNames: string[] = [];
+
+  service.prisma = {
+    whatsAppInstance: {
+      findUnique: async () => ({ name: 'demo-active' }),
+      delete: async ({ where }: { where: { name: string } }) => {
+        deletedName = where.name;
+        return { name: where.name };
+      },
+    },
+    whatsAppSettings: {
+      updateMany: async ({ where }: { where: { instanceName: string } }) => {
+        clearedInstanceNames.push(where.instanceName);
+        return { count: 1 };
+      },
+    },
+  };
+  service.getEvolutionClient = () => ({
+    delete: async () => ({ data: { ok: true } }),
+  });
+
+  const result = await service.deleteInstance('demo-active');
+
+  assert.equal(deletedName, 'demo-active');
+  assert.deepEqual(clearedInstanceNames, ['demo-active']);
+  assert.equal(result.name, 'demo-active');
+});
+
 test('extractPhone accepts Evolution wuid and ownerJid variants', () => {
   const service = createService();
 

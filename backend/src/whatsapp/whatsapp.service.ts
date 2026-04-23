@@ -133,6 +133,8 @@ export class WhatsAppService implements OnModuleInit {
   async createInstance(name: string): Promise<ManagedWhatsAppInstance> {
     const instanceName = this.normalizeInstanceName(name);
 
+    await this.syncInstancesFromEvolution();
+
     const existing = await this.prisma.whatsAppInstance.findUnique({
       where: { name: instanceName },
     });
@@ -226,6 +228,8 @@ export class WhatsAppService implements OnModuleInit {
     await this.prisma.whatsAppInstance.delete({
       where: { name: instanceName },
     });
+
+    await this.clearConfiguredInstanceIfMatches(instanceName);
 
     return {
       message: 'Instancia eliminada correctamente.',
@@ -2514,6 +2518,18 @@ export class WhatsAppService implements OnModuleInit {
       ),
       webhookUrl: this.asString(whatsapp.webhookUrl) || '',
     };
+  }
+
+  private async clearConfiguredInstanceIfMatches(instanceName: string): Promise<void> {
+    const normalizedInstanceName = instanceName.trim();
+    if (!normalizedInstanceName || !this.prisma?.whatsAppSettings?.updateMany) {
+      return;
+    }
+
+    await this.prisma.whatsAppSettings.updateMany({
+      where: { instanceName: normalizedInstanceName },
+      data: { instanceName: '' },
+    });
   }
 
   private async getEvolutionWebhookMetadata(instanceName: string): Promise<{
