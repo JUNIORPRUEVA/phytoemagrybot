@@ -680,22 +680,27 @@ test('enrichWebhookPayloadFromEvolution merges missing lid fields into the inbou
 
       return {
         data: {
-          messages: [
-            {
-              key: {
-                remoteJid: '69132011749577@lid',
-                remoteJidAlt: '18095551234@s.whatsapp.net',
-                participantAlt: '18095551234@s.whatsapp.net',
-                senderPn: '18095551234@s.whatsapp.net',
-                fromMe: false,
-                id: 'msg-lid-enrich-1',
+          messages: {
+            total: 1,
+            pages: 1,
+            currentPage: 1,
+            records: [
+              {
+                key: {
+                  remoteJid: '69132011749577@lid',
+                  remoteJidAlt: '18095551234@s.whatsapp.net',
+                  participantAlt: '18095551234@s.whatsapp.net',
+                  senderPn: '18095551234@s.whatsapp.net',
+                  fromMe: false,
+                  id: 'msg-lid-enrich-1',
+                },
+                message: {
+                  conversation: 'Klk',
+                },
+                messageType: 'conversation',
               },
-              message: {
-                conversation: 'Klk',
-              },
-              messageType: 'conversation',
-            },
-          ],
+            ],
+          },
         },
       };
     },
@@ -745,20 +750,25 @@ test('enrichWebhookPayloadFromEvolution falls back to contact lookup when messag
       if (path === '/chat/findMessages/demo') {
         return {
           data: {
-            messages: [
-              {
-                key: {
-                  remoteJid: '69132011749577@lid',
-                  fromMe: false,
-                  id: 'msg-lid-contact-fallback-1',
+            messages: {
+              total: 1,
+              pages: 1,
+              currentPage: 1,
+              records: [
+                {
+                  key: {
+                    remoteJid: '69132011749577@lid',
+                    fromMe: false,
+                    id: 'msg-lid-contact-fallback-1',
+                  },
+                  pushName: 'Junior Lopez',
+                  message: {
+                    conversation: 'Ho',
+                  },
+                  messageType: 'conversation',
                 },
-                pushName: 'Junior Lopez',
-                message: {
-                  conversation: 'Ho',
-                },
-                messageType: 'conversation',
-              },
-            ],
+              ],
+            },
           },
         };
       }
@@ -766,12 +776,17 @@ test('enrichWebhookPayloadFromEvolution falls back to contact lookup when messag
       if (path === '/chat/findContacts/demo') {
         return {
           data: {
-            contacts: [
-              {
-                remoteJid: '18095551234@s.whatsapp.net',
-                pushName: 'Junior Lopez',
-              },
-            ],
+            contacts: {
+              total: 1,
+              pages: 1,
+              currentPage: 1,
+              records: [
+                {
+                  remoteJid: '18095551234@s.whatsapp.net',
+                  pushName: 'Junior Lopez',
+                },
+              ],
+            },
           },
         };
       }

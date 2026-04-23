@@ -1920,14 +1920,31 @@ export class WhatsAppService implements OnModuleInit {
         if (Array.isArray(value)) {
           return value;
         }
+
+        const nestedValue = this.asRecord(value);
+        if (Array.isArray(nestedValue.records)) {
+          return nestedValue.records;
+        }
       }
 
       if (Array.isArray(nested.data)) {
         return nested.data;
       }
 
+      if (Array.isArray(this.asRecord(nested.data).records)) {
+        return this.asRecord(nested.data).records as unknown[];
+      }
+
       if (Array.isArray(nested.response)) {
         return nested.response;
+      }
+
+      if (Array.isArray(this.asRecord(nested.response).records)) {
+        return this.asRecord(nested.response).records as unknown[];
+      }
+
+      if (Array.isArray(nested.records)) {
+        return nested.records as unknown[];
       }
     }
 
