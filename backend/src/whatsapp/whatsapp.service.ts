@@ -1181,14 +1181,88 @@ export class WhatsAppService {
 
     const resolvedRecipient = this.resolveIncomingRecipient(payload, data, key, instancePhone);
     if (!resolvedRecipient.trim()) {
+      this.logger.warn(
+        JSON.stringify({
+          event: 'whatsapp_recipient_resolution_failed',
+          instancePhone: instancePhone ?? null,
+          remoteJid: this.asString(key.remoteJid) || this.asString(data.remoteJid) || null,
+          remoteJidAlt:
+            this.asString(key.remoteJidAlt) ||
+            this.asString(data.remoteJidAlt) ||
+            this.asString(payload.remoteJidAlt) ||
+            null,
+          senderPn:
+            this.asString(key.senderPn) ||
+            this.asString(data.senderPn) ||
+            this.asString(payload.senderPn) ||
+            null,
+          participantPn:
+            this.asString(key.participantPn) ||
+            this.asString(data.participantPn) ||
+            this.asString(payload.participantPn) ||
+            null,
+          sender:
+            this.asString(key.sender) ||
+            this.asString(data.sender) ||
+            this.asString(payload.sender) ||
+            null,
+          participant:
+            this.asString(key.participant) ||
+            this.asString(data.participant) ||
+            this.asString(payload.participant) ||
+            null,
+        }),
+      );
       return null;
     }
 
     const number = this.normalizeNumber(resolvedRecipient);
 
     if (!number) {
+      this.logger.warn(
+        JSON.stringify({
+          event: 'whatsapp_recipient_resolution_empty_number',
+          resolvedRecipient,
+          instancePhone: instancePhone ?? null,
+        }),
+      );
       return null;
     }
+
+    this.logger.log(
+      JSON.stringify({
+        event: 'whatsapp_recipient_resolved',
+        contactId: number,
+        resolvedRecipient,
+        instancePhone: instancePhone ?? null,
+        remoteJid: this.asString(key.remoteJid) || this.asString(data.remoteJid) || null,
+        remoteJidAlt:
+          this.asString(key.remoteJidAlt) ||
+          this.asString(data.remoteJidAlt) ||
+          this.asString(payload.remoteJidAlt) ||
+          null,
+        senderPn:
+          this.asString(key.senderPn) ||
+          this.asString(data.senderPn) ||
+          this.asString(payload.senderPn) ||
+          null,
+        participantPn:
+          this.asString(key.participantPn) ||
+          this.asString(data.participantPn) ||
+          this.asString(payload.participantPn) ||
+          null,
+        sender:
+          this.asString(key.sender) ||
+          this.asString(data.sender) ||
+          this.asString(payload.sender) ||
+          null,
+        participant:
+          this.asString(key.participant) ||
+          this.asString(data.participant) ||
+          this.asString(payload.participant) ||
+          null,
+      }),
+    );
 
     const type = this.detectMessageType(message, this.asString(data.messageType));
     const text = this.extractMessageText(message);

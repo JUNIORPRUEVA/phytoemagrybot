@@ -750,36 +750,29 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
     return LayoutBuilder(
       builder: (BuildContext context, BoxConstraints constraints) {
         final compact = constraints.maxWidth < 760;
-        final bodyWidth = compact ? 620.0 : 760.0;
+        final bodyWidth = compact ? 460.0 : 760.0;
 
         return Center(
           child: ConstrainedBox(
             constraints: BoxConstraints(maxWidth: bodyWidth),
             child: Column(
-              crossAxisAlignment: CrossAxisAlignment.center,
+              crossAxisAlignment: compact ? CrossAxisAlignment.start : CrossAxisAlignment.center,
               children: <Widget>[
-                Text(
-                  'Gestion WhatsApp',
-                  textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: -0.4,
-                      ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  'Instancias, webhook y QR en un solo flujo.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: const Color(0xFF64748B),
-                    fontSize: compact ? 12 : 13,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-                const SizedBox(height: 20),
-                if (hasConfigGaps)
+                if (compact)
                   const Padding(
-                    padding: EdgeInsets.only(bottom: 16),
+                    padding: EdgeInsets.only(bottom: 14),
+                    child: Text(
+                      'Gestion de instancias y webhook.',
+                      style: TextStyle(
+                        color: Color(0xFF64748B),
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                if (hasConfigGaps)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 16),
                     child: _InlineNotice(
                       message: 'Si faltan datos base del canal, se solicitaran al crear o configurar el webhook.',
                       color: Color(0xFFD97706),
@@ -798,9 +791,10 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
                 _ChannelSection(
                   title: 'Nueva instancia',
                   child: Column(
+                    crossAxisAlignment: compact ? CrossAxisAlignment.start : CrossAxisAlignment.center,
                     children: <Widget>[
                       ConstrainedBox(
-                        constraints: const BoxConstraints(maxWidth: 380),
+                        constraints: BoxConstraints(maxWidth: compact ? 420 : 380),
                         child: AppTextField(
                           label: 'Nombre de instancia',
                           controller: _instanceNameController,
@@ -810,7 +804,7 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
                       ),
                       const SizedBox(height: 16),
                       Wrap(
-                        alignment: WrapAlignment.center,
+                        alignment: compact ? WrapAlignment.start : WrapAlignment.center,
                         spacing: 10,
                         runSpacing: 10,
                         children: <Widget>[
@@ -844,7 +838,7 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
                       : _instances.isEmpty
                           ? const Text(
                               'Todavia no hay instancias registradas.',
-                              textAlign: TextAlign.center,
+                              textAlign: TextAlign.start,
                               style: TextStyle(color: Color(0xFF64748B), height: 1.5),
                             )
                           : Column(
@@ -868,16 +862,16 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
                 _ChannelSection(
                   title: 'Detalle de instancia',
                   child: selectedInstance == null
-                      ? const Text(
+                      ? Text(
                           'Selecciona una instancia para ver su detalle.',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(color: Color(0xFF64748B), height: 1.5),
+                          textAlign: compact ? TextAlign.start : TextAlign.center,
+                          style: const TextStyle(color: Color(0xFF64748B), height: 1.5),
                         )
                       : Column(
-                          crossAxisAlignment: CrossAxisAlignment.center,
+                          crossAxisAlignment: compact ? CrossAxisAlignment.start : CrossAxisAlignment.center,
                           children: <Widget>[
                             Wrap(
-                              alignment: WrapAlignment.center,
+                              alignment: compact ? WrapAlignment.start : WrapAlignment.center,
                               spacing: 10,
                               runSpacing: 10,
                               children: <Widget>[
@@ -907,7 +901,7 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
                               const SizedBox(height: 14),
                               Text(
                                 selectedInstance.webhookTarget!,
-                                textAlign: TextAlign.center,
+                                textAlign: compact ? TextAlign.start : TextAlign.center,
                                 style: const TextStyle(
                                   color: Color(0xFF64748B),
                                   height: 1.4,
@@ -917,7 +911,7 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
                             ],
                             const SizedBox(height: 22),
                             Wrap(
-                              alignment: WrapAlignment.center,
+                              alignment: compact ? WrapAlignment.start : WrapAlignment.center,
                               spacing: 14,
                               runSpacing: 14,
                               children: <Widget>[
@@ -943,7 +937,7 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
                             ),
                             const SizedBox(height: 16),
                             Wrap(
-                              alignment: WrapAlignment.center,
+                              alignment: compact ? WrapAlignment.start : WrapAlignment.center,
                               spacing: 10,
                               runSpacing: 10,
                               children: <Widget>[
@@ -968,7 +962,8 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
                             if (selectedInstance.connected)
                               const _ConnectedChannelState()
                             else if (qrImageBytes != null)
-                              Center(
+                              Align(
+                                alignment: compact ? Alignment.centerLeft : Alignment.center,
                                 child: ColoredBox(
                                   color: Colors.white,
                                   child: Padding(
@@ -982,10 +977,10 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
                                 ),
                               )
                             else
-                              const Text(
+                              Text(
                                 'Todavia no hay un QR disponible para esta instancia.',
-                                textAlign: TextAlign.center,
-                                style: TextStyle(color: Color(0xFF64748B), height: 1.5),
+                                textAlign: compact ? TextAlign.start : TextAlign.center,
+                                style: const TextStyle(color: Color(0xFF64748B), height: 1.5),
                               ),
                           ],
                         ),
@@ -1258,17 +1253,19 @@ class _ChannelSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final compact = MediaQuery.sizeOf(context).width < 760;
+
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.center,
+      crossAxisAlignment: compact ? CrossAxisAlignment.start : CrossAxisAlignment.center,
       children: <Widget>[
         const Divider(height: 1, color: Color(0xFFE2E8F0)),
         const SizedBox(height: 22),
         Text(
           title,
-          textAlign: TextAlign.center,
-          style: const TextStyle(
+          textAlign: compact ? TextAlign.start : TextAlign.center,
+          style: TextStyle(
             color: Color(0xFF0F172A),
-            fontSize: 18,
+            fontSize: compact ? 16 : 18,
             fontWeight: FontWeight.w700,
           ),
         ),
