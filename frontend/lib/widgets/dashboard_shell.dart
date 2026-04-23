@@ -22,6 +22,7 @@ class DashboardShell extends StatefulWidget {
 class _DashboardShellState extends State<DashboardShell> {
   int _selectedIndex = 0;
   int _mobileLastPrimaryPageIndex = 0;
+  final GlobalKey<State<BotPromptConfigPage>> _promptPageKey = GlobalKey<State<BotPromptConfigPage>>();
   late final ApiService _apiService;
   late Future<ClientConfigData> _overviewFuture;
 
@@ -47,8 +48,17 @@ class _DashboardShellState extends State<DashboardShell> {
     final pages = <Widget>[
       ConnectWhatsAppPage(apiService: _apiService, onConfigUpdated: _refreshOverview),
       MemoryPage(apiService: _apiService, onConfigUpdated: _refreshOverview),
-      BotPromptConfigPage(apiService: _apiService, onConfigUpdated: _refreshOverview),
-      GalleryPage(apiService: _apiService, onConfigUpdated: _refreshOverview),
+      BotPromptConfigPage(
+        key: _promptPageKey,
+        apiService: _apiService,
+        onConfigUpdated: _refreshOverview,
+        onRequestBack: () => _selectPage(_mobileMainPageIndex),
+      ),
+      GalleryPage(
+        apiService: _apiService,
+        onConfigUpdated: _refreshOverview,
+        onRequestBack: () => _selectPage(_mobileMainPageIndex),
+      ),
       ToolsPage(apiService: _apiService, onConfigUpdated: _refreshOverview),
       ConfigPage(apiService: _apiService, onConfigUpdated: _refreshOverview),
     ];
@@ -73,6 +83,7 @@ class _DashboardShellState extends State<DashboardShell> {
 
     final bool isMobile = MediaQuery.sizeOf(context).width < 900;
     final bool isMobileMainPage = isMobile && _selectedIndex == _mobileMainPageIndex;
+    final bool hideMobileAppBar = isMobile && (_selectedIndex == 2 || _selectedIndex == 3);
     final int mobileNavIndex = _mobileBottomNavIndices.indexOf(_mobileLastPrimaryPageIndex);
 
     return Scaffold(
@@ -87,7 +98,9 @@ class _DashboardShellState extends State<DashboardShell> {
               onSelect: _selectPage,
             )
           : null,
-      appBar: AppBar(
+        appBar: hideMobileAppBar
+          ? null
+          : AppBar(
         leading: isMobileMainPage
             ? Builder(
                 builder: (context) {
@@ -178,6 +191,17 @@ class _DashboardShellState extends State<DashboardShell> {
                   .toList(),
             )
           : _AppFooter(overviewFuture: _overviewFuture),
+      floatingActionButton: isMobile && _selectedIndex == 2
+          ? FloatingActionButton.extended(
+              onPressed: () {
+                final state = _promptPageKey.currentState as BotPromptConfigPageStateAccess?;
+                state?.triggerSave();
+              },
+              icon: const Icon(Icons.save_rounded),
+              label: const Text('Guardar'),
+            )
+          : null,
+      floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
       body: SafeArea(
         child: Row(
           children: <Widget>[
@@ -256,7 +280,7 @@ class _DashboardShellState extends State<DashboardShell> {
               ),
             Expanded(
               child: Padding(
-                padding: EdgeInsets.fromLTRB(isMobile ? 16 : 28, isMobile ? 16 : 24, isMobile ? 16 : 28, isMobile ? 96 : 12),
+                padding: EdgeInsets.fromLTRB(isMobile ? 16 : 28, hideMobileAppBar ? 10 : (isMobile ? 16 : 24), isMobile ? 16 : 28, isMobile ? 96 : 12),
                 child: SingleChildScrollView(
                   child: pages[_selectedIndex],
                 ),

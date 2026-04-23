@@ -7,6 +7,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../services/api_service.dart';
 import '../widgets/app_text_field.dart';
 import '../widgets/section_card.dart';
+import '../widgets/secondary_page_layout.dart';
 
 enum _MediaUploadKind { image, video }
 
@@ -15,10 +16,12 @@ class GalleryPage extends StatefulWidget {
     super.key,
     required this.apiService,
     required this.onConfigUpdated,
+    this.onRequestBack,
   });
 
   final ApiService apiService;
   final VoidCallback onConfigUpdated;
+  final VoidCallback? onRequestBack;
 
   @override
   State<GalleryPage> createState() => _GalleryPageState();
@@ -226,6 +229,14 @@ class _GalleryPageState extends State<GalleryPage> {
   }
 
   Future<void> _openMedia(MediaFileData item) async {
+    if (!item.isVideo) {
+      await showDialog<void>(
+        context: context,
+        builder: (context) => _ImagePreviewDialog(item: item),
+      );
+      return;
+    }
+
     final uri = Uri.tryParse(item.fileUrl);
     if (uri == null) {
       _showMessage('La URL del archivo no es valida.', isError: true);
@@ -252,121 +263,239 @@ class _GalleryPageState extends State<GalleryPage> {
   @override
   Widget build(BuildContext context) {
     final isBusy = _isLoading || _isUploading;
+    final isMobile = MediaQuery.sizeOf(context).width < 900;
 
+    if (isMobile) {
+      return _buildMobileLayout(isBusy);
+    }
+
+    return SecondaryPageLayout(
+      caption: 'Sube imagenes y videos listos para que el bot los envie automaticamente por WhatsApp.',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          SectionCard(
+            title: 'Subir archivo',
+            subtitle: 'Carga contenido visual en storage y guardalo en la base de datos con metadatos comerciales.',
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Wrap(
+                  spacing: 18,
+                  runSpacing: 18,
+                  children: <Widget>[
+                    SizedBox(
+                      width: 360,
+                      child: AppTextField(
+                        label: 'Titulo',
+                        controller: _titleController,
+                        hintText: 'Ej: Antes y despues, Testimonio, Video de producto',
+                        enabled: !isBusy,
+                      ),
+                    ),
+                    SizedBox(
+                      width: 420,
+                      child: AppTextField(
+                        label: 'Descripcion',
+                        controller: _descriptionController,
+                        hintText: 'Agrega palabras clave para que el bot encuentre este archivo.',
+                        maxLines: 3,
+                        enabled: !isBusy,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 20),
+                Wrap(
+                  spacing: 14,
+                  runSpacing: 14,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: <Widget>[
+                    ElevatedButton.icon(
+                      onPressed: isBusy ? null : () => _pickFile(_MediaUploadKind.image),
+                      icon: const Icon(Icons.image_rounded),
+                      label: const Text('Seleccionar imagen'),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: isBusy ? null : () => _pickFile(_MediaUploadKind.video),
+                      icon: const Icon(Icons.movie_creation_rounded),
+                      label: const Text('Seleccionar video'),
+                    ),
+                    if (_selectedFileName != null)
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF8FAFC),
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(color: const Color(0xFFE2E8F0)),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: <Widget>[
+                            Icon(
+                              _selectedIsVideo ? Icons.play_circle_fill_rounded : Icons.image_rounded,
+                              color: const Color(0xFF2563EB),
+                            ),
+                            const SizedBox(width: 10),
+                            ConstrainedBox(
+                              constraints: const BoxConstraints(maxWidth: 280),
+                              child: Text(
+                                '${_selectedKind == _MediaUploadKind.video ? 'Video' : 'Imagen'}: ${_selectedFileName!}',
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ElevatedButton(
+                      onPressed: isBusy ? null : _upload,
+                      child: Text(_isUploading ? 'Guardando...' : 'Guardar en galeria'),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 20),
+                _UploadPreviewCard(
+                  bytes: _selectedBytes,
+                  fileName: _selectedFileName,
+                  isVideo: _selectedIsVideo,
+                  extension: _selectedExtension,
+                ),
+              ],
+            ),
+          ),
+          SectionCard(
+            title: 'Biblioteca',
+            subtitle: 'Visualiza, reproduce y elimina archivos publicados para el bot.',
+            child: _GalleryGrid(
+              items: _items,
+              isLoading: _isLoading,
+              loadError: _loadError,
+              deletingIds: _deletingIds,
+              onRefresh: _loadGallery,
+              onDelete: _deleteMedia,
+              onOpen: _openMedia,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMobileLayout(bool isBusy) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        Text(
-          'Galeria',
-          style: Theme.of(context).textTheme.headlineMedium,
+        Align(
+          alignment: Alignment.topLeft,
+          child: IconButton(
+            onPressed: widget.onRequestBack,
+            tooltip: 'Regresar',
+            style: IconButton.styleFrom(
+              backgroundColor: const Color(0x33FFFFFF),
+              foregroundColor: const Color(0xFF0F172A),
+            ),
+            icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 18),
+          ),
         ),
-        const SizedBox(height: 6),
-        const Text(
-          'Sube imagenes y videos listos para que el bot los envie automaticamente por WhatsApp.',
-          style: TextStyle(color: Color(0xFF475569), fontSize: 14),
-        ),
-        const SizedBox(height: 24),
-        SectionCard(
-          title: 'Subir archivo',
-          subtitle: 'Carga contenido visual en storage y guardalo en la base de datos con metadatos comerciales.',
+        const SizedBox(height: 10),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          decoration: BoxDecoration(
+            color: const Color(0xFFF8FAFC),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: const Color(0xFFE2E8F0)),
+          ),
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
-              Wrap(
-                spacing: 18,
-                runSpacing: 18,
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
                 children: <Widget>[
-                  SizedBox(
-                    width: 360,
-                    child: AppTextField(
-                      label: 'Titulo',
-                      controller: _titleController,
-                      hintText: 'Ej: Antes y despues, Testimonio, Video de producto',
-                      enabled: !isBusy,
-                    ),
-                  ),
-                  SizedBox(
-                    width: 420,
-                    child: AppTextField(
-                      label: 'Descripcion',
+                  Expanded(
+                    child: TextField(
                       controller: _descriptionController,
-                      hintText: 'Agrega palabras clave para que el bot encuentre este archivo.',
-                      maxLines: 3,
                       enabled: !isBusy,
+                      maxLines: 1,
+                      style: const TextStyle(
+                        color: Color(0xFF0F172A),
+                        fontSize: 13,
+                        height: 1.35,
+                      ),
+                      decoration: InputDecoration(
+                        hintText: 'Comentario o palabras clave',
+                        isDense: true,
+                        filled: true,
+                        fillColor: Colors.white,
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(16),
+                          borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(16),
+                          borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(16),
+                          borderSide: const BorderSide(color: Color(0xFF2563EB)),
+                        ),
+                      ),
                     ),
+                  ),
+                  const SizedBox(width: 10),
+                  _UploadActionIcon(
+                    icon: Icons.image_outlined,
+                    onTap: isBusy ? null : () => _pickFile(_MediaUploadKind.image),
+                  ),
+                  const SizedBox(width: 8),
+                  _UploadActionIcon(
+                    icon: Icons.videocam_outlined,
+                    onTap: isBusy ? null : () => _pickFile(_MediaUploadKind.video),
+                  ),
+                  const SizedBox(width: 8),
+                  _UploadActionIcon(
+                    icon: _isUploading ? Icons.more_horiz_rounded : Icons.arrow_upward_rounded,
+                    filled: true,
+                    onTap: isBusy ? null : _upload,
                   ),
                 ],
               ),
-              const SizedBox(height: 20),
-              Wrap(
-                spacing: 14,
-                runSpacing: 14,
-                crossAxisAlignment: WrapCrossAlignment.center,
-                children: <Widget>[
-                  ElevatedButton.icon(
-                    onPressed: isBusy ? null : () => _pickFile(_MediaUploadKind.image),
-                    icon: const Icon(Icons.image_rounded),
-                    label: const Text('Seleccionar imagen'),
-                  ),
-                  OutlinedButton.icon(
-                    onPressed: isBusy ? null : () => _pickFile(_MediaUploadKind.video),
-                    icon: const Icon(Icons.movie_creation_rounded),
-                    label: const Text('Seleccionar video'),
-                  ),
-                  if (_selectedFileName != null)
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFF8FAFC),
-                        borderRadius: BorderRadius.circular(14),
-                        border: Border.all(color: const Color(0xFFE2E8F0)),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: <Widget>[
-                          Icon(
-                            _selectedIsVideo ? Icons.play_circle_fill_rounded : Icons.image_rounded,
-                            color: const Color(0xFF2563EB),
-                          ),
-                          const SizedBox(width: 10),
-                          ConstrainedBox(
-                            constraints: const BoxConstraints(maxWidth: 280),
-                            child: Text(
-                              '${_selectedKind == _MediaUploadKind.video ? 'Video' : 'Imagen'}: ${_selectedFileName!}',
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                        ],
+              if (_selectedFileName != null) ...<Widget>[
+                const SizedBox(height: 10),
+                Row(
+                  children: <Widget>[
+                    Icon(
+                      _selectedIsVideo ? Icons.play_circle_fill_rounded : Icons.image_rounded,
+                      size: 18,
+                      color: const Color(0xFF2563EB),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        _selectedFileName!,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Color(0xFF64748B),
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
                     ),
-                  ElevatedButton(
-                    onPressed: isBusy ? null : _upload,
-                    child: Text(_isUploading ? 'Guardando...' : 'Guardar en galeria'),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 20),
-              _UploadPreviewCard(
-                bytes: _selectedBytes,
-                fileName: _selectedFileName,
-                isVideo: _selectedIsVideo,
-                extension: _selectedExtension,
-              ),
+                  ],
+                ),
+              ],
             ],
           ),
         ),
-        SectionCard(
-          title: 'Biblioteca',
-          subtitle: 'Visualiza, reproduce y elimina archivos publicados para el bot.',
-          child: _GalleryGrid(
-            items: _items,
-            isLoading: _isLoading,
-            loadError: _loadError,
-            deletingIds: _deletingIds,
-            onRefresh: _loadGallery,
-            onDelete: _deleteMedia,
-            onOpen: _openMedia,
-          ),
+        const SizedBox(height: 18),
+        _GalleryGrid(
+          items: _items,
+          isLoading: _isLoading,
+          loadError: _loadError,
+          deletingIds: _deletingIds,
+          onRefresh: _loadGallery,
+          onDelete: _deleteMedia,
+          onOpen: _openMedia,
+          compactMobile: true,
         ),
       ],
     );
@@ -519,6 +648,7 @@ class _GalleryGrid extends StatelessWidget {
     required this.onRefresh,
     required this.onDelete,
     required this.onOpen,
+    this.compactMobile = false,
   });
 
   final List<MediaFileData> items;
@@ -528,6 +658,7 @@ class _GalleryGrid extends StatelessWidget {
   final Future<void> Function() onRefresh;
   final Future<void> Function(MediaFileData item) onDelete;
   final Future<void> Function(MediaFileData item) onOpen;
+  final bool compactMobile;
 
   @override
   Widget build(BuildContext context) {
@@ -563,20 +694,22 @@ class _GalleryGrid extends StatelessWidget {
     return LayoutBuilder(
       builder: (BuildContext context, BoxConstraints constraints) {
         final width = constraints.maxWidth;
-        int columns = 1;
+        int columns = compactMobile ? 2 : 1;
         if (width >= 1180) {
           columns = 3;
         } else if (width >= 760) {
+          columns = 2;
+        } else if (compactMobile) {
           columns = 2;
         }
 
         final cardWidth = columns == 1
             ? width
-            : (width - ((columns - 1) * 18)) / columns;
+            : (width - ((columns - 1) * (compactMobile ? 12 : 18))) / columns;
 
         return Wrap(
-          spacing: 18,
-          runSpacing: 18,
+          spacing: compactMobile ? 12 : 18,
+          runSpacing: compactMobile ? 12 : 18,
           children: items.map((item) {
             return SizedBox(
               width: cardWidth,
@@ -585,6 +718,7 @@ class _GalleryGrid extends StatelessWidget {
                 isDeleting: deletingIds.contains(item.id),
                 onDelete: () => onDelete(item),
                 onOpen: () => onOpen(item),
+                compact: compactMobile,
               ),
             );
           }).toList(),
@@ -600,121 +734,136 @@ class _MediaCard extends StatelessWidget {
     required this.isDeleting,
     required this.onDelete,
     required this.onOpen,
+    this.compact = false,
   });
 
   final MediaFileData item;
   final bool isDeleting;
   final VoidCallback onDelete;
   final VoidCallback onOpen;
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(24),
-        boxShadow: const <BoxShadow>[
-          BoxShadow(
-            color: Color(0x140F172A),
-            blurRadius: 30,
-            offset: Offset(0, 14),
+    return Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(compact ? 20 : 24),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onOpen,
+        child: Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(compact ? 20 : 24),
+            boxShadow: const <BoxShadow>[
+              BoxShadow(
+                color: Color(0x140F172A),
+                blurRadius: 30,
+                offset: Offset(0, 14),
+              ),
+            ],
+            border: Border.all(color: const Color(0xFFE2E8F0)),
           ),
-        ],
-        border: Border.all(color: const Color(0xFFE2E8F0)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          ClipRRect(
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-            child: SizedBox(
-              height: 210,
-              width: double.infinity,
-              child: item.isVideo
-                  ? _VideoThumbnail(title: item.title, subtitle: 'Video')
-                  : Image.network(
-                      item.fileUrl,
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => const _BrokenPreview(),
-                    ),
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.all(18),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
-                Row(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              ClipRRect(
+                borderRadius: BorderRadius.vertical(top: Radius.circular(compact ? 20 : 24)),
+                child: SizedBox(
+                  height: compact ? 124 : 210,
+                  width: double.infinity,
+                  child: item.isVideo
+                      ? _VideoThumbnail(title: item.title, subtitle: 'Video')
+                      : Image.network(
+                          item.fileUrl,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) => const _BrokenPreview(),
+                        ),
+                ),
+              ),
+              Padding(
+                padding: EdgeInsets.all(compact ? 12 : 18),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: <Widget>[
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                      decoration: BoxDecoration(
-                        color: item.isVideo ? const Color(0xFFFFF7ED) : const Color(0xFFECFDF5),
-                        borderRadius: BorderRadius.circular(999),
+                    Row(
+                      children: <Widget>[
+                        Container(
+                          padding: EdgeInsets.symmetric(horizontal: compact ? 8 : 10, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: item.isVideo ? const Color(0xFFFFF7ED) : const Color(0xFFECFDF5),
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          child: Text(
+                            item.isVideo ? 'VIDEO' : 'IMAGEN',
+                            style: TextStyle(
+                              fontWeight: FontWeight.w800,
+                              fontSize: compact ? 10 : 11,
+                              color: item.isVideo ? const Color(0xFFC2410C) : const Color(0xFF166534),
+                            ),
+                          ),
+                        ),
+                        const Spacer(),
+                        if (!compact && item.createdAt != null)
+                          Text(
+                            _formatDate(item.createdAt!),
+                            style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 12),
+                          ),
+                      ],
+                    ),
+                    SizedBox(height: compact ? 10 : 14),
+                    Text(
+                      item.title,
+                      maxLines: compact ? 2 : 3,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: const Color(0xFF0F172A),
+                        fontWeight: FontWeight.w700,
+                        fontSize: compact ? 14 : 17,
+                        height: 1.2,
                       ),
-                      child: Text(
-                        item.isVideo ? 'VIDEO' : 'IMAGEN',
+                    ),
+                    if ((item.description ?? '').trim().isNotEmpty) ...<Widget>[
+                      SizedBox(height: compact ? 8 : 10),
+                      Text(
+                        item.description!,
+                        maxLines: compact ? 3 : 4,
+                        overflow: TextOverflow.ellipsis,
                         style: TextStyle(
-                          fontWeight: FontWeight.w800,
-                          fontSize: 11,
-                          color: item.isVideo ? const Color(0xFFC2410C) : const Color(0xFF166534),
+                          color: const Color(0xFF475569),
+                          height: 1.45,
+                          fontSize: compact ? 12 : 14,
                         ),
                       ),
-                    ),
-                    const Spacer(),
-                    if (item.createdAt != null)
-                      Text(
-                        _formatDate(item.createdAt!),
-                        style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 12),
-                      ),
-                  ],
-                ),
-                const SizedBox(height: 14),
-                Text(
-                  item.title,
-                  style: const TextStyle(
-                    color: Color(0xFF0F172A),
-                    fontWeight: FontWeight.w700,
-                    fontSize: 17,
-                  ),
-                ),
-                if ((item.description ?? '').trim().isNotEmpty) ...<Widget>[
-                  const SizedBox(height: 10),
-                  Text(
-                    item.description!,
-                    style: const TextStyle(color: Color(0xFF475569), height: 1.5),
-                  ),
-                ],
-                const SizedBox(height: 18),
-                Row(
-                  children: <Widget>[
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        onPressed: onOpen,
-                        icon: Icon(item.isVideo ? Icons.play_circle_outline_rounded : Icons.open_in_new_rounded),
-                        label: Text(item.isVideo ? 'Reproducir' : 'Abrir'),
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: ElevatedButton.icon(
-                        onPressed: isDeleting ? null : onDelete,
-                        icon: isDeleting
-                            ? const SizedBox(
-                                width: 16,
-                                height: 16,
-                                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                              )
-                            : const Icon(Icons.delete_outline_rounded),
-                        label: Text(isDeleting ? 'Eliminando' : 'Eliminar'),
-                      ),
+                    ],
+                    SizedBox(height: compact ? 12 : 18),
+                    Row(
+                      children: <Widget>[
+                        Expanded(
+                          child: TextButton.icon(
+                            onPressed: onOpen,
+                            icon: Icon(item.isVideo ? Icons.play_circle_outline_rounded : Icons.visibility_outlined, size: compact ? 18 : 20),
+                            label: Text(item.isVideo ? 'Ver' : 'Abrir'),
+                          ),
+                        ),
+                        IconButton(
+                          onPressed: isDeleting ? null : onDelete,
+                          icon: isDeleting
+                              ? const SizedBox(
+                                  width: 16,
+                                  height: 16,
+                                  child: CircularProgressIndicator(strokeWidth: 2),
+                                )
+                              : const Icon(Icons.delete_outline_rounded),
+                        ),
+                      ],
                     ),
                   ],
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }
@@ -863,6 +1012,112 @@ class _EmptyState extends StatelessWidget {
             child: Text(actionLabel),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _UploadActionIcon extends StatelessWidget {
+  const _UploadActionIcon({
+    required this.icon,
+    required this.onTap,
+    this.filled = false,
+  });
+
+  final IconData icon;
+  final VoidCallback? onTap;
+  final bool filled;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        width: 44,
+        height: 44,
+        decoration: BoxDecoration(
+          color: filled ? const Color(0xFF2563EB) : Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: filled ? const Color(0xFF2563EB) : const Color(0xFFE2E8F0),
+          ),
+        ),
+        child: Icon(
+          icon,
+          color: filled ? Colors.white : const Color(0xFF2563EB),
+          size: 20,
+        ),
+      ),
+    );
+  }
+}
+
+class _ImagePreviewDialog extends StatelessWidget {
+  const _ImagePreviewDialog({required this.item});
+
+  final MediaFileData item;
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      insetPadding: const EdgeInsets.all(18),
+      backgroundColor: const Color(0xFFF8FAFC),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(28),
+        child: Stack(
+          children: <Widget>[
+            Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                AspectRatio(
+                  aspectRatio: 1,
+                  child: Image.network(
+                    item.fileUrl,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => const _BrokenPreview(),
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(18, 18, 18, 20),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Text(
+                        item.title,
+                        style: const TextStyle(
+                          color: Color(0xFF0F172A),
+                          fontSize: 18,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      if ((item.description ?? '').trim().isNotEmpty) ...<Widget>[
+                        const SizedBox(height: 10),
+                        Text(
+                          item.description!,
+                          style: const TextStyle(
+                            color: Color(0xFF475569),
+                            height: 1.5,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            Positioned(
+              top: 10,
+              left: 10,
+              child: IconButton(
+                onPressed: () => Navigator.of(context).pop(),
+                style: IconButton.styleFrom(backgroundColor: const Color(0x66FFFFFF)),
+                icon: const Icon(Icons.close_rounded),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

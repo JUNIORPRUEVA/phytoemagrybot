@@ -3,22 +3,30 @@ import 'package:flutter/material.dart';
 import '../services/api_service.dart';
 import '../widgets/app_text_field.dart';
 import '../widgets/section_card.dart';
+import '../widgets/secondary_page_layout.dart';
 
 class BotPromptConfigPage extends StatefulWidget {
   const BotPromptConfigPage({
     super.key,
     required this.apiService,
     required this.onConfigUpdated,
+    this.onRequestBack,
   });
 
   final ApiService apiService;
   final VoidCallback onConfigUpdated;
+  final VoidCallback? onRequestBack;
 
   @override
   State<BotPromptConfigPage> createState() => _BotPromptConfigPageState();
 }
 
-class _BotPromptConfigPageState extends State<BotPromptConfigPage> {
+abstract class BotPromptConfigPageStateAccess {
+  void triggerSave();
+}
+
+class _BotPromptConfigPageState extends State<BotPromptConfigPage>
+    implements BotPromptConfigPageStateAccess {
   static const String _uiFallbackBase =
       'Este bot responde como vendedor de WhatsApp. Habla corto, claro y natural. Puedes editar este mensaje.';
   static const String _defaultShort = 'Responde en maximo 2 lineas y menos de 15 palabras.';
@@ -134,6 +142,13 @@ class _BotPromptConfigPageState extends State<BotPromptConfigPage> {
     }
   }
 
+  @override
+  void triggerSave() {
+    if (!_isLoading && !_isSaving) {
+      _saveConfig();
+    }
+  }
+
   void _showMessage(String message, {bool isError = false}) {
     final messenger = ScaffoldMessenger.of(context);
     messenger.hideCurrentSnackBar();
@@ -148,21 +163,18 @@ class _BotPromptConfigPageState extends State<BotPromptConfigPage> {
   @override
   Widget build(BuildContext context) {
     final isBusy = _isLoading || _isSaving;
+    final isMobile = MediaQuery.sizeOf(context).width < 900;
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: <Widget>[
-        Text(
-          'Prompts',
-          style: Theme.of(context).textTheme.headlineMedium,
-        ),
-        const SizedBox(height: 6),
-        const Text(
-          'Configura respuestas cortas, humanas y enfocadas en cerrar ventas por WhatsApp.',
-          style: TextStyle(color: Color(0xFF475569), fontSize: 14),
-        ),
-        const SizedBox(height: 28),
-        SectionCard(
+    if (isMobile) {
+      return _buildMobileLayout(isBusy);
+    }
+
+    return SecondaryPageLayout(
+      caption: 'Configura respuestas cortas, humanas y enfocadas en cerrar ventas por WhatsApp.',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          SectionCard(
           title: 'Prompt del bot vendedor',
           subtitle: 'Define como responde el bot antes de enviar cada mensaje a OpenAI.',
           child: Column(
@@ -257,22 +269,132 @@ class _BotPromptConfigPageState extends State<BotPromptConfigPage> {
             ],
           ),
         ),
-        const SizedBox(height: 20),
-        Wrap(
-          spacing: 12,
-          runSpacing: 12,
+          const SizedBox(height: 20),
+          Wrap(
+            spacing: 12,
+            runSpacing: 12,
+            children: <Widget>[
+              ElevatedButton(
+                onPressed: isBusy ? null : _saveConfig,
+                child: Text(_isSaving ? 'Guardando...' : 'Guardar'),
+              ),
+              OutlinedButton(
+                onPressed: isBusy ? null : _loadConfig,
+                child: const Text('Recargar'),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMobileLayout(bool isBusy) {
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 430),
+      child: Padding(
+        padding: const EdgeInsets.only(bottom: 96),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
-            ElevatedButton(
-              onPressed: isBusy ? null : _saveConfig,
-              child: Text(_isSaving ? 'Guardando...' : 'Guardar'),
+            Align(
+              alignment: Alignment.topLeft,
+              child: IconButton(
+                onPressed: widget.onRequestBack,
+                tooltip: 'Regresar',
+                style: IconButton.styleFrom(
+                  backgroundColor: const Color(0x33FFFFFF),
+                  foregroundColor: const Color(0xFF0F172A),
+                ),
+                icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 18),
+              ),
             ),
-            OutlinedButton(
+            const SizedBox(height: 10),
+            if (_loadError != null)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 16),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Container(
+                      width: 4,
+                      height: 40,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFD97706),
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        _loadError!,
+                        style: const TextStyle(
+                          color: Color(0xFF64748B),
+                          fontSize: 12,
+                          height: 1.45,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            const Text(
+              'Base',
+              style: TextStyle(
+                color: Color(0xFF0F172A),
+                fontSize: 16,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 12),
+            _MobilePromptField(
+              label: 'Prompt base',
+              controller: _promptBaseController,
+              hint: _uiFallbackBase,
+              enabled: !isBusy,
+              maxLines: 5,
+            ),
+            const SizedBox(height: 22),
+            const Text(
+              'Ajustes rapidos',
+              style: TextStyle(
+                color: Color(0xFF0F172A),
+                fontSize: 16,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 12),
+            _MobilePromptField(
+              label: 'Prompt corto',
+              controller: _promptShortController,
+              hint: _defaultShort,
+              enabled: !isBusy,
+              maxLines: 4,
+            ),
+            const SizedBox(height: 14),
+            _MobilePromptField(
+              label: 'Prompt humano',
+              controller: _promptHumanController,
+              hint: _defaultHuman,
+              enabled: !isBusy,
+              maxLines: 4,
+            ),
+            const SizedBox(height: 14),
+            _MobilePromptField(
+              label: 'Prompt ventas',
+              controller: _promptSalesController,
+              hint: _defaultSales,
+              enabled: !isBusy,
+              maxLines: 4,
+            ),
+            const SizedBox(height: 16),
+            TextButton(
               onPressed: isBusy ? null : _loadConfig,
               child: const Text('Recargar'),
             ),
           ],
         ),
-      ],
+      ),
     );
   }
 }
@@ -303,6 +425,69 @@ class _PromptField extends StatelessWidget {
         enabled: enabled,
         hintText: hint,
       ),
+    );
+  }
+}
+
+class _MobilePromptField extends StatelessWidget {
+  const _MobilePromptField({
+    required this.label,
+    required this.controller,
+    required this.hint,
+    required this.enabled,
+    required this.maxLines,
+  });
+
+  final String label;
+  final TextEditingController controller;
+  final String hint;
+  final bool enabled;
+  final int maxLines;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Text(
+          label,
+          style: const TextStyle(
+            color: Color(0xFF334155),
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(height: 10),
+        TextField(
+          controller: controller,
+          enabled: enabled,
+          maxLines: maxLines,
+          style: const TextStyle(
+            color: Color(0xFF0F172A),
+            fontSize: 13,
+            height: 1.45,
+          ),
+          decoration: InputDecoration(
+            hintText: hint,
+            isDense: true,
+            filled: true,
+            fillColor: const Color(0xFFF8FAFC),
+            contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(16),
+              borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(16),
+              borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(16),
+              borderSide: const BorderSide(color: Color(0xFF2563EB)),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

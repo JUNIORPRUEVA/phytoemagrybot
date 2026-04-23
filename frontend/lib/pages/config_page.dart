@@ -244,32 +244,25 @@ class _ConfigPageState extends State<ConfigPage> {
               padding: EdgeInsets.fromLTRB(horizontalPadding, compact ? 18 : 28, horizontalPadding, 28),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.center,
+                crossAxisAlignment: compact ? CrossAxisAlignment.start : CrossAxisAlignment.center,
                 children: <Widget>[
-                  _EditableLogoPreview(
-                    logoUrl: _companyLogoUrl,
-                    size: logoSize,
-                    isBusy: isBusy,
-                    onTap: isBusy ? null : _pickAndUploadLogo,
+                  Align(
+                    alignment: compact ? Alignment.centerLeft : Alignment.center,
+                    child: _EditableLogoPreview(
+                      logoUrl: _companyLogoUrl,
+                      size: logoSize,
+                      isBusy: isBusy,
+                      onTap: isBusy ? null : _pickAndUploadLogo,
+                    ),
                   ),
                   SizedBox(height: compact ? 18 : 20),
-                  Text(
-                    'Configuracion',
-                    textAlign: TextAlign.center,
-                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: -0.5,
-                          fontSize: compact ? 26 : 30,
-                        ),
-                  ),
-                  const SizedBox(height: 8),
                   ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 360),
+                    constraints: BoxConstraints(maxWidth: compact ? 420 : 360),
                     child: Text(
                       _isUploadingLogo
                           ? 'Actualizando logo...'
                           : 'Toca el logo para cambiarlo.',
-                      textAlign: TextAlign.center,
+                      textAlign: compact ? TextAlign.start : TextAlign.center,
                       style: TextStyle(
                         color: const Color(0xFF64748B),
                         fontSize: compact ? 11.5 : 12,
@@ -297,7 +290,7 @@ class _ConfigPageState extends State<ConfigPage> {
                   ),
                   SizedBox(height: compact ? 22 : 26),
                   Wrap(
-                    alignment: WrapAlignment.center,
+                    alignment: compact ? WrapAlignment.start : WrapAlignment.center,
                     spacing: 12,
                     runSpacing: 12,
                     children: <Widget>[

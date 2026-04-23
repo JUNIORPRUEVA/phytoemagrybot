@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../services/api_service.dart';
 import '../widgets/app_text_field.dart';
 import '../widgets/section_card.dart';
+import '../widgets/secondary_page_layout.dart';
 
 class MemoryPage extends StatefulWidget {
   const MemoryPage({
@@ -285,20 +286,12 @@ class _MemoryPageState extends State<MemoryPage> {
   Widget build(BuildContext context) {
     final isBusy = _isLoadingContacts || _isLoadingDetail || _isSavingMemory || _isSavingSettings;
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: <Widget>[
-        Text(
-          'Memoria',
-          style: Theme.of(context).textTheme.headlineMedium,
-        ),
-        const SizedBox(height: 6),
-        const Text(
-          'Configura cuanta conversacion recuerda el bot y edita la memoria persistente por contacto.',
-          style: TextStyle(color: Color(0xFF475569), fontSize: 14),
-        ),
-        const SizedBox(height: 28),
-        SectionCard(
+    return SecondaryPageLayout(
+      caption: 'Configura cuanta conversacion recuerda el bot y edita la memoria persistente por contacto.',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          SectionCard(
           title: 'Memoria operativa',
           subtitle: 'Controla cuantas interacciones recientes usa el bot antes de responder.',
           child: Wrap(
@@ -324,33 +317,34 @@ class _MemoryPageState extends State<MemoryPage> {
             ],
           ),
         ),
-        SectionCard(
-          title: 'Editor de memoria',
-          subtitle: 'Busca un contacto, revisa lo recordado y corrige cualquier dato manualmente.',
-          child: LayoutBuilder(
-            builder: (BuildContext context, BoxConstraints constraints) {
-              final isWide = constraints.maxWidth >= 1100;
+          SectionCard(
+            title: 'Editor de memoria',
+            subtitle: 'Busca un contacto, revisa lo recordado y corrige cualquier dato manualmente.',
+            child: LayoutBuilder(
+              builder: (BuildContext context, BoxConstraints constraints) {
+                final isWide = constraints.maxWidth >= 1100;
 
-              return isWide
-                  ? Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: <Widget>[
-                        SizedBox(width: 340, child: _buildContactsPanel(isBusy)),
-                        const SizedBox(width: 24),
-                        Expanded(child: _buildEditorPanel(isBusy)),
-                      ],
-                    )
-                  : Column(
-                      children: <Widget>[
-                        _buildContactsPanel(isBusy),
-                        const SizedBox(height: 24),
-                        _buildEditorPanel(isBusy),
-                      ],
-                    );
-            },
+                return isWide
+                    ? Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: <Widget>[
+                          SizedBox(width: 340, child: _buildContactsPanel(isBusy)),
+                          const SizedBox(width: 24),
+                          Expanded(child: _buildEditorPanel(isBusy)),
+                        ],
+                      )
+                    : Column(
+                        children: <Widget>[
+                          _buildContactsPanel(isBusy),
+                          const SizedBox(height: 24),
+                          _buildEditorPanel(isBusy),
+                        ],
+                      );
+              },
+            ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 

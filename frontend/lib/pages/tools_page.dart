@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../services/api_service.dart';
 import '../widgets/app_text_field.dart';
 import '../widgets/section_card.dart';
+import '../widgets/secondary_page_layout.dart';
 
 class ToolsPage extends StatefulWidget {
   const ToolsPage({
@@ -140,28 +141,23 @@ class _ToolsPageState extends State<ToolsPage> {
   Widget build(BuildContext context) {
     final isBusy = _isLoading || _isSaving;
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: <Widget>[
-        Text('Herramientas', style: Theme.of(context).textTheme.headlineMedium),
-        const SizedBox(height: 6),
-        const Text(
-          'Conecta servicios auxiliares como ElevenLabs y prepara nuevas integraciones.',
-          style: TextStyle(color: Color(0xFF475569), fontSize: 14),
-        ),
-        const SizedBox(height: 20),
-        if (_loadError != null)
-          DecoratedBox(
-            decoration: const BoxDecoration(
-              border: Border(left: BorderSide(color: Color(0xFFDC2626), width: 3)),
+    return SecondaryPageLayout(
+      caption: 'Conecta servicios auxiliares como ElevenLabs y prepara nuevas integraciones.',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          if (_loadError != null)
+            DecoratedBox(
+              decoration: const BoxDecoration(
+                border: Border(left: BorderSide(color: Color(0xFFDC2626), width: 3)),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.only(left: 14),
+                child: Text(_loadError!, style: const TextStyle(color: Color(0xFF475569))),
+              ),
             ),
-            child: Padding(
-              padding: const EdgeInsets.only(left: 14),
-              child: Text(_loadError!, style: const TextStyle(color: Color(0xFF475569))),
-            ),
-          ),
-        if (_loadError != null) const SizedBox(height: 20),
-        SectionCard(
+          if (_loadError != null) const SizedBox(height: 20),
+          SectionCard(
           title: 'ElevenLabs',
           subtitle: 'Activa respuestas de voz y define la cuenta que usara el bot.',
           child: Column(
@@ -272,8 +268,9 @@ class _ToolsPageState extends State<ToolsPage> {
               ),
             ],
           ),
-        ),
-      ],
+          ),
+        ],
+      ),
     );
   }
 }
