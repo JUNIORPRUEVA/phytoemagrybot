@@ -40,6 +40,7 @@ export class WhatsAppService implements OnModuleInit {
   private static readonly INBOUND_MESSAGE_DEDUP_TTL_SECONDS = 60 * 10;
   private static readonly MESSAGE_JID_CORRELATION_TTL_SECONDS = 60 * 60 * 24;
   private static readonly LID_JID_MAPPING_TTL_SECONDS = 60 * 60 * 24 * 30;
+  private static readonly RUNTIME_SIGNATURE = 'wa-lid-fallback-2026-04-23b';
   private static readonly DEFAULT_WEBHOOK_EVENTS = [
     'messages.upsert',
     'messages.set',
@@ -74,6 +75,13 @@ export class WhatsAppService implements OnModuleInit {
   ) {}
 
   async onModuleInit(): Promise<void> {
+    this.logger.log(
+      JSON.stringify({
+        event: 'whatsapp_runtime_signature',
+        signature: WhatsAppService.RUNTIME_SIGNATURE,
+      }),
+    );
+
     await this.syncConfiguredWebhookOnStartup();
   }
 
@@ -1760,6 +1768,16 @@ export class WhatsAppService implements OnModuleInit {
     if (pushName) {
       queries.push({ page: 1, offset: 100 });
     }
+
+    this.logger.log(
+      JSON.stringify({
+        event: 'whatsapp_contact_lookup_started',
+        instanceName,
+        pushName: pushName || null,
+        remoteJid: remoteJid || null,
+        queryCount: queries.length,
+      }),
+    );
 
     for (const query of queries) {
       try {
