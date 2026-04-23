@@ -868,6 +868,94 @@ test('enrichWebhookPayloadFromEvolution falls back to contact lookup when messag
   assert.equal(enrichedKey.senderPn, '18095551234@s.whatsapp.net');
 });
 
+test('enrichWebhookPayloadFromEvolution prefers the only real jid when contact lookup returns duplicate exact-name matches', async () => {
+  const service = createService();
+
+  service.configService = {
+    get: () => undefined,
+  };
+
+  service.getEvolutionClient = () => ({
+    post: async (path: string) => {
+      if (path === '/chat/findMessages/demo') {
+        return {
+          data: {
+            messages: {
+              total: 1,
+              pages: 1,
+              currentPage: 1,
+              records: [
+                {
+                  key: {
+                    remoteJid: '69132011749577@lid',
+                    fromMe: false,
+                    id: 'msg-lid-contact-ambiguous-1',
+                  },
+                  pushName: 'Junior Lopez',
+                  message: {
+                    conversation: 'Ho',
+                  },
+                  messageType: 'conversation',
+                },
+              ],
+            },
+          },
+        };
+      }
+
+      if (path === '/chat/findContacts/demo') {
+        return {
+          data: {
+            contacts: {
+              total: 2,
+              pages: 1,
+              currentPage: 1,
+              records: [
+                {
+                  remoteJid: '69132011749577@lid',
+                  pushName: 'Junior Lopez',
+                },
+                {
+                  remoteJid: '18095551234@s.whatsapp.net',
+                  pushName: 'Junior Lopez',
+                },
+              ],
+            },
+          },
+        };
+      }
+
+      throw new Error(`Unexpected path ${path}`);
+    },
+  });
+
+  const result = await service.enrichWebhookPayloadFromEvolution(
+    {
+      event: 'messages.upsert',
+      data: {
+        key: {
+          remoteJid: '69132011749577@lid',
+          fromMe: false,
+          id: 'msg-lid-contact-ambiguous-1',
+        },
+        pushName: 'Junior Lopez',
+        message: {
+          conversation: 'Ho',
+        },
+        messageType: 'conversation',
+      },
+    },
+    'demo',
+  );
+
+  const enrichedData = service.getWebhookMessageData(result);
+  const enrichedKey = enrichedData.key;
+
+  assert.equal(enrichedKey.remoteJidAlt, '18095551234@s.whatsapp.net');
+  assert.equal(enrichedKey.participantAlt, '18095551234@s.whatsapp.net');
+  assert.equal(enrichedKey.senderPn, '18095551234@s.whatsapp.net');
+});
+
 test('enrichWebhookPayloadFromKnownLid reuses cached lid mappings before contact lookup', async () => {
   const service = createService();
 

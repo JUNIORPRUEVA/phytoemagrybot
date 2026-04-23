@@ -1945,12 +1945,26 @@ export class WhatsAppService implements OnModuleInit {
             (this.asString(record.pushName) || '').trim().toLowerCase() === normalizedPushName,
         )
       : [];
+    const exactRealJidMatches = exactNameMatches.filter((record) => {
+      const contactJid = this.extractEvolutionContactJid(record);
+      return Boolean(contactJid && contactJid.includes('@s.whatsapp.net'));
+    });
     const preferredCandidates = exactNameMatches.length ? exactNameMatches : candidates;
     const uniqueJids = new Set(
       preferredCandidates
         .map((record) => this.extractEvolutionContactJid(record))
         .filter((value): value is string => Boolean(value)),
     );
+
+    const uniqueExactRealJids = new Set(
+      exactRealJidMatches
+        .map((record) => this.extractEvolutionContactJid(record))
+        .filter((value): value is string => Boolean(value)),
+    );
+
+    if (uniqueExactRealJids.size === 1 && exactRealJidMatches.length >= 1) {
+      return exactRealJidMatches[0] ?? null;
+    }
 
     if (preferredCandidates.length > 1 && uniqueJids.size > 1 && exactNameMatches.length > 0) {
       return null;
