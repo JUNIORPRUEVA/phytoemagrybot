@@ -505,7 +505,7 @@ export class MemoryService {
 
   private extractIntent(text: string): string | null {
     const normalized = text.toLowerCase();
-    const hotLeadKeywords = ['lo quiero', 'dame uno', 'como compro', 'cómo compro', 'me interesa', 'lo compro'];
+    const hotLeadKeywords = ['lo quiero', 'dame uno', 'como compro', 'cómo compro', 'lo compro', 'quiero comprar', 'te voy a comprar'];
     if (hotLeadKeywords.some((keyword) => normalized.includes(keyword))) {
       return 'HOT';
     }
@@ -517,7 +517,7 @@ export class MemoryService {
       { keywords: ['comprar', 'pedido', 'ordenar'], intent: 'compra' },
       { keywords: ['ok', 'perfecto', 'dale', 'esta bien', 'está bien'], intent: 'cierre' },
       { keywords: ['envio', 'delivery', 'entrega'], intent: 'consulta_envio' },
-      { keywords: ['info', 'informacion', 'detalles', 'explicame'], intent: 'consulta_informacion' },
+      { keywords: ['info', 'informacion', 'detalles', 'explicame', 'explícame', 'hablame', 'háblame', 'cuentame', 'cuéntame', 'como funciona', 'cómo funciona'], intent: 'consulta_informacion' },
       { keywords: ['hola', 'buenas', 'saludos'], intent: 'saludo' },
       { keywords: ['ayuda', 'soporte', 'problema'], intent: 'soporte' },
     ];

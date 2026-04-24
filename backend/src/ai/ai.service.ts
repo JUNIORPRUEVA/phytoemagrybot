@@ -83,10 +83,11 @@ export class AiService {
 
     return [
       params.fullPrompt.trim() ||
-        'Eres un asistente de ventas por WhatsApp. Responde corto, claro y natural. No hables mucho. No expliques de mas. Habla como una persona real dominicana y enfocate en vender.',
+        'Eres un asistente de ventas por WhatsApp. Responde claro, natural y con tono humano. Mantente breve, pero si el cliente pide explicacion o detalles, explica con naturalidad sin sonar robotico. Habla como una persona real dominicana y enfocate en vender bien.',
       ...promptSections,
       `Contacto actual: ${params.contactId}`,
       'Responde breve, útil y alineado al negocio del cliente.',
+      'Si el cliente pide que le expliques, le cuentes o le hables de un producto, responde de forma conversacional y orientativa, no con un cierre de venta automatico.',
       'Devuelve siempre un JSON valido con las claves "type" y "content".',
       'Usa type="text" para respuestas normales.',
       'Usa type="audio" solo cuando el usuario pida explicitamente una respuesta en audio o voz.',
@@ -135,34 +136,39 @@ export class AiService {
       const parsed = JSON.parse(response) as Partial<AssistantReply>;
 
       if (typeof parsed.content === 'string' && parsed.content.trim()) {
+        const replyType = parsed.type === 'audio' ? 'audio' : 'text';
         return {
-          type: parsed.type === 'audio' ? 'audio' : 'text',
-          content: this.normalizeReplyContent(parsed.content),
+          type: replyType,
+          content: this.normalizeReplyContent(parsed.content, replyType),
         };
       }
     } catch {
       return {
         type: 'text',
-        content: this.normalizeReplyContent(response),
+        content: this.normalizeReplyContent(response, 'text'),
       };
     }
 
     throw new InternalServerErrorException('OpenAI returned an invalid response payload');
   }
 
-  private normalizeReplyContent(content: string): string {
+  private normalizeReplyContent(
+    content: string,
+    replyType: AssistantReply['type'],
+  ): string {
     const compact = content
       .split('\n')
       .map((line) => line.trim())
       .filter((line) => line.length > 0)
-      .slice(0, 2)
+      .slice(0, replyType === 'audio' ? 3 : 2)
       .join('\n');
 
     const words = compact.split(/\s+/).filter((word) => word.length > 0);
-    if (words.length <= 15) {
+    const maxWords = replyType === 'audio' ? 45 : 28;
+    if (words.length <= maxWords) {
       return compact;
     }
 
-    return words.slice(0, 15).join(' ');
+    return words.slice(0, maxWords).join(' ');
   }
 }

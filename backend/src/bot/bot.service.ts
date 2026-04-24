@@ -71,7 +71,11 @@ export class BotService {
       normalizedMessage,
     );
     const intent = this.detectIntent(normalizedMessage);
-    const hotLead = this.detectHotLead(normalizedMessage) || memoryContext.clientMemory.lastIntent === 'HOT';
+    const hotLead = this.shouldTreatAsHotLead(
+      normalizedMessage,
+      intent,
+      memoryContext.clientMemory.lastIntent,
+    );
     const mediaFiles = await this.selectMedia(normalizedMessage, intent);
     const preferredReplyType = this.resolvePreferredReplyType(normalizedMessage);
     const usedMemory = this.hasUsefulMemory(memoryContext, history.length);
@@ -283,6 +287,10 @@ export class BotService {
       return 'hot';
     }
 
+    if (this.requiresDetailedResponse(normalized)) {
+      return 'duda';
+    }
+
     if (['funciona', 'calidad', 'sirve', 'garantia', 'garantía', 'resultado', 'resultados'].some((keyword) => normalized.includes(keyword))) {
       return 'duda';
     }
@@ -304,7 +312,7 @@ export class BotService {
 
   detectHotLead(message: string): boolean {
     const normalized = message.trim().toLowerCase();
-    return ['lo quiero', 'dame uno', 'como compro', 'cómo compro', 'me interesa', 'lo compro']
+    return ['lo quiero', 'dame uno', 'como compro', 'cómo compro', 'lo compro', 'quiero comprar', 'te voy a comprar']
       .some((keyword) => normalized.includes(keyword));
   }
 
@@ -356,6 +364,10 @@ export class BotService {
     preferredReplyType: BotReplyResult['replyType'];
     usedMemory: boolean;
   }): BotReplyResult | null {
+    if (this.requiresDetailedResponse(params.message)) {
+      return null;
+    }
+
     if (params.hotLead || params.intent === 'hot') {
       return this.createResult(
         'Perfecto 👍 te lo dejo listo, ¿te lo envío hoy?',
@@ -435,6 +447,57 @@ export class BotService {
 
   private resolvePreferredReplyType(message: string): BotReplyResult['replyType'] {
     return this.prefersVoiceReply(message) ? 'audio' : 'text';
+  }
+
+  private shouldTreatAsHotLead(
+    message: string,
+    intent: BotIntent,
+    lastIntent: string | null,
+  ): boolean {
+    if (this.detectHotLead(message)) {
+      return true;
+    }
+
+    if (lastIntent !== 'HOT') {
+      return false;
+    }
+
+    if (this.requiresDetailedResponse(message)) {
+      return false;
+    }
+
+    return intent === 'compra' || intent === 'cierre' || intent === 'interes' || intent === 'hot';
+  }
+
+  private requiresDetailedResponse(message: string): boolean {
+    const normalized = message.trim().toLowerCase();
+    if (!normalized) {
+      return false;
+    }
+
+    return [
+      'explicame',
+      'explícame',
+      'hablame',
+      'háblame',
+      'cuentame',
+      'cuéntame',
+      'dime mas',
+      'dime más',
+      'quiero saber',
+      'me gustaria saber',
+      'me gustaría saber',
+      'como funciona',
+      'cómo funciona',
+      'que contiene',
+      'qué contiene',
+      'beneficios',
+      'hablame un poco',
+      'háblame un poco',
+      'un poco de',
+      'de la pastilla',
+      'de las pastillas',
+    ].some((keyword) => normalized.includes(keyword));
   }
 
   private prefersVoiceReply(message: string): boolean {

@@ -190,3 +190,18 @@ test('visual request requests more gallery media', async () => {
   assert.equal(result.usedGallery, true);
   assert.equal(result.mediaFiles.length, 5);
 });
+
+test('informational request after a hot lead uses AI instead of the hot close', async () => {
+  const service = createService({
+    lastIntent: 'HOT',
+    aiReply: 'Claro, te explico un poco como funciona la pastilla y para quien va mejor.',
+  });
+  const result = await service.processIncomingMessage(
+    '18095551234',
+    'Antes explicame un poco de la pastilla',
+  );
+
+  assert.equal(result.source, 'ai');
+  assert.equal(result.hotLead, false);
+  assert.match(result.reply.toLowerCase(), /explico|funciona|pastilla/);
+});

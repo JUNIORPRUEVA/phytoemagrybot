@@ -877,8 +877,9 @@ export class WhatsAppService implements OnModuleInit {
 
     if (shouldSendAudioReply) {
       try {
+        const spokenReply = this.prepareReplyForVoice(botReply.reply);
         const audio = await this.voiceService.generateVoice({
-          text: botReply.reply,
+          text: spokenReply,
           openAiKey: resolved.config.openaiKey,
           elevenLabsKey: resolved.config.elevenlabsKey ?? undefined,
           voiceId: resolved.whatsapp.audioVoiceId,
@@ -1260,6 +1261,29 @@ export class WhatsAppService implements OnModuleInit {
     }
 
     return Boolean(incoming.audio?.ptt || incoming.audio);
+  }
+
+  private prepareReplyForVoice(reply: string): string {
+    const withoutEmoji = reply.replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, ' ');
+    const normalized = withoutEmoji
+      .replace(/[¡!]{2,}/g, '!')
+      .replace(/[?]{2,}/g, '?')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    if (!normalized) {
+      return 'Claro, te explico.';
+    }
+
+    const spoken = normalized
+      .replace(/^perfecto\b/i, 'Perfecto,')
+      .replace(/^claro\b/i, 'Claro,')
+      .replace(/^si\b/i, 'Sí,')
+      .replace(/^sí\b/i, 'Sí,')
+      .replace(/\bte lo envio hoy\b/i, 'te lo envío hoy')
+      .replace(/\bte lo dejo listo\b/i, 'te lo dejo listo');
+
+    return /[.!?]$/.test(spoken) ? spoken : `${spoken}.`;
   }
 
   private async sendAudioWithRetry(

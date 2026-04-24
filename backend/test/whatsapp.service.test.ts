@@ -1997,6 +1997,16 @@ test('processAndDeliverMessage can send media and then a voice reply', async () 
   assert.equal(sentTexts.length, 0);
 });
 
+test('prepareReplyForVoice removes emojis and leaves spoken punctuation', () => {
+  const service = createService();
+
+  const result = service.prepareReplyForVoice('Perfecto 👍 te lo dejo listo, ¿te lo envío hoy?');
+
+  assert.equal(result.includes('👍'), false);
+  assert.match(result, /^Perfecto,/);
+  assert.match(result, /\?$/);
+});
+
 test('processIncomingAudioMessage rejects audios longer than 60 seconds', async () => {
   const { service, sentTexts, sentAudios, voiceService, getRememberedVoicePreferences } = createAudioFlowService();
 
