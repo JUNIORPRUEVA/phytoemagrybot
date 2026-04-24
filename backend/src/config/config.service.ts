@@ -16,7 +16,7 @@ export class ClientConfigService {
     'Eres un asistente profesional de WhatsApp. Responde con claridad, foco comercial y tono amable.';
   private static readonly DEFAULT_AI_MODEL = 'gpt-4o-mini';
   private static readonly DEFAULT_AI_TEMPERATURE = 0.4;
-  private static readonly DEFAULT_AI_MAX_TOKENS = 180;
+  private static readonly DEFAULT_AI_MAX_TOKENS = 420;
   private static readonly DEFAULT_MEMORY_WINDOW = 6;
   private static readonly DEFAULT_RESPONSE_CACHE_TTL_SECONDS = 60;
   private static readonly DEFAULT_SPAM_GROUP_WINDOW_MS = 2000;

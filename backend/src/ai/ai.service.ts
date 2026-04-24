@@ -17,6 +17,9 @@ import {
 
 @Injectable()
 export class AiService {
+  private static readonly MIN_REPLY_MAX_TOKENS = 420;
+  private static readonly RETRY_REPLY_MAX_TOKENS = 720;
+
   async generateReply(params: GenerateReplyParams): Promise<AssistantReply> {
     const {
       config,
@@ -36,7 +39,11 @@ export class AiService {
     const aiSettings = config.aiSettings;
     const modelName = process.env.OPENAI_MODEL?.trim() || aiSettings?.modelName || 'gpt-4o-mini';
     const temperature = aiSettings?.temperature ?? 0.4;
-    const maxCompletionTokens = aiSettings?.maxCompletionTokens ?? 180;
+    const configuredMaxCompletionTokens = aiSettings?.maxCompletionTokens ?? 180;
+    const maxCompletionTokens = Math.max(
+      configuredMaxCompletionTokens,
+      AiService.MIN_REPLY_MAX_TOKENS,
+    );
     const memoryWindow = aiSettings?.memoryWindow ?? 6;
 
     if (!config.openaiKey.trim()) {
@@ -46,54 +53,71 @@ export class AiService {
     try {
       const openai = new OpenAI({ apiKey: config.openaiKey });
 
-      const completion = await openai.chat.completions.create({
+      const messages = [
+        {
+          role: 'system' as const,
+          content: this.buildSystemPromptFromConfig({
+            fullPrompt,
+            contactId,
+            config,
+            classifiedIntent,
+            decisionAction,
+            purchaseIntentScore,
+            responseStyle,
+            leadStage,
+            replyObjective,
+          }),
+        },
+        ...(companyContext.trim()
+          ? [
+              {
+                role: 'system' as const,
+                content: companyContext,
+              },
+            ]
+          : []),
+        ...(context.trim()
+          ? [
+              {
+                role: 'system' as const,
+                content: context,
+              },
+            ]
+          : []),
+        ...history.slice(-memoryWindow).map((item) => ({
+          role: item.role,
+          content: item.content.slice(0, 500),
+        })),
+        {
+          role: 'user' as const,
+          content: message.slice(0, 500),
+        },
+      ];
+
+      let completion = await openai.chat.completions.create({
         model: modelName,
         temperature,
         max_completion_tokens: maxCompletionTokens,
-        messages: [
-          {
-            role: 'system',
-            content: this.buildSystemPromptFromConfig({
-              fullPrompt,
-              contactId,
-              config,
-              classifiedIntent,
-              decisionAction,
-              purchaseIntentScore,
-              responseStyle,
-              leadStage,
-              replyObjective,
-            }),
-          },
-          ...(companyContext.trim()
-            ? [
-                {
-                  role: 'system' as const,
-                  content: companyContext,
-                },
-              ]
-            : []),
-          ...(context.trim()
-            ? [
-                {
-                  role: 'system' as const,
-                  content: context,
-                },
-              ]
-            : []),
-          ...history.slice(-memoryWindow).map((item) => ({
-            role: item.role,
-            content: item.content.slice(0, 500),
-          })),
-          {
-            role: 'user',
-            content: message.slice(0, 500),
-          },
-        ],
+        messages,
         response_format: {
           type: 'json_object',
         },
       });
+
+      if (
+        completion.choices[0]?.finish_reason === 'length' &&
+        maxCompletionTokens < AiService.RETRY_REPLY_MAX_TOKENS
+      ) {
+        completion = await openai.chat.completions.create({
+          model: modelName,
+          temperature,
+          max_completion_tokens: AiService.RETRY_REPLY_MAX_TOKENS,
+          messages,
+          response_format: {
+            type: 'json_object',
+          },
+        });
+      }
 
       const response = completion.choices[0]?.message?.content?.trim();
 
@@ -169,7 +193,7 @@ export class AiService {
       'Usa la memoria para aprovechar nombre, interes y dudas previas. No repitas informacion ya dada salvo que ayude a cerrar.',
       'Si preguntan precio, responde directo y con valor. Si tienen duda, responde con confianza. Si piden explicacion, explica sin sonar tecnico. Si toca cerrar, guia la compra con suavidad.',
       'Evita respuestas largas, lenguaje formal, preguntas innecesarias y frases roboticas.',
-      'La respuesta final debe sonar humana, vender con tacto y normalmente quedarse en 2 o 3 lineas maximo.',
+      'La respuesta final debe sonar humana y vender con tacto. Ve al punto, pero completa bien la idea cuando el cliente necesite contexto, explicacion o pasos claros.',
     ].join('\n');
   }
 
@@ -283,14 +307,14 @@ export class AiService {
 
   private buildResponseStyleInstruction(style: AssistantResponseStyle): string {
     if (style === 'brief') {
-      return 'Modo de respuesta: breve. Si preguntan precio, disponibilidad, envio o una duda puntual, responde directo y concreto. Da solo lo necesario y como mucho una pregunta corta para avanzar la conversacion.';
+      return 'Modo de respuesta: breve. Si preguntan precio, disponibilidad, envio o una duda puntual, responde directo y concreto. Pero no dejes frases a medias ni recortes informacion necesaria: si hace falta una segunda o tercera frase para completar bien la idea, incluyela.';
     }
 
     if (style === 'detailed') {
-      return 'Modo de respuesta: con contexto. Si piden informacion, explicacion, beneficios, contenido o como funciona, responde con suficiente contexto, de forma natural y ordenada, sin sonar largo ni robotico.';
+      return 'Modo de respuesta: con contexto. Si piden informacion, explicacion, beneficios, contenido o como funciona, responde con suficiente contexto, de forma natural y ordenada, completando la idea de principio a fin sin sonar largo ni robotico.';
     }
 
-    return 'Modo de respuesta: equilibrado. Responde natural, clara y util, sin quedarte corto ni hablar de mas.';
+    return 'Modo de respuesta: equilibrado. Responde natural, clara y util, sin quedarte corto ni hablar de mas. Prioriza que la respuesta salga completa y entendible.';
   }
 
   private readPromptSections(configurations: unknown): string[] {

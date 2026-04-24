@@ -6,6 +6,7 @@ import { BotModule } from './bot/bot.module';
 import { BotConfigModule } from './bot-config/bot-config.module';
 import { CompanyContextModule } from './company-context/company-context.module';
 import { ClientConfigModule } from './config/config.module';
+import { ConversationsModule } from './conversations/conversations.module';
 import { FollowupModule } from './followup/followup.module';
 import { HealthController } from './health.controller';
 import { MediaModule } from './media/media.module';
@@ -23,6 +24,7 @@ import { WhatsAppModule } from './whatsapp/whatsapp.module';
     ClientConfigModule,
     BotConfigModule,
     CompanyContextModule,
+    ConversationsModule,
     MemoryModule,
     FollowupModule,
     MediaModule,

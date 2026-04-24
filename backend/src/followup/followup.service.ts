@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import axios from 'axios';
 import { ConversationFollowup } from '@prisma/client';
@@ -94,6 +94,100 @@ export class FollowupService {
         nextFollowupAt: null,
       },
     });
+  }
+
+  async getFollowupState(contactId: string) {
+    const normalizedContactId = this.normalizeContactId(contactId);
+    const followup = await this.prisma.conversationFollowup.findUnique({
+      where: { contactId: normalizedContactId },
+    });
+
+    return this.toFollowupSnapshot(normalizedContactId, followup);
+  }
+
+  async scheduleManualFollowup(params: {
+    contactId: string;
+    outboundAddress?: string | null;
+    reply?: string | null;
+    nextFollowupAt?: Date | null;
+  }) {
+    const contactId = this.normalizeContactId(params.contactId);
+    const config = await this.getFollowupConfig();
+
+    if (!config.enabled) {
+      throw new BadRequestException('Followups are disabled in bot settings');
+    }
+
+    const nextFollowupAt = params.nextFollowupAt ?? this.computeNextFollowupAt(0, new Date(), config);
+    if (nextFollowupAt == null || Number.isNaN(nextFollowupAt.getTime())) {
+      throw new BadRequestException('nextFollowupAt is invalid');
+    }
+
+    const normalizedReply = params.reply?.trim() || null;
+    const followup = await this.prisma.conversationFollowup.upsert({
+      where: { contactId },
+      create: {
+        contactId,
+        outboundAddress: this.normalizeOutboundAddress(params.outboundAddress, contactId),
+        lastMessageFrom: 'bot',
+        lastMessageAt: new Date(),
+        followupStep: 0,
+        isActive: true,
+        nextFollowupAt,
+        lastFollowupMessage: normalizedReply,
+      },
+      update: {
+        outboundAddress: this.normalizeOutboundAddress(params.outboundAddress, contactId),
+        lastMessageFrom: 'bot',
+        lastMessageAt: new Date(),
+        followupStep: 0,
+        isActive: true,
+        nextFollowupAt,
+        lastFollowupMessage: normalizedReply,
+      },
+    });
+
+    return this.toFollowupSnapshot(contactId, followup);
+  }
+
+  async sendManualMessage(params: {
+    contactId: string;
+    outboundAddress?: string | null;
+    message: string;
+    scheduleFollowup?: boolean;
+  }) {
+    const contactId = this.normalizeContactId(params.contactId);
+    const message = params.message.trim();
+
+    if (!message) {
+      throw new BadRequestException('message is required');
+    }
+
+    const outboundAddress = this.normalizeOutboundAddress(params.outboundAddress, contactId);
+    await this.sendFollowupText(outboundAddress, message);
+    await this.memoryService.saveMessage({
+      contactId,
+      role: 'assistant',
+      content: message,
+    });
+
+    if (params.scheduleFollowup ?? true) {
+      await this.registerBotReply({
+        contactId,
+        outboundAddress,
+        reply: message,
+      });
+    } else {
+      await this.deactivate(contactId, 'manual_send_without_followup');
+    }
+
+    return {
+      contactId,
+      outboundAddress,
+      message,
+      sentAt: new Date().toISOString(),
+      followup: await this.getFollowupState(contactId),
+    };
   }
 
   @Cron(CronExpression.EVERY_MINUTE)
@@ -561,6 +655,20 @@ export class FollowupService {
         reason,
       }),
     );
+  }
+
+  private toFollowupSnapshot(contactId: string, followup: ConversationFollowup | null) {
+    return {
+      contactId,
+      outboundAddress: followup?.outboundAddress ?? null,
+      lastMessageFrom: followup?.lastMessageFrom ?? null,
+      lastMessageAt: followup?.lastMessageAt?.toISOString() ?? null,
+      followupStep: followup?.followupStep ?? 0,
+      isActive: followup?.isActive ?? false,
+      nextFollowupAt: followup?.nextFollowupAt?.toISOString() ?? null,
+      lastFollowupMessage: followup?.lastFollowupMessage ?? null,
+      updatedAt: followup?.updatedAt?.toISOString() ?? null,
+    };
   }
 
   private normalizeComparable(value: string): string {

@@ -29,7 +29,7 @@ test('system prompt enforces internal sales analysis and dominican human tone', 
   assert.match(prompt, /Intencion clasificada: info/i);
   assert.match(prompt, /Estrategia elegida: guiar/i);
   assert.match(prompt, /No repitas literalmente frases, cierres ni ideas/i);
-  assert.match(prompt, /2 o 3 lineas maximo/i);
+  assert.match(prompt, /completa bien la idea/i);
   assert.match(prompt, /Si no cumple, reescribela antes de devolverla/i);
 });
 
@@ -50,4 +50,5 @@ test('system prompt keeps brief mode focused on direct answers', () => {
 
   assert.match(prompt, /Modo de respuesta: breve/i);
   assert.match(prompt, /precio, disponibilidad, envio o una duda puntual/i);
+  assert.match(prompt, /no dejes frases a medias/i);
 });

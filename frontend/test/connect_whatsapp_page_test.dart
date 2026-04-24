@@ -181,6 +181,12 @@ extension on ClientConfigData {
       responseCacheTtlSeconds: responseCacheTtlSeconds,
       spamGroupWindowMs: spamGroupWindowMs,
       allowAudioReplies: allowAudioReplies,
+      followupEnabled: followupEnabled,
+      followup1DelayMinutes: followup1DelayMinutes,
+      followup2DelayMinutes: followup2DelayMinutes,
+      followup3DelayHours: followup3DelayHours,
+      maxFollowups: maxFollowups,
+      stopIfUserReply: stopIfUserReply,
       companyName: companyName,
       companyDetails: companyDetails,
       companyLogoUrl: companyLogoUrl,
@@ -189,6 +195,33 @@ extension on ClientConfigData {
 }
 
 void main() {
+  testWidgets('compact layout renders instance tile without flex exceptions', (
+    WidgetTester tester,
+  ) async {
+    final binding = TestWidgetsFlutterBinding.ensureInitialized();
+    await binding.setSurfaceSize(const Size(390, 844));
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: ConnectWhatsAppPage(
+              apiService: _FakeApiService(),
+              onConfigUpdated: () {},
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    expect(find.text('test-instance'), findsWidgets);
+
+    await binding.setSurfaceSize(null);
+  });
+
   testWidgets('connect page renders qr image for selected connecting instance', (
     WidgetTester tester,
   ) async {

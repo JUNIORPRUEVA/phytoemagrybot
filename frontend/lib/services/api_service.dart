@@ -1,18 +1,7 @@
-import 'dart:convert';
-import 'dart:typed_data';
-
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
-import 'package:http_parser/http_parser.dart';
 
-class ApiException implements Exception {
-  ApiException(this.message, {this.statusCode});
-
-  final String message;
-  final int? statusCode;
-
-  @override
-  String toString() => message;
-}
+import 'api_client.dart';
 
 class ClientConfigData {
   ClientConfigData({
@@ -144,6 +133,48 @@ class ClientConfigData {
     }
 
     return next;
+  }
+
+  ClientConfigData withHealth(ApiHealthData health) {
+    return ClientConfigData(
+      id: id,
+      backendOnline: health.online,
+      backendStatus: health.status,
+      openaiConfigured: openaiConfigured,
+      elevenLabsConfigured: elevenLabsConfigured,
+      evolutionApiUrl: evolutionApiUrl,
+      evolutionApiKey: evolutionApiKey,
+      instanceName: instanceName,
+      webhookSecret: webhookSecret,
+      webhookUrl: webhookUrl,
+      fallbackMessage: fallbackMessage,
+      audioVoiceId: audioVoiceId,
+      elevenLabsBaseUrl: elevenLabsBaseUrl,
+      promptBase: promptBase,
+      greetingPrompt: greetingPrompt,
+      companyInfoPrompt: companyInfoPrompt,
+      productInfoPrompt: productInfoPrompt,
+      salesGuidelinesPrompt: salesGuidelinesPrompt,
+      objectionHandlingPrompt: objectionHandlingPrompt,
+      closingPrompt: closingPrompt,
+      supportPrompt: supportPrompt,
+      aiModelName: aiModelName,
+      aiTemperature: aiTemperature,
+      aiMemoryWindow: aiMemoryWindow,
+      aiMaxCompletionTokens: aiMaxCompletionTokens,
+      responseCacheTtlSeconds: responseCacheTtlSeconds,
+      spamGroupWindowMs: spamGroupWindowMs,
+      allowAudioReplies: allowAudioReplies,
+      followupEnabled: followupEnabled,
+      followup1DelayMinutes: followup1DelayMinutes,
+      followup2DelayMinutes: followup2DelayMinutes,
+      followup3DelayHours: followup3DelayHours,
+      maxFollowups: maxFollowups,
+      stopIfUserReply: stopIfUserReply,
+      companyName: companyName,
+      companyDetails: companyDetails,
+      companyLogoUrl: companyLogoUrl,
+    );
   }
 
   factory ClientConfigData.empty() {
@@ -724,9 +755,256 @@ class MediaFileData {
   }
 }
 
+class _ConfigRepository {
+  const _ConfigRepository(this._client);
+
+  final ApiClient _client;
+
+  Future<ClientConfigData> getConfig({
+    required bool backendOnline,
+    required String backendStatus,
+  }) async {
+    final data = await _client.getJson('/config');
+    return ClientConfigData.fromJson(
+      data,
+      backendOnline: backendOnline,
+      backendStatus: backendStatus,
+    );
+  }
+
+  Future<void> save(Map<String, dynamic> payload) async {
+    await _client.postJson('/config', body: payload);
+  }
+}
+
+class _BotConfigRepository {
+  const _BotConfigRepository(this._client);
+
+  final ApiClient _client;
+
+  Future<BotPromptConfigData> get() async {
+    final data = await _client.getJson('/bot-config');
+    return BotPromptConfigData.fromJson(data);
+  }
+
+  Future<BotPromptConfigData> save({
+    required String promptBase,
+    required String promptShort,
+    required String promptHuman,
+    required String promptSales,
+  }) async {
+    final data = await _client.postJson(
+      '/bot-config',
+      body: <String, dynamic>{
+        'promptBase': promptBase,
+        'promptShort': promptShort,
+        'promptHuman': promptHuman,
+        'promptSales': promptSales,
+      },
+    );
+
+    return BotPromptConfigData.fromJson(data);
+  }
+}
+
+class _CompanyContextRepository {
+  const _CompanyContextRepository(this._client);
+
+  final ApiClient _client;
+
+  Future<CompanyContextData> get() async {
+    final data = await _client.getJson('/company-context');
+    return CompanyContextData.fromJson(data);
+  }
+
+  Future<CompanyContextData> save(Map<String, dynamic> payload) async {
+    final data = await _client.postJson('/company-context', body: payload);
+    return CompanyContextData.fromJson(data);
+  }
+}
+
+class _MemoryRepository {
+  const _MemoryRepository(this._client);
+
+  final ApiClient _client;
+
+  Future<List<MemoryContactListItemData>> listContacts({String? query}) async {
+    final data = await _client.getJsonList(
+      '/memory/contacts',
+      queryParameters: <String, String>{
+        if (query != null && query.trim().isNotEmpty) 'query': query.trim(),
+      },
+    );
+    return data.map(MemoryContactListItemData.fromJson).toList();
+  }
+
+  Future<ConversationContextData> getContext(String contactId) async {
+    final data = await _client.getJson(
+      '/memory/${Uri.encodeComponent(contactId)}',
+    );
+    return ConversationContextData.fromJson(data);
+  }
+
+  Future<ConversationContextData> updateEntry({
+    required String contactId,
+    required Map<String, dynamic> payload,
+  }) async {
+    final data = await _client.postJson(
+      '/memory/${Uri.encodeComponent(contactId)}',
+      body: payload,
+    );
+    return ConversationContextData.fromJson(data);
+  }
+}
+
+class _WhatsAppRepository {
+  const _WhatsAppRepository(this._client);
+
+  final ApiClient _client;
+
+  Future<WhatsAppChannelData> getChannel() async {
+    final data = await _client.getJson('/whatsapp/channel');
+    return WhatsAppChannelData.fromJson(data);
+  }
+
+  Future<ManagedWhatsAppInstanceData> createInstance(
+    String instanceName, {
+    required String phone,
+  }) async {
+    final data = await _client.postJson(
+      '/whatsapp/create',
+      body: <String, dynamic>{
+        'instanceName': instanceName,
+        'phone': phone.trim(),
+      },
+    );
+    return ManagedWhatsAppInstanceData.fromJson(data);
+  }
+
+  Future<List<ManagedWhatsAppInstanceData>> getInstances() async {
+    final data = await _client.getJsonList('/whatsapp/list');
+    return data.map(ManagedWhatsAppInstanceData.fromJson).toList();
+  }
+
+  Future<WhatsAppQrData> getQr(String instanceName) async {
+    final data = await _client.getJson(
+      '/whatsapp/qr/${Uri.encodeComponent(instanceName)}',
+    );
+    return WhatsAppQrData.fromJson(data);
+  }
+
+  Future<WhatsAppWebhookData> setWebhook(
+    String instanceName, {
+    String? webhookUrl,
+  }) async {
+    final data = await _client.postJson(
+      '/whatsapp/webhook/${Uri.encodeComponent(instanceName)}',
+      body: <String, dynamic>{
+        if (webhookUrl != null && webhookUrl.trim().isNotEmpty)
+          'webhook': webhookUrl.trim(),
+        'events': <String>['messages.upsert'],
+      },
+    );
+    return WhatsAppWebhookData.fromJson(data);
+  }
+
+  Future<ManagedWhatsAppInstanceData> getStatus(String instanceName) async {
+    final data = await _client.getJson(
+      '/whatsapp/status/${Uri.encodeComponent(instanceName)}',
+    );
+    return ManagedWhatsAppInstanceData.fromJson(data);
+  }
+
+  Future<ManagedWhatsAppInstanceData> updateInstanceMetadata({
+    required String instanceName,
+    required String displayName,
+    required String phone,
+  }) async {
+    final data = await _client.patchJson(
+      '/whatsapp/instance/${Uri.encodeComponent(instanceName)}',
+      body: <String, dynamic>{
+        'displayName': displayName.trim(),
+        'phone': phone.trim(),
+      },
+    );
+    return ManagedWhatsAppInstanceData.fromJson(data);
+  }
+
+  Future<DeleteWhatsAppInstanceResponse> deleteInstance(
+    String instanceName,
+  ) async {
+    final data = await _client.deleteJson(
+      '/whatsapp/delete/${Uri.encodeComponent(instanceName)}',
+    );
+    return DeleteWhatsAppInstanceResponse.fromJson(data);
+  }
+
+  Future<WhatsAppChannelData> createChannelInstance() async {
+    final data = await _client.postJson('/whatsapp/channel/instance');
+    return WhatsAppChannelData.fromJson(data);
+  }
+
+  Future<WhatsAppChannelData> refreshQr() async {
+    final data = await _client.postJson('/whatsapp/channel/qr');
+    return WhatsAppChannelData.fromJson(data);
+  }
+}
+
+class _MediaRepository {
+  const _MediaRepository(this._client);
+
+  final ApiClient _client;
+
+  Future<List<MediaFileData>> list() async {
+    final data = await _client.getJsonList('/media');
+    return data.map(MediaFileData.fromJson).toList();
+  }
+
+  Future<MediaFileData> upload({
+    required Uint8List fileBytes,
+    required String fileName,
+    required String contentType,
+    required String title,
+    String? description,
+  }) async {
+    final normalizedDescription = description?.trim() ?? '';
+    final data = await _client.postMultipart(
+      '/media/upload',
+      fieldName: 'file',
+      fileBytes: fileBytes,
+      fileName: fileName,
+      contentType: contentType,
+      fields: <String, String>{
+        'title': title,
+        if (normalizedDescription.isNotEmpty)
+          'description': normalizedDescription,
+      },
+    );
+
+    return MediaFileData.fromJson(data);
+  }
+
+  Future<void> delete(int id) async {
+    await _client.deleteJson('/media/$id');
+  }
+}
+
 class ApiService {
-  ApiService({this.baseUrl = defaultBaseUrl, http.Client? client})
-    : _client = client ?? http.Client();
+  static const Duration _healthCacheTtl = Duration(seconds: 5);
+  static const Duration _configCacheTtl = Duration(seconds: 10);
+
+  ApiService({
+    this.baseUrl = defaultBaseUrl,
+    http.Client? client,
+    ApiClient? apiClient,
+  }) : _apiClient = apiClient ?? ApiClient(baseUrl: baseUrl, client: client) {
+    _configRepository = _ConfigRepository(_apiClient);
+    _botConfigRepository = _BotConfigRepository(_apiClient);
+    _companyContextRepository = _CompanyContextRepository(_apiClient);
+    _memoryRepository = _MemoryRepository(_apiClient);
+    _whatsAppRepository = _WhatsAppRepository(_apiClient);
+    _mediaRepository = _MediaRepository(_apiClient);
+  }
 
   static const String defaultBaseUrl = String.fromEnvironment(
     'API_BASE_URL',
@@ -735,26 +1013,50 @@ class ApiService {
   );
 
   final String baseUrl;
-  final http.Client _client;
+  final ApiClient _apiClient;
+  late final _ConfigRepository _configRepository;
+  late final _BotConfigRepository _botConfigRepository;
+  late final _CompanyContextRepository _companyContextRepository;
+  late final _MemoryRepository _memoryRepository;
+  late final _WhatsAppRepository _whatsAppRepository;
+  late final _MediaRepository _mediaRepository;
+  ClientConfigData? _cachedConfig;
+  DateTime? _cachedConfigAt;
+  ApiHealthData? _cachedHealth;
+  DateTime? _cachedHealthAt;
+
+  ValueListenable<ApiConnectionStatus> get connectionStatus =>
+      _apiClient.connectionStatus;
+
+  void setSessionToken(String? token) {
+    _apiClient.setSessionToken(token);
+  }
+
+  void clearSessionToken() {
+    _apiClient.clearSessionToken();
+  }
 
   Future<ClientConfigData> getConfig() async {
-    final health = await getHealth();
-    final response = await _client.get(_buildUri('/config'), headers: _headers);
-    final data = _decodeResponse(response);
-    return ClientConfigData.fromJson(
-      data,
+    return _loadConfig();
+  }
+
+  Future<ClientConfigData> _loadConfig({bool forceRefresh = false}) async {
+    final health = await _loadHealth(forceRefresh: forceRefresh);
+    if (!forceRefresh && _hasFreshConfigCache()) {
+      return _cachedConfig!.withHealth(health);
+    }
+
+    final config = await _configRepository.getConfig(
       backendOnline: health.online,
       backendStatus: health.status,
     );
+    _cachedConfig = config;
+    _cachedConfigAt = DateTime.now();
+    return config;
   }
 
   Future<BotPromptConfigData> getBotPromptConfig() async {
-    final response = await _client.get(
-      _buildUri('/bot-config'),
-      headers: _headers,
-    );
-
-    return BotPromptConfigData.fromJson(_decodeResponse(response));
+    return _botConfigRepository.get();
   }
 
   Future<BotPromptConfigData> saveBotPromptConfig({
@@ -763,27 +1065,16 @@ class ApiService {
     required String promptHuman,
     required String promptSales,
   }) async {
-    final response = await _client.post(
-      _buildUri('/bot-config'),
-      headers: _headers,
-      body: jsonEncode(<String, dynamic>{
-        'promptBase': promptBase,
-        'promptShort': promptShort,
-        'promptHuman': promptHuman,
-        'promptSales': promptSales,
-      }),
+    return _botConfigRepository.save(
+      promptBase: promptBase,
+      promptShort: promptShort,
+      promptHuman: promptHuman,
+      promptSales: promptSales,
     );
-
-    return BotPromptConfigData.fromJson(_decodeResponse(response));
   }
 
   Future<CompanyContextData> getCompanyContext() async {
-    final response = await _client.get(
-      _buildUri('/company-context'),
-      headers: _headers,
-    );
-
-    return CompanyContextData.fromJson(_decodeResponse(response));
+    return _companyContextRepository.get();
   }
 
   Future<CompanyContextData> saveCompanyContext({
@@ -800,26 +1091,20 @@ class ApiService {
     required List<Map<String, dynamic>> imagesJson,
     required Map<String, dynamic> usageRulesJson,
   }) async {
-    final response = await _client.post(
-      _buildUri('/company-context'),
-      headers: _headers,
-      body: jsonEncode(<String, dynamic>{
-        'companyName': companyName,
-        'description': description,
-        'phone': phone,
-        'whatsapp': whatsapp,
-        'address': address,
-        'googleMapsLink': googleMapsLink,
-        'latitude': latitude,
-        'longitude': longitude,
-        'workingHoursJson': workingHoursJson,
-        'bankAccountsJson': bankAccountsJson,
-        'imagesJson': imagesJson,
-        'usageRulesJson': usageRulesJson,
-      }),
-    );
-
-    return CompanyContextData.fromJson(_decodeResponse(response));
+    return _companyContextRepository.save(<String, dynamic>{
+      'companyName': companyName,
+      'description': description,
+      'phone': phone,
+      'whatsapp': whatsapp,
+      'address': address,
+      'googleMapsLink': googleMapsLink,
+      'latitude': latitude,
+      'longitude': longitude,
+      'workingHoursJson': workingHoursJson,
+      'bankAccountsJson': bankAccountsJson,
+      'imagesJson': imagesJson,
+      'usageRulesJson': usageRulesJson,
+    });
   }
 
   Future<ClientConfigData> saveConfig({
@@ -898,14 +1183,9 @@ class ApiService {
       payload['elevenlabsKey'] = elevenLabsKey.trim();
     }
 
-    final response = await _client.post(
-      _buildUri('/config'),
-      headers: _headers,
-      body: jsonEncode(payload),
-    );
-
-    _decodeResponse(response);
-    return getConfig();
+    _invalidateConfigCache();
+    await _configRepository.save(payload);
+    return _loadConfig(forceRefresh: true);
   }
 
   Future<ClientConfigData> saveBrandingSettings({
@@ -952,42 +1232,46 @@ class ApiService {
     required String closingPrompt,
     required String supportPrompt,
   }) async {
-    final response = await _client.post(
-      _buildUri('/config'),
-      headers: _headers,
-      body: jsonEncode(<String, dynamic>{
-        'promptBase': promptBase,
-        'configurations': <String, dynamic>{
-          'prompts': <String, dynamic>{
-            'greeting': greetingPrompt,
-            'companyInfo': companyInfoPrompt,
-            'productInfo': productInfoPrompt,
-            'salesGuidelines': salesGuidelinesPrompt,
-            'objectionHandling': objectionHandlingPrompt,
-            'closingPrompt': closingPrompt,
-            'supportPrompt': supportPrompt,
-          },
+    await _configRepository.save(<String, dynamic>{
+      'promptBase': promptBase,
+      'configurations': <String, dynamic>{
+        'prompts': <String, dynamic>{
+          'greeting': greetingPrompt,
+          'companyInfo': companyInfoPrompt,
+          'productInfo': productInfoPrompt,
+          'salesGuidelines': salesGuidelinesPrompt,
+          'objectionHandling': objectionHandlingPrompt,
+          'closingPrompt': closingPrompt,
+          'supportPrompt': supportPrompt,
         },
-      }),
-    );
-
-    _decodeResponse(response);
+      },
+    });
     return getConfig();
   }
 
   Future<ApiHealthData> getHealth() async {
+    return _loadHealth();
+  }
+
+  Future<ApiHealthData> _loadHealth({bool forceRefresh = false}) async {
+    if (!forceRefresh && _hasFreshHealthCache()) {
+      return _cachedHealth!;
+    }
+
     try {
-      final response = await _client.get(
-        _buildUri('/health'),
-        headers: _headers,
-      );
-      final data = _decodeResponse(response);
-      return ApiHealthData(
+      final data = await _apiClient.getJson('/health', retry: false);
+      final health = ApiHealthData(
         online: (data['status'] as String?) == 'ok',
         status: (data['status'] as String?) ?? 'unknown',
       );
+      _cachedHealth = health;
+      _cachedHealthAt = DateTime.now();
+      return health;
     } catch (_) {
-      return const ApiHealthData(online: false, status: 'offline');
+      const health = ApiHealthData(online: false, status: 'offline');
+      _cachedHealth = health;
+      _cachedHealthAt = DateTime.now();
+      return health;
     }
   }
 
@@ -1097,23 +1381,11 @@ class ApiService {
   Future<List<MemoryContactListItemData>> getMemoryContacts({
     String? query,
   }) async {
-    final uri = _buildUri('/memory/contacts').replace(
-      queryParameters: <String, String>{
-        if (query != null && query.trim().isNotEmpty) 'query': query.trim(),
-      },
-    );
-    final response = await _client.get(uri, headers: _headers);
-    final decoded = _decodeListResponse(response);
-    return decoded.map(MemoryContactListItemData.fromJson).toList();
+    return _memoryRepository.listContacts(query: query);
   }
 
   Future<ConversationContextData> getMemoryContext(String contactId) async {
-    final response = await _client.get(
-      _buildUri('/memory/${Uri.encodeComponent(contactId)}'),
-      headers: _headers,
-    );
-
-    return ConversationContextData.fromJson(_decodeResponse(response));
+    return _memoryRepository.getContext(contactId);
   }
 
   Future<ConversationContextData> updateMemoryEntry({
@@ -1124,92 +1396,46 @@ class ApiService {
     required String notes,
     required String summary,
   }) async {
-    final response = await _client.post(
-      _buildUri('/memory/${Uri.encodeComponent(contactId)}'),
-      headers: _headers,
-      body: jsonEncode(<String, dynamic>{
+    return _memoryRepository.updateEntry(
+      contactId: contactId,
+      payload: <String, dynamic>{
         'name': name,
         'interest': interest,
         'lastIntent': lastIntent,
         'notes': notes,
         'summary': summary,
-      }),
+      },
     );
-
-    return ConversationContextData.fromJson(_decodeResponse(response));
   }
 
   Future<WhatsAppChannelData> getWhatsAppChannel() async {
-    final response = await _client.get(
-      _buildUri('/whatsapp/channel'),
-      headers: _headers,
-    );
-    return WhatsAppChannelData.fromJson(_decodeResponse(response));
+    return _whatsAppRepository.getChannel();
   }
 
   Future<ManagedWhatsAppInstanceData> createInstance(
     String instanceName, {
     required String phone,
   }) async {
-    final response = await _client.post(
-      _buildUri('/whatsapp/create'),
-      headers: _headers,
-      body: jsonEncode(<String, dynamic>{
-        'instanceName': instanceName,
-        'phone': phone.trim(),
-      }),
-    );
-
-    return ManagedWhatsAppInstanceData.fromJson(_decodeResponse(response));
+    return _whatsAppRepository.createInstance(instanceName, phone: phone);
   }
 
   Future<List<ManagedWhatsAppInstanceData>> getInstances() async {
-    final response = await _client.get(
-      _buildUri('/whatsapp/list'),
-      headers: _headers,
-    );
-    final decoded = _decodeListResponse(response);
-    return decoded
-        .map(
-          (Map<String, dynamic> item) =>
-              ManagedWhatsAppInstanceData.fromJson(item),
-        )
-        .toList();
+    return _whatsAppRepository.getInstances();
   }
 
   Future<WhatsAppQrData> getQr(String instanceName) async {
-    final response = await _client.get(
-      _buildUri('/whatsapp/qr/${Uri.encodeComponent(instanceName)}'),
-      headers: _headers,
-    );
-
-    return WhatsAppQrData.fromJson(_decodeResponse(response));
+    return _whatsAppRepository.getQr(instanceName);
   }
 
   Future<WhatsAppWebhookData> setWebhook(
     String instanceName, {
     String? webhookUrl,
   }) async {
-    final response = await _client.post(
-      _buildUri('/whatsapp/webhook/${Uri.encodeComponent(instanceName)}'),
-      headers: _headers,
-      body: jsonEncode(<String, dynamic>{
-        if (webhookUrl != null && webhookUrl.trim().isNotEmpty)
-          'webhook': webhookUrl.trim(),
-        'events': <String>['messages.upsert'],
-      }),
-    );
-
-    return WhatsAppWebhookData.fromJson(_decodeResponse(response));
+    return _whatsAppRepository.setWebhook(instanceName, webhookUrl: webhookUrl);
   }
 
   Future<ManagedWhatsAppInstanceData> getStatus(String instanceName) async {
-    final response = await _client.get(
-      _buildUri('/whatsapp/status/${Uri.encodeComponent(instanceName)}'),
-      headers: _headers,
-    );
-
-    return ManagedWhatsAppInstanceData.fromJson(_decodeResponse(response));
+    return _whatsAppRepository.getStatus(instanceName);
   }
 
   Future<ManagedWhatsAppInstanceData> updateInstanceMetadata({
@@ -1217,49 +1443,29 @@ class ApiService {
     required String displayName,
     required String phone,
   }) async {
-    final response = await _client.patch(
-      _buildUri('/whatsapp/instance/${Uri.encodeComponent(instanceName)}'),
-      headers: _headers,
-      body: jsonEncode(<String, dynamic>{
-        'displayName': displayName.trim(),
-        'phone': phone.trim(),
-      }),
+    return _whatsAppRepository.updateInstanceMetadata(
+      instanceName: instanceName,
+      displayName: displayName,
+      phone: phone,
     );
-
-    return ManagedWhatsAppInstanceData.fromJson(_decodeResponse(response));
   }
 
   Future<DeleteWhatsAppInstanceResponse> deleteInstance(
     String instanceName,
   ) async {
-    final response = await _client.delete(
-      _buildUri('/whatsapp/delete/${Uri.encodeComponent(instanceName)}'),
-      headers: _headers,
-    );
-
-    return DeleteWhatsAppInstanceResponse.fromJson(_decodeResponse(response));
+    return _whatsAppRepository.deleteInstance(instanceName);
   }
 
   Future<WhatsAppChannelData> createWhatsAppInstance() async {
-    final response = await _client.post(
-      _buildUri('/whatsapp/channel/instance'),
-      headers: _headers,
-    );
-    return WhatsAppChannelData.fromJson(_decodeResponse(response));
+    return _whatsAppRepository.createChannelInstance();
   }
 
   Future<WhatsAppChannelData> refreshWhatsAppQr() async {
-    final response = await _client.post(
-      _buildUri('/whatsapp/channel/qr'),
-      headers: _headers,
-    );
-    return WhatsAppChannelData.fromJson(_decodeResponse(response));
+    return _whatsAppRepository.refreshQr();
   }
 
   Future<List<MediaFileData>> getMedia() async {
-    final response = await _client.get(_buildUri('/media'), headers: _headers);
-    final decoded = _decodeListResponse(response);
-    return decoded.map((item) => MediaFileData.fromJson(item)).toList();
+    return _mediaRepository.list();
   }
 
   Future<MediaFileData> uploadMedia({
@@ -1269,95 +1475,42 @@ class ApiService {
     required String title,
     String? description,
   }) async {
-    final request = http.MultipartRequest('POST', _buildUri('/media/upload'));
-    request.headers['Accept'] = 'application/json';
-    request.fields['title'] = title;
-
-    final normalizedDescription = description?.trim() ?? '';
-    if (normalizedDescription.isNotEmpty) {
-      request.fields['description'] = normalizedDescription;
-    }
-
-    request.files.add(
-      http.MultipartFile.fromBytes(
-        'file',
-        fileBytes,
-        filename: fileName,
-        contentType: MediaType.parse(contentType),
-      ),
+    return _mediaRepository.upload(
+      fileBytes: fileBytes,
+      fileName: fileName,
+      contentType: contentType,
+      title: title,
+      description: description,
     );
-
-    final streamed = await request.send();
-    final response = await http.Response.fromStream(streamed);
-    return MediaFileData.fromJson(_decodeResponse(response));
   }
 
   Future<void> deleteMedia(int id) async {
-    final response = await _client.delete(
-      _buildUri('/media/$id'),
-      headers: _headers,
-    );
-
-    _decodeResponse(response);
+    await _mediaRepository.delete(id);
   }
 
-  Uri _buildUri(String path) {
-    final normalizedBaseUrl = baseUrl.replaceAll(RegExp(r'/+$'), '');
-    return Uri.parse('$normalizedBaseUrl$path');
+  bool _hasFreshConfigCache() {
+    final cachedAt = _cachedConfigAt;
+    if (_cachedConfig == null || cachedAt == null) {
+      return false;
+    }
+
+    return DateTime.now().difference(cachedAt) <= _configCacheTtl;
   }
 
-  Map<String, String> get _headers => const <String, String>{
-    'Content-Type': 'application/json',
-    'Accept': 'application/json',
-  };
-
-  Map<String, dynamic> _decodeResponse(http.Response response) {
-    final decoded = response.body.isEmpty
-        ? <String, dynamic>{}
-        : jsonDecode(response.body) as Map<String, dynamic>;
-
-    if (response.statusCode >= 200 && response.statusCode < 300) {
-      return decoded;
+  bool _hasFreshHealthCache() {
+    final cachedAt = _cachedHealthAt;
+    if (_cachedHealth == null || cachedAt == null) {
+      return false;
     }
 
-    final message = decoded['message'];
-
-    if (message is List && message.isNotEmpty) {
-      throw ApiException(message.join(', '), statusCode: response.statusCode);
-    }
-
-    if (message is String && message.isNotEmpty) {
-      throw ApiException(message, statusCode: response.statusCode);
-    }
-
-    throw ApiException(
-      'La solicitud falló con código ${response.statusCode}.',
-      statusCode: response.statusCode,
-    );
+    return DateTime.now().difference(cachedAt) <= _healthCacheTtl;
   }
 
-  List<Map<String, dynamic>> _decodeListResponse(http.Response response) {
-    final decoded = response.body.isEmpty
-        ? <dynamic>[]
-        : jsonDecode(response.body) as List<dynamic>;
-
-    if (response.statusCode >= 200 && response.statusCode < 300) {
-      return decoded.whereType<Map<String, dynamic>>().toList();
-    }
-
-    final first = decoded.isNotEmpty && decoded.first is Map<String, dynamic>
-        ? decoded.first as Map<String, dynamic>
-        : <String, dynamic>{};
-    final message = first['message'];
-
-    if (message is String && message.isNotEmpty) {
-      throw ApiException(message, statusCode: response.statusCode);
-    }
-
-    throw ApiException(
-      'La solicitud falló con código ${response.statusCode}.',
-      statusCode: response.statusCode,
-    );
+  void _invalidateConfigCache() {
+    _cachedConfig = null;
+    _cachedConfigAt = null;
+    _cachedHealth = null;
+    _cachedHealthAt = null;
   }
 }
 

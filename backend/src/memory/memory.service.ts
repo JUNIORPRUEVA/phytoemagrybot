@@ -265,6 +265,38 @@ export class MemoryService {
     return items;
   }
 
+  async getContact(contactId: string): Promise<MemoryContactListItem> {
+    const normalizedContactId = this.normalizeContactId(contactId);
+    const now = new Date();
+    const [lastMessage, memory, summary] = await Promise.all([
+      this.prisma.conversationMessage.findFirst({
+        where: { contactId: normalizedContactId },
+        orderBy: { createdAt: 'desc' },
+        select: { createdAt: true },
+      }),
+      this.prisma.clientMemory.findUnique({ where: { contactId: normalizedContactId } }),
+      this.prisma.conversationSummary.findUnique({ where: { contactId: normalizedContactId } }),
+    ]);
+
+    const activeMemory =
+      memory?.expiresAt && memory.expiresAt.getTime() <= now.getTime() ? null : memory;
+    const activeSummary =
+      summary?.expiresAt && summary.expiresAt.getTime() <= now.getTime() ? null : summary;
+
+    return {
+      contactId: normalizedContactId,
+      name: activeMemory?.name ?? null,
+      objective: this.normalizeObjective(activeMemory?.objective ?? null),
+      interest: activeMemory?.interest ?? null,
+      status: this.normalizeStatus(activeMemory?.status ?? null),
+      lastIntent: this.buildLegacyIntent(activeMemory),
+      summary: activeSummary?.summary ?? null,
+      lastMessageAt: lastMessage?.createdAt ?? null,
+      memoryUpdatedAt: activeMemory?.updatedAt ?? null,
+      summaryUpdatedAt: activeSummary?.updatedAt ?? null,
+    };
+  }
+
   async updateMemoryEntry(
     contactId: string,
     input: UpdateMemoryEntryInput,

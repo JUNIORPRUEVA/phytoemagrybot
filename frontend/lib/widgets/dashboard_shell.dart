@@ -7,12 +7,14 @@ import '../pages/config_page.dart';
 import '../pages/gallery_page.dart';
 import '../pages/memory_page.dart';
 import '../pages/tools_page.dart';
+import '../services/api_client.dart';
 import '../services/api_service.dart';
 
 const String _appVersionLabel = 'v1.0.0';
 
 class DashboardShell extends StatefulWidget {
-  const DashboardShell({super.key, ApiService? apiService}) : _apiService = apiService;
+  const DashboardShell({super.key, ApiService? apiService})
+    : _apiService = apiService;
 
   final ApiService? _apiService;
 
@@ -31,8 +33,10 @@ class _DashboardShellState extends State<DashboardShell> {
 
   int _selectedIndex = 0;
   int _mobileLastPrimaryPageIndex = 0;
-  final GlobalKey<State<BotPromptConfigPage>> _promptPageKey = GlobalKey<State<BotPromptConfigPage>>();
-  final GlobalKey<State<CompanyContextPage>> _companyContextPageKey = GlobalKey<State<CompanyContextPage>>();
+  final GlobalKey<State<BotPromptConfigPage>> _promptPageKey =
+      GlobalKey<State<BotPromptConfigPage>>();
+  final GlobalKey<State<CompanyContextPage>> _companyContextPageKey =
+      GlobalKey<State<CompanyContextPage>>();
   late final ApiService _apiService;
   late Future<ClientConfigData> _overviewFuture;
 
@@ -64,7 +68,10 @@ class _DashboardShellState extends State<DashboardShell> {
   @override
   Widget build(BuildContext context) {
     final pages = <Widget>[
-      ConnectWhatsAppPage(apiService: _apiService, onConfigUpdated: _refreshOverview),
+      ConnectWhatsAppPage(
+        apiService: _apiService,
+        onConfigUpdated: _refreshOverview,
+      ),
       MemoryPage(apiService: _apiService, onConfigUpdated: _refreshOverview),
       BotPromptConfigPage(
         key: _promptPageKey,
@@ -108,10 +115,15 @@ class _DashboardShellState extends State<DashboardShell> {
     ];
 
     final bool isMobile = MediaQuery.sizeOf(context).width < 900;
-    final bool isMobileMainPage = isMobile && _selectedIndex == _mobileMainPageIndex;
+    final bool isMobileMainPage =
+        isMobile && _selectedIndex == _mobileMainPageIndex;
     final bool hideMobileAppBar =
-        isMobile && (_selectedIndex == _promptPageIndex || _selectedIndex == _galleryPageIndex);
-    final int mobileNavIndex = _mobileBottomNavIndices.indexOf(_mobileLastPrimaryPageIndex);
+        isMobile &&
+        (_selectedIndex == _promptPageIndex ||
+            _selectedIndex == _galleryPageIndex);
+    final int mobileNavIndex = _mobileBottomNavIndices.indexOf(
+      _mobileLastPrimaryPageIndex,
+    );
 
     return Scaffold(
       drawer: isMobile
@@ -125,88 +137,89 @@ class _DashboardShellState extends State<DashboardShell> {
               onSelect: _selectPage,
             )
           : null,
-        appBar: hideMobileAppBar
+      appBar: hideMobileAppBar
           ? null
           : AppBar(
-        leading: isMobileMainPage
-            ? Builder(
-                builder: (context) {
-                  return Padding(
-                    padding: const EdgeInsets.only(left: 10),
-                    child: IconButton(
-                      onPressed: () => Scaffold.of(context).openDrawer(),
-                      tooltip: 'Abrir menu',
-                      style: IconButton.styleFrom(
-                        backgroundColor: const Color(0xFFF8FAFC),
-                        side: const BorderSide(color: Color(0xFFE2E8F0)),
-                      ),
-                      icon: const Icon(Icons.menu_rounded),
-                    ),
-                  );
+              leading: isMobileMainPage
+                  ? Builder(
+                      builder: (context) {
+                        return Padding(
+                          padding: const EdgeInsets.only(left: 10),
+                          child: IconButton(
+                            onPressed: () => Scaffold.of(context).openDrawer(),
+                            tooltip: 'Abrir menu',
+                            style: IconButton.styleFrom(
+                              backgroundColor: const Color(0xFFF8FAFC),
+                              side: const BorderSide(color: Color(0xFFE2E8F0)),
+                            ),
+                            icon: const Icon(Icons.menu_rounded),
+                          ),
+                        );
+                      },
+                    )
+                  : isMobile
+                  ? IconButton(
+                      onPressed: () => _selectPage(_mobileMainPageIndex),
+                      tooltip: 'Regresar',
+                      icon: const Icon(Icons.arrow_back_rounded),
+                    )
+                  : null,
+              title: FutureBuilder<ClientConfigData>(
+                future: _overviewFuture,
+                builder: (context, snapshot) {
+                  final brandName = _resolveBrandName(snapshot.data);
+                  if (isMobileMainPage) {
+                    return Text(brandName);
+                  }
+
+                  if (isMobile) {
+                    return Text(labels[_selectedIndex]);
+                  }
+
+                  return Text('Control Bot $brandName');
                 },
-              )
-            : isMobile
-                ? IconButton(
-                    onPressed: () => _selectPage(_mobileMainPageIndex),
-                    tooltip: 'Regresar',
-                    icon: const Icon(Icons.arrow_back_rounded),
-                  )
-            : null,
-        title: FutureBuilder<ClientConfigData>(
-          future: _overviewFuture,
-          builder: (context, snapshot) {
-            final brandName = _resolveBrandName(snapshot.data);
-            if (isMobileMainPage) {
-              return Text(brandName);
-            }
-
-            if (isMobile) {
-              return Text(labels[_selectedIndex]);
-            }
-
-            return Text('Control Bot $brandName');
-          },
-        ),
-        actions: <Widget>[
-          if (isMobileMainPage) ...<Widget>[
-            IconButton(
-              onPressed: _showProfileSheet,
-              tooltip: 'Perfil',
-              icon: const Icon(Icons.person_outline_rounded),
-            ),
-            Padding(
-              padding: const EdgeInsets.only(right: 10),
-              child: IconButton(
-                onPressed: () => _selectPage(_configPageIndex),
-                tooltip: 'Configuracion',
-                icon: const Icon(Icons.settings_rounded),
               ),
+              actions: <Widget>[
+                if (isMobileMainPage) ...<Widget>[
+                  IconButton(
+                    onPressed: _showProfileSheet,
+                    tooltip: 'Perfil',
+                    icon: const Icon(Icons.person_outline_rounded),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.only(right: 10),
+                    child: IconButton(
+                      onPressed: () => _selectPage(_configPageIndex),
+                      tooltip: 'Configuracion',
+                      icon: const Icon(Icons.settings_rounded),
+                    ),
+                  ),
+                ] else
+                  Padding(
+                    padding: EdgeInsets.only(right: isMobile ? 12 : 24),
+                    child: Center(
+                      child: FutureBuilder<ClientConfigData>(
+                        future: _overviewFuture,
+                        builder: (context, snapshot) {
+                          final config = snapshot.data;
+                          return _HeaderStateBadge(
+                            label: config?.botLabel ?? 'Cargando',
+                            accent: config?.botReady ?? false,
+                            compact: isMobile,
+                          );
+                        },
+                      ),
+                    ),
+                  ),
+              ],
             ),
-          ] else
-            Padding(
-              padding: EdgeInsets.only(right: isMobile ? 12 : 24),
-              child: Center(
-                child: FutureBuilder<ClientConfigData>(
-                  future: _overviewFuture,
-                  builder: (context, snapshot) {
-                    final config = snapshot.data;
-                    return _HeaderStateBadge(
-                      label: config?.botLabel ?? 'Cargando',
-                      accent: config?.botReady ?? false,
-                      compact: isMobile,
-                    );
-                  },
-                ),
-              ),
-            ),
-        ],
-      ),
       bottomNavigationBar: isMobile
           ? NavigationBar(
               selectedIndex: mobileNavIndex < 0 ? 0 : mobileNavIndex,
               height: 72,
               labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
-              onDestinationSelected: (index) => _selectPage(_mobileBottomNavIndices[index]),
+              onDestinationSelected: (index) =>
+                  _selectPage(_mobileBottomNavIndices[index]),
               destinations: _mobileBottomNavIndices
                   .map(
                     (pageIndex) => NavigationDestination(
@@ -222,108 +235,144 @@ class _DashboardShellState extends State<DashboardShell> {
           ? FloatingActionButton.extended(
               onPressed: () {
                 final state =
-                    _companyContextPageKey.currentState as CompanyContextPageStateAccess?;
+                    _companyContextPageKey.currentState
+                        as CompanyContextPageStateAccess?;
                 state?.openUsageRulesEditor();
               },
               icon: const Icon(Icons.tune_rounded),
               label: const Text('Reglas de uso del bot'),
             )
           : isMobile && _selectedIndex == _promptPageIndex
-              ? FloatingActionButton.extended(
-                  onPressed: () {
-                    final state = _promptPageKey.currentState as BotPromptConfigPageStateAccess?;
-                    state?.triggerSave();
-                  },
-                  icon: const Icon(Icons.save_rounded),
-                  label: const Text('Guardar'),
-                )
-              : null,
+          ? FloatingActionButton.extended(
+              onPressed: () {
+                final state =
+                    _promptPageKey.currentState
+                        as BotPromptConfigPageStateAccess?;
+                state?.triggerSave();
+              },
+              icon: const Icon(Icons.save_rounded),
+              label: const Text('Guardar'),
+            )
+          : null,
       floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
       body: SafeArea(
-        child: Row(
-          children: <Widget>[
-            if (!isMobile)
-              Container(
-                width: 92,
-                margin: const EdgeInsets.fromLTRB(0, 0, 0, 0),
-                padding: const EdgeInsets.symmetric(vertical: 18, horizontal: 14),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFF8FAFC),
-                  border: Border(
-                    right: BorderSide(color: const Color(0xFFE2E8F0)),
+        child: ValueListenableBuilder<ApiConnectionStatus>(
+          valueListenable: _apiService.connectionStatus,
+          builder: (context, connectionStatus, _) {
+            return Column(
+              children: <Widget>[
+                if (connectionStatus.isKnown && !connectionStatus.isOnline)
+                  _OfflineBanner(message: connectionStatus.message),
+                Expanded(
+                  child: Row(
+                    children: <Widget>[
+                      if (!isMobile)
+                        Container(
+                          width: 92,
+                          margin: const EdgeInsets.fromLTRB(0, 0, 0, 0),
+                          padding: const EdgeInsets.symmetric(
+                            vertical: 18,
+                            horizontal: 14,
+                          ),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFF8FAFC),
+                            border: Border(
+                              right: BorderSide(color: const Color(0xFFE2E8F0)),
+                            ),
+                          ),
+                          child: Column(
+                            children: <Widget>[
+                              FutureBuilder<ClientConfigData>(
+                                future: _overviewFuture,
+                                builder: (context, snapshot) {
+                                  return _SidebarBrandIcon(
+                                    config: snapshot.data,
+                                  );
+                                },
+                              ),
+                              const SizedBox(height: 24),
+                              for (
+                                var index = 0;
+                                index < labels.length;
+                                index++
+                              ) ...<Widget>[
+                                _IconNavButton(
+                                  label: labels[index],
+                                  icon: icons[index],
+                                  selected: _selectedIndex == index,
+                                  onTap: () => _selectPage(index),
+                                ),
+                                if (index < labels.length - 1)
+                                  const SizedBox(height: 12),
+                              ],
+                              const SizedBox(height: 16),
+                              FutureBuilder<ClientConfigData>(
+                                future: _overviewFuture,
+                                builder: (context, snapshot) {
+                                  final config = snapshot.data;
+                                  final accent = snapshot.hasError
+                                      ? const Color(0xFFFEE2E2)
+                                      : (config?.botReady ?? false)
+                                      ? const Color(0xFFDCFCE7)
+                                      : const Color(0xFFFEF3C7);
+                                  final iconColor = snapshot.hasError
+                                      ? const Color(0xFFDC2626)
+                                      : (config?.botReady ?? false)
+                                      ? const Color(0xFF16A34A)
+                                      : const Color(0xFFD97706);
+
+                                  return Tooltip(
+                                    message: snapshot.hasError
+                                        ? 'Estado: error de conexion'
+                                        : config == null
+                                        ? 'Estado: cargando'
+                                        : 'Estado: ${config.botLabel}',
+                                    child: Container(
+                                      width: 52,
+                                      height: 52,
+                                      decoration: BoxDecoration(
+                                        color: accent,
+                                        borderRadius: BorderRadius.circular(18),
+                                      ),
+                                      child: Icon(
+                                        Icons.podcasts_rounded,
+                                        color: iconColor,
+                                      ),
+                                    ),
+                                  );
+                                },
+                              ),
+                              const Spacer(),
+                              FutureBuilder<ClientConfigData>(
+                                future: _overviewFuture,
+                                builder: (context, snapshot) {
+                                  return _SidebarFooter(
+                                    brandName: _resolveBrandName(snapshot.data),
+                                  );
+                                },
+                              ),
+                            ],
+                          ),
+                        ),
+                      Expanded(
+                        child: Padding(
+                          padding: EdgeInsets.fromLTRB(
+                            isMobile ? 16 : 28,
+                            hideMobileAppBar ? 10 : (isMobile ? 16 : 24),
+                            isMobile ? 16 : 28,
+                            isMobile ? 96 : 12,
+                          ),
+                          child: SingleChildScrollView(
+                            child: pages[_selectedIndex],
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-                child: Column(
-                  children: <Widget>[
-                    FutureBuilder<ClientConfigData>(
-                      future: _overviewFuture,
-                      builder: (context, snapshot) {
-                        return _SidebarBrandIcon(config: snapshot.data);
-                      },
-                    ),
-                    const SizedBox(height: 24),
-                    for (var index = 0; index < labels.length; index++) ...<Widget>[
-                      _IconNavButton(
-                        label: labels[index],
-                        icon: icons[index],
-                        selected: _selectedIndex == index,
-                        onTap: () => _selectPage(index),
-                      ),
-                      if (index < labels.length - 1) const SizedBox(height: 12),
-                    ],
-                    const SizedBox(height: 16),
-                    FutureBuilder<ClientConfigData>(
-                      future: _overviewFuture,
-                      builder: (context, snapshot) {
-                        final config = snapshot.data;
-                        final accent = snapshot.hasError
-                            ? const Color(0xFFFEE2E2)
-                            : (config?.botReady ?? false)
-                                ? const Color(0xFFDCFCE7)
-                                : const Color(0xFFFEF3C7);
-                        final iconColor = snapshot.hasError
-                            ? const Color(0xFFDC2626)
-                            : (config?.botReady ?? false)
-                                ? const Color(0xFF16A34A)
-                                : const Color(0xFFD97706);
-
-                        return Tooltip(
-                          message: snapshot.hasError
-                              ? 'Estado: error de conexion'
-                              : config == null
-                                  ? 'Estado: cargando'
-                                  : 'Estado: ${config.botLabel}',
-                          child: Container(
-                            width: 52,
-                            height: 52,
-                            decoration: BoxDecoration(
-                              color: accent,
-                              borderRadius: BorderRadius.circular(18),
-                            ),
-                            child: Icon(Icons.podcasts_rounded, color: iconColor),
-                          ),
-                        );
-                      },
-                    ),
-                    const Spacer(),
-                    FutureBuilder<ClientConfigData>(
-                      future: _overviewFuture,
-                      builder: (context, snapshot) {
-                        return _SidebarFooter(brandName: _resolveBrandName(snapshot.data));
-                      },
-                    ),
-                  ],
-                ),
-              ),
-            Expanded(
-              child: Padding(
-                padding: EdgeInsets.fromLTRB(isMobile ? 16 : 28, hideMobileAppBar ? 10 : (isMobile ? 16 : 24), isMobile ? 16 : 28, isMobile ? 96 : 12),
-                child: SingleChildScrollView(
-                  child: pages[_selectedIndex],
-                ),
-              ),
-            ),
-          ],
+              ],
+            );
+          },
         ),
       ),
     );
@@ -378,7 +427,10 @@ class _DashboardShellState extends State<DashboardShell> {
                       const CircleAvatar(
                         radius: 24,
                         backgroundColor: Color(0xFFEFF6FF),
-                        child: Icon(Icons.person_rounded, color: Color(0xFF2563EB)),
+                        child: Icon(
+                          Icons.person_rounded,
+                          color: Color(0xFF2563EB),
+                        ),
                       ),
                       const SizedBox(width: 14),
                       Expanded(
@@ -405,6 +457,41 @@ class _DashboardShellState extends State<DashboardShell> {
   String _resolveBrandName(ClientConfigData? config) {
     final value = config?.companyName.trim() ?? '';
     return value.isEmpty ? 'PhytoEmagry' : value;
+  }
+}
+
+class _OfflineBanner extends StatelessWidget {
+  const _OfflineBanner({this.message});
+
+  final String? message;
+
+  @override
+  Widget build(BuildContext context) {
+    final label = (message?.trim().isNotEmpty ?? false)
+        ? message!.trim()
+        : 'Sin conexion con la nube. Puedes navegar, pero los cambios requieren internet.';
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      color: const Color(0xFF7F1D1D),
+      child: Row(
+        children: <Widget>[
+          const Icon(Icons.wifi_off_rounded, color: Colors.white),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              label,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 
@@ -438,7 +525,11 @@ class _SidebarBrandIcon extends StatelessWidget {
                   logoUrl,
                   fit: BoxFit.cover,
                   errorBuilder: (context, error, stackTrace) {
-                    return const Icon(Icons.spa_rounded, color: Colors.white, size: 28);
+                    return const Icon(
+                      Icons.spa_rounded,
+                      color: Colors.white,
+                      size: 28,
+                    );
                   },
                 )
               : const Icon(Icons.spa_rounded, color: Colors.white, size: 28),
@@ -479,7 +570,9 @@ class _IconNavButton extends StatelessWidget {
               height: 56,
               child: Icon(
                 icon,
-                color: selected ? const Color(0xFF2563EB) : const Color(0xFF64748B),
+                color: selected
+                    ? const Color(0xFF2563EB)
+                    : const Color(0xFF64748B),
               ),
             ),
           ),
@@ -490,7 +583,11 @@ class _IconNavButton extends StatelessWidget {
 }
 
 class _HeaderStateBadge extends StatelessWidget {
-  const _HeaderStateBadge({required this.label, required this.accent, this.compact = false});
+  const _HeaderStateBadge({
+    required this.label,
+    required this.accent,
+    this.compact = false,
+  });
 
   final String label;
   final bool accent;
@@ -499,7 +596,10 @@ class _HeaderStateBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: EdgeInsets.symmetric(horizontal: compact ? 10 : 14, vertical: compact ? 8 : 10),
+      padding: EdgeInsets.symmetric(
+        horizontal: compact ? 10 : 14,
+        vertical: compact ? 8 : 10,
+      ),
       decoration: BoxDecoration(
         color: accent ? const Color(0xFFECFDF5) : const Color(0xFFF8FAFC),
         borderRadius: BorderRadius.circular(999),
@@ -558,7 +658,8 @@ class _AppFooter extends StatelessWidget {
       child: FutureBuilder<ClientConfigData>(
         future: overviewFuture,
         builder: (context, snapshot) {
-          final brandName = (snapshot.data?.companyName.trim().isNotEmpty ?? false)
+          final brandName =
+              (snapshot.data?.companyName.trim().isNotEmpty ?? false)
               ? snapshot.data!.companyName.trim()
               : 'PhytoEmagry';
 
@@ -572,10 +673,7 @@ class _AppFooter extends StatelessWidget {
                 ),
               ),
               const Spacer(),
-              const Text(
-                'v1.0.0',
-                style: TextStyle(color: Color(0xFF64748B)),
-              ),
+              const Text('v1.0.0', style: TextStyle(color: Color(0xFF64748B))),
             ],
           );
         },
@@ -703,13 +801,17 @@ class _DrawerNavTile extends StatelessWidget {
             children: <Widget>[
               Icon(
                 icon,
-                color: selected ? const Color(0xFF2563EB) : const Color(0xFF64748B),
+                color: selected
+                    ? const Color(0xFF2563EB)
+                    : const Color(0xFF64748B),
               ),
               const SizedBox(width: 12),
               Text(
                 label,
                 style: TextStyle(
-                  color: selected ? const Color(0xFF0F172A) : const Color(0xFF334155),
+                  color: selected
+                      ? const Color(0xFF0F172A)
+                      : const Color(0xFF334155),
                   fontWeight: FontWeight.w700,
                 ),
               ),

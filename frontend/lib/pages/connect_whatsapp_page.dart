@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
+import '../services/api_client.dart';
 import '../services/api_service.dart';
 import '../widgets/app_text_field.dart';
 
@@ -1318,8 +1319,8 @@ class _InstanceTile extends StatelessWidget {
             ? CrossAxisAlignment.start
             : CrossAxisAlignment.center,
         children: <Widget>[
-          Expanded(
-            child: Column(
+          if (compact)
+            Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: <Widget>[
                 Row(
@@ -1385,8 +1386,77 @@ class _InstanceTile extends StatelessWidget {
                   ],
                 ),
               ],
+            )
+          else
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Row(
+                    children: <Widget>[
+                      Container(
+                        width: 10,
+                        height: 10,
+                        decoration: BoxDecoration(
+                          color: statusColor,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          instance.label,
+                          style: TextStyle(
+                            color: const Color(0xFF0F172A),
+                            fontSize: compact ? 15 : 16,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  if (instance.displayName?.trim().isNotEmpty == true &&
+                      instance.displayName!.trim() != instance.name)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 6),
+                      child: Text(
+                        instance.name,
+                        style: const TextStyle(
+                          color: Color(0xFF94A3B8),
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: <Widget>[
+                      _MiniTag(
+                        label: instance.status,
+                        textColor: statusColor,
+                        backgroundColor: accent,
+                      ),
+                      if (configured)
+                        const _MiniTag(
+                          label: 'activa',
+                          textColor: Color(0xFF1D4ED8),
+                          backgroundColor: Color(0xFFDBEAFE),
+                        ),
+                      if (instance.phone?.isNotEmpty == true)
+                        Text(
+                          instance.phone!,
+                          style: const TextStyle(
+                            color: Color(0xFF64748B),
+                            fontSize: 13,
+                          ),
+                        ),
+                    ],
+                  ),
+                ],
+              ),
             ),
-          ),
           SizedBox(width: compact ? 0 : 16, height: compact ? 12 : 0),
           Wrap(
             spacing: 6,
