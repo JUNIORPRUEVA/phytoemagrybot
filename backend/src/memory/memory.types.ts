@@ -59,3 +59,12 @@ export interface ConversationContextSnapshot {
   clientMemory: ClientMemorySnapshot;
   summary: ConversationSummarySnapshot;
 }
+
+export interface MemoryDeleteResult {
+  ok: boolean;
+  action: 'delete-client' | 'delete-conversation' | 'reset-all';
+  actor: string;
+  contactId: string | null;
+  deletedAt: string;
+  counts: Record<string, number>;
+}

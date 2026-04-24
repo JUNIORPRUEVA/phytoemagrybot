@@ -7,6 +7,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
 import {
   ClientInterest,
+  MemoryDeleteResult,
   ClientMemorySnapshot,
   ClientObjective,
   ClientStatus,
@@ -482,6 +483,108 @@ export class MemoryService {
     );
   }
 
+  async deleteClientMemory(contactId: string, actor?: string): Promise<MemoryDeleteResult> {
+    const normalizedContactId = this.normalizeContactId(contactId);
+    const normalizedActor = this.normalizeActor(actor);
+    const deletedAt = new Date().toISOString();
+
+    const [conversationMemory, conversationMessages, conversationSummaries, clientMemory, contactState, contactConversationSummary, followups] =
+      await this.prisma.$transaction([
+        this.prisma.conversationMemory.deleteMany({ where: { contactId: normalizedContactId } }),
+        this.prisma.conversationMessage.deleteMany({ where: { contactId: normalizedContactId } }),
+        this.prisma.conversationSummary.deleteMany({ where: { contactId: normalizedContactId } }),
+        this.prisma.clientMemory.deleteMany({ where: { contactId: normalizedContactId } }),
+        this.prisma.contactState.deleteMany({ where: { contactId: normalizedContactId } }),
+        this.prisma.contactConversationSummary.deleteMany({ where: { contactId: normalizedContactId } }),
+        this.prisma.conversationFollowup.deleteMany({ where: { contactId: normalizedContactId } }),
+      ]);
+
+    const redisCounts = await this.clearRuntimeMemory(normalizedContactId);
+    const result: MemoryDeleteResult = {
+      ok: true,
+      action: 'delete-client',
+      actor: normalizedActor,
+      contactId: normalizedContactId,
+      deletedAt,
+      counts: {
+        conversationMemory: conversationMemory.count,
+        conversationMessages: conversationMessages.count,
+        conversationSummaries: conversationSummaries.count,
+        clientMemory: clientMemory.count,
+        contactState: contactState.count,
+        contactConversationSummary: contactConversationSummary.count,
+        followups: followups.count,
+        redisKeys: redisCounts,
+      },
+    };
+
+    this.logger.log(JSON.stringify({ event: 'memory_deleted', ...result }));
+    return result;
+  }
+
+  async deleteConversation(contactId: string, actor?: string): Promise<MemoryDeleteResult> {
+    const normalizedContactId = this.normalizeContactId(contactId);
+    const normalizedActor = this.normalizeActor(actor);
+    const deletedAt = new Date().toISOString();
+
+    const [conversationMemory, conversationMessages, conversationSummaries, contactState, contactConversationSummary, followups] =
+      await this.prisma.$transaction([
+        this.prisma.conversationMemory.deleteMany({ where: { contactId: normalizedContactId } }),
+        this.prisma.conversationMessage.deleteMany({ where: { contactId: normalizedContactId } }),
+        this.prisma.conversationSummary.deleteMany({ where: { contactId: normalizedContactId } }),
+        this.prisma.contactState.deleteMany({ where: { contactId: normalizedContactId } }),
+        this.prisma.contactConversationSummary.deleteMany({ where: { contactId: normalizedContactId } }),
+        this.prisma.conversationFollowup.deleteMany({ where: { contactId: normalizedContactId } }),
+      ]);
+
+    const redisCounts = await this.clearRuntimeMemory(normalizedContactId);
+    const result: MemoryDeleteResult = {
+      ok: true,
+      action: 'delete-conversation',
+      actor: normalizedActor,
+      contactId: normalizedContactId,
+      deletedAt,
+      counts: {
+        conversationMemory: conversationMemory.count,
+        conversationMessages: conversationMessages.count,
+        conversationSummaries: conversationSummaries.count,
+        contactState: contactState.count,
+        contactConversationSummary: contactConversationSummary.count,
+        followups: followups.count,
+        redisKeys: redisCounts,
+      },
+    };
+
+    this.logger.log(JSON.stringify({ event: 'memory_conversation_deleted', ...result }));
+    return result;
+  }
+
+  async resetAllMemory(actor?: string): Promise<MemoryDeleteResult> {
+    const normalizedActor = this.normalizeActor(actor);
+    const deletedAt = new Date().toISOString();
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.$executeRawUnsafe(
+        'TRUNCATE TABLE "conversation_memory", "conversation_messages", "conversation_summaries", "client_memory", "contact_state", "conversation_summary", "conversation_followup" RESTART IDENTITY CASCADE',
+      );
+    });
+
+    const redisCounts = await this.clearAllRuntimeMemory();
+    const result: MemoryDeleteResult = {
+      ok: true,
+      action: 'reset-all',
+      actor: normalizedActor,
+      contactId: null,
+      deletedAt,
+      counts: {
+        redisKeys: redisCounts,
+      },
+    };
+
+    this.logger.warn(JSON.stringify({ event: 'memory_reset_all', ...result }));
+    return result;
+  }
+
   private async safePrimeRedis(contactId: string, messages: StoredMessage[]): Promise<void> {
     try {
       await this.redisService.setConversationMessages(
@@ -496,6 +599,78 @@ export class MemoryService {
         }`,
       );
     }
+  }
+
+  private async clearRuntimeMemory(contactId: string): Promise<number> {
+    const normalizedContactId = this.normalizeContactId(contactId);
+    await this.redisService.deleteMany([
+      this.getSummaryCounterKey(normalizedContactId),
+      this.getConversationBufferKey(normalizedContactId),
+      this.getConversationCacheKey(normalizedContactId),
+      this.getGroupedBufferKey(normalizedContactId),
+      this.getGroupedTimerKey(normalizedContactId),
+      this.getGroupedRecipientKey(normalizedContactId),
+      this.getVoiceReplyPreferenceKey(normalizedContactId),
+    ]);
+
+    const [replyCacheKeys, inboundKeys] = await Promise.all([
+      this.redisService.deleteByPattern(`cache:${normalizedContactId}:*`),
+      this.redisService.deleteByPattern(`wa-inbound:${normalizedContactId}:*`),
+    ]);
+
+    return 7 + replyCacheKeys + inboundKeys;
+  }
+
+  private async clearAllRuntimeMemory(): Promise<number> {
+    const patterns = [
+      'buffer:*',
+      'cache:*',
+      'grouped-buffer:*',
+      'grouped-buffer:timer:*',
+      'grouped-buffer:recipient:*',
+      'voice-pref:*',
+      'memory:summary-count:*',
+      'wa-inbound:*',
+    ];
+
+    const deleted = await Promise.all(
+      patterns.map((pattern) => this.redisService.deleteByPattern(pattern)),
+    );
+
+    return deleted.reduce((total, count) => total + count, 0);
+  }
+
+  private getConversationBufferKey(contactId: string): string {
+    return `buffer:${contactId}`;
+  }
+
+  private getConversationCacheKey(contactId: string): string {
+    return `cache:${contactId}`;
+  }
+
+  private getGroupedBufferKey(contactId: string): string {
+    return `grouped-buffer:${contactId}`;
+  }
+
+  private getGroupedTimerKey(contactId: string): string {
+    return `grouped-buffer:timer:${contactId}`;
+  }
+
+  private getGroupedRecipientKey(contactId: string): string {
+    return `grouped-buffer:recipient:${contactId}`;
+  }
+
+  private getVoiceReplyPreferenceKey(contactId: string): string {
+    return `voice-pref:${this.normalizeNumber(contactId)}`;
+  }
+
+  private normalizeActor(actor?: string | null): string {
+    const normalized = actor?.trim();
+    return normalized && normalized.length > 0 ? normalized : 'dashboard-ui';
+  }
+
+  private normalizeNumber(value: string): string {
+    return value.replace(/\D/g, '');
   }
 
   private async generateSummaryText(

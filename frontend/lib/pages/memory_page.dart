@@ -9,10 +9,12 @@ class MemoryPage extends StatefulWidget {
     super.key,
     required this.apiService,
     required this.onConfigUpdated,
+    this.onRequestBack,
   });
 
   final ApiService apiService;
   final VoidCallback onConfigUpdated;
+  final VoidCallback? onRequestBack;
 
   @override
   State<MemoryPage> createState() => _MemoryPageState();
@@ -36,6 +38,9 @@ class _MemoryPageState extends State<MemoryPage> {
   bool _isLoadingDetail = false;
   bool _isSavingMemory = false;
   bool _isSavingSettings = false;
+  bool _isDeletingClientMemory = false;
+  bool _isDeletingConversation = false;
+  bool _isResettingAllMemory = false;
   String? _contactsError;
   String? _detailError;
   _MemorySection? _selectedSection;
@@ -271,6 +276,168 @@ class _MemoryPageState extends State<MemoryPage> {
     }
   }
 
+  Future<bool> _confirmMemoryDeletion() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('Confirmar borrado'),
+          content: const Text(
+            '¿Seguro que deseas borrar esta información? Esto no se puede deshacer.',
+          ),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancelar'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              style: FilledButton.styleFrom(
+                backgroundColor: const Color(0xFFB91C1C),
+              ),
+              child: const Text('Borrar'),
+            ),
+          ],
+        );
+      },
+    );
+
+    return confirmed == true;
+  }
+
+  void _clearEditor() {
+    _nameController.clear();
+    _interestController.clear();
+    _lastIntentController.clear();
+    _notesController.clear();
+    _summaryController.clear();
+    _messages = const <StoredMessageData>[];
+  }
+
+  Future<void> _deleteSelectedClientMemory() async {
+    final contactId = _selectedContactId?.trim() ?? _contactIdController.text.trim();
+    if (contactId.isEmpty) {
+      _showMessage('Selecciona un contacto antes de borrar su memoria.', isError: true);
+      return;
+    }
+
+    if (!await _confirmMemoryDeletion()) {
+      return;
+    }
+
+    setState(() {
+      _isDeletingClientMemory = true;
+      _detailError = null;
+    });
+
+    try {
+      await widget.apiService.deleteClientMemory(contactId);
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _selectedContactId = null;
+        _contactIdController.clear();
+        _clearEditor();
+      });
+      await _loadContacts();
+      _showMessage('Memoria del cliente borrada. El bot lo tratara como nuevo.');
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+
+      _showMessage(error.toString(), isError: true);
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isDeletingClientMemory = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _deleteConversation() async {
+    final contactId = _selectedContactId?.trim() ?? _contactIdController.text.trim();
+    if (contactId.isEmpty) {
+      _showMessage('Selecciona un contacto antes de limpiar la conversación.', isError: true);
+      return;
+    }
+
+    if (!await _confirmMemoryDeletion()) {
+      return;
+    }
+
+    setState(() {
+      _isDeletingConversation = true;
+      _detailError = null;
+    });
+
+    try {
+      await widget.apiService.deleteConversationMemory(contactId);
+      if (!mounted) {
+        return;
+      }
+
+      await _loadContact(contactId);
+      await _loadContacts();
+      _showMessage('Conversación limpiada.');
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+
+      _showMessage(error.toString(), isError: true);
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isDeletingConversation = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _resetAllMemory() async {
+    if (!await _confirmMemoryDeletion()) {
+      return;
+    }
+
+    setState(() {
+      _isResettingAllMemory = true;
+      _detailError = null;
+      _contactsError = null;
+    });
+
+    try {
+      await widget.apiService.resetAllMemory();
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _selectedContactId = null;
+        _contactIdController.clear();
+        _contacts = const <MemoryContactListItemData>[];
+        _clearEditor();
+      });
+      await _loadContacts();
+      _showMessage('Toda la memoria fue reseteada.');
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+
+      _showMessage(error.toString(), isError: true);
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isResettingAllMemory = false;
+        });
+      }
+    }
+  }
+
   void _showMessage(String message, {bool isError = false}) {
     final messenger = ScaffoldMessenger.of(context);
     messenger.hideCurrentSnackBar();
@@ -359,6 +526,14 @@ class _MemoryPageState extends State<MemoryPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
+        if (widget.onRequestBack != null) ...<Widget>[
+          TextButton.icon(
+            onPressed: widget.onRequestBack,
+            icon: const Icon(Icons.arrow_back_rounded, size: 18),
+            label: const Text('Atras'),
+          ),
+          const SizedBox(height: 6),
+        ],
         if (_isLoadingContacts) ...<Widget>[
           const SizedBox(height: 4),
           const LinearProgressIndicator(minHeight: 2),
@@ -411,7 +586,14 @@ class _MemoryPageState extends State<MemoryPage> {
 
   @override
   Widget build(BuildContext context) {
-    final isBusy = _isLoadingContacts || _isLoadingDetail || _isSavingMemory || _isSavingSettings;
+    final isBusy =
+        _isLoadingContacts ||
+        _isLoadingDetail ||
+        _isSavingMemory ||
+        _isSavingSettings ||
+        _isDeletingClientMemory ||
+        _isDeletingConversation ||
+        _isResettingAllMemory;
     final selectedSection = _selectedSection;
 
     return SecondaryPageLayout(
@@ -455,6 +637,18 @@ class _MemoryPageState extends State<MemoryPage> {
               onPressed: _isSavingSettings ? null : _saveMemorySettings,
               child: Text(_isSavingSettings ? 'Guardando...' : 'Guardar ventana'),
             ),
+            FilledButton.icon(
+              onPressed: _isResettingAllMemory ? null : _resetAllMemory,
+              style: FilledButton.styleFrom(
+                backgroundColor: const Color(0xFFB91C1C),
+              ),
+              icon: const Icon(Icons.warning_amber_rounded),
+              label: Text(
+                _isResettingAllMemory
+                    ? 'Reseteando...'
+                    : 'Resetear toda la memoria',
+              ),
+            ),
             OutlinedButton(
               onPressed: isBusy
                   ? null
@@ -464,7 +658,7 @@ class _MemoryPageState extends State<MemoryPage> {
                       });
                       _scrollToTop();
                     },
-              child: const Text('Volver a memoria'),
+              child: const Text('Atras'),
             ),
           ],
         ),
@@ -498,7 +692,7 @@ class _MemoryPageState extends State<MemoryPage> {
                   });
                   _scrollToTop();
                 },
-          child: const Text('Volver a memoria'),
+          child: const Text('Atras'),
         ),
       ],
     );
@@ -661,6 +855,38 @@ class _MemoryPageState extends State<MemoryPage> {
               ElevatedButton(
                 onPressed: _isSavingMemory || _isLoadingDetail ? null : _saveMemoryEntry,
                 child: Text(_isSavingMemory ? 'Guardando...' : 'Guardar memoria'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 12,
+            runSpacing: 12,
+            children: <Widget>[
+              OutlinedButton.icon(
+                onPressed: (_selectedContactId == null || _isDeletingConversation || isBusy)
+                    ? null
+                    : _deleteConversation,
+                icon: const Icon(Icons.cleaning_services_rounded),
+                label: Text(
+                  _isDeletingConversation
+                      ? 'Limpiando...'
+                      : 'Limpiar conversación',
+                ),
+              ),
+              FilledButton.icon(
+                onPressed: (_selectedContactId == null || _isDeletingClientMemory || isBusy)
+                    ? null
+                    : _deleteSelectedClientMemory,
+                style: FilledButton.styleFrom(
+                  backgroundColor: const Color(0xFFB91C1C),
+                ),
+                icon: const Icon(Icons.delete_outline_rounded),
+                label: Text(
+                  _isDeletingClientMemory
+                      ? 'Borrando...'
+                      : 'Borrar memoria del cliente',
+                ),
               ),
             ],
           ),
@@ -936,7 +1162,7 @@ class _MemoryDetailHeader extends StatelessWidget {
             TextButton.icon(
               onPressed: onBack,
               icon: const Icon(Icons.arrow_back_rounded, size: 18),
-              label: const Text('Memoria'),
+              label: const Text('Atras'),
             ),
             const Spacer(),
             TextButton(

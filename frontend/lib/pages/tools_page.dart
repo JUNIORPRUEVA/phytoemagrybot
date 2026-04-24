@@ -9,10 +9,12 @@ class ToolsPage extends StatefulWidget {
     super.key,
     required this.apiService,
     required this.onConfigUpdated,
+    this.onRequestBack,
   });
 
   final ApiService apiService;
   final VoidCallback onConfigUpdated;
+  final VoidCallback? onRequestBack;
 
   @override
   State<ToolsPage> createState() => _ToolsPageState();
@@ -335,6 +337,14 @@ class _ToolsPageState extends State<ToolsPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
+        if (widget.onRequestBack != null) ...<Widget>[
+          TextButton.icon(
+            onPressed: widget.onRequestBack,
+            icon: const Icon(Icons.arrow_back_rounded, size: 18),
+            label: const Text('Atras'),
+          ),
+          const SizedBox(height: 6),
+        ],
         if (_isLoading) ...<Widget>[
           const SizedBox(height: 4),
           const LinearProgressIndicator(minHeight: 2),
@@ -407,7 +417,7 @@ class _ToolsPageState extends State<ToolsPage> {
                       });
                       _scrollToTop();
                     },
-              child: const Text('Volver a herramientas'),
+              child: const Text('Atras'),
             ),
           ],
         ),
@@ -793,7 +803,7 @@ class _ToolDetailHeader extends StatelessWidget {
             TextButton.icon(
               onPressed: onBack,
               icon: const Icon(Icons.arrow_back_rounded, size: 18),
-              label: const Text('Herramientas'),
+              label: const Text('Atras'),
             ),
             const Spacer(),
             TextButton(

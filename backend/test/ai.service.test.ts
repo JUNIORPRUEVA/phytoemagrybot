@@ -53,6 +53,57 @@ test('system prompt keeps brief mode focused on direct answers', () => {
   assert.match(prompt, /no dejes frases a medias/i);
 });
 
+test('system prompt includes structured instruction center context when configured', () => {
+  const service = new AiService() as any;
+
+  const prompt = service.buildSystemPromptFromConfig({
+    fullPrompt: '',
+    contactId: '18095551234',
+    config: {
+      configurations: {
+        instructions: {
+          identity: {
+            assistantName: 'Aura',
+            role: 'Cerradora de ventas por WhatsApp',
+            objective: 'Convertir conversaciones en pedidos',
+            tone: 'Calida y segura',
+          },
+          rules: ['Nunca inventes precios', 'Siempre responde en texto'],
+          salesPrompts: {
+            opening: 'Rompe el hielo con contexto humano.',
+            closing: 'Cierra con una accion puntual.',
+          },
+          products: [
+            {
+              name: 'Te Detox Premium',
+              category: 'Infusiones',
+              summary: 'Ayuda a desinflamar y mejorar digestion.',
+              price: 'RD$1,500',
+              cta: 'Ofrece envio hoy mismo.',
+              keywords: ['detox', 'digestivo'],
+            },
+          ],
+        },
+      },
+    },
+    classifiedIntent: 'precio',
+    decisionAction: 'responder_precio_con_valor',
+    purchaseIntentScore: 55,
+    responseStyle: 'balanced',
+    leadStage: 'interesado',
+    replyObjective: 'cerrar_suave',
+  });
+
+  assert.match(prompt, /Identidad y comportamiento del bot/i);
+  assert.match(prompt, /Aura/i);
+  assert.match(prompt, /Reglas del bot/i);
+  assert.match(prompt, /Nunca inventes precios/i);
+  assert.match(prompt, /Prompts de ventas/i);
+  assert.match(prompt, /Productos disponibles/i);
+  assert.match(prompt, /Te Detox Premium/i);
+  assert.match(prompt, /RD\$1,500/i);
+});
+
 test('parseAssistantReply keeps full text content without truncating lines or words', () => {
   const service = new AiService() as any;
   const content =

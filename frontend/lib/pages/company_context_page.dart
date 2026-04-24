@@ -820,6 +820,14 @@ class _CompanyContextPageState extends State<CompanyContextPage>
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
+        if (widget.onRequestBack != null) ...<Widget>[
+          TextButton.icon(
+            onPressed: widget.onRequestBack,
+            icon: const Icon(Icons.arrow_back_rounded, size: 18),
+            label: const Text('Atras'),
+          ),
+          const SizedBox(height: 6),
+        ],
         if (_isLoading) ...<Widget>[
           const SizedBox(height: 4),
           const LinearProgressIndicator(minHeight: 2),
@@ -898,7 +906,7 @@ class _CompanyContextPageState extends State<CompanyContextPage>
                       _notifyMainViewState();
                       _scrollToTop();
                     },
-              child: const Text('Volver a empresa'),
+              child: const Text('Atras'),
             ),
           ],
         ),
@@ -1577,7 +1585,7 @@ class _CompanyDetailHeader extends StatelessWidget {
             TextButton.icon(
               onPressed: onBack,
               icon: const Icon(Icons.arrow_back_rounded, size: 18),
-              label: const Text('Empresa'),
+              label: const Text('Atras'),
             ),
             const Spacer(),
             TextButton(

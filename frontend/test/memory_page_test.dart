@@ -6,6 +6,10 @@ import 'package:flutter_test/flutter_test.dart';
 class _FakeApiService extends ApiService {
   _FakeApiService() : super(baseUrl: 'https://example.com');
 
+  int deleteClientCalls = 0;
+  int deleteConversationCalls = 0;
+  int resetAllCalls = 0;
+
   @override
   Future<ClientConfigData> getConfig() async {
     return ClientConfigData.empty();
@@ -81,10 +85,50 @@ class _FakeApiService extends ApiService {
       ),
     );
   }
+
+  @override
+  Future<MemoryDeleteActionResultData> deleteClientMemory(String contactId) async {
+    deleteClientCalls += 1;
+    return MemoryDeleteActionResultData(
+      ok: true,
+      action: 'delete-client',
+      actor: 'dashboard-ui',
+      contactId: contactId,
+      deletedAt: null,
+      counts: const <String, dynamic>{},
+    );
+  }
+
+  @override
+  Future<MemoryDeleteActionResultData> deleteConversationMemory(String contactId) async {
+    deleteConversationCalls += 1;
+    return MemoryDeleteActionResultData(
+      ok: true,
+      action: 'delete-conversation',
+      actor: 'dashboard-ui',
+      contactId: contactId,
+      deletedAt: null,
+      counts: const <String, dynamic>{},
+    );
+  }
+
+  @override
+  Future<MemoryDeleteActionResultData> resetAllMemory() async {
+    resetAllCalls += 1;
+    return MemoryDeleteActionResultData(
+      ok: true,
+      action: 'reset-all',
+      actor: 'dashboard-ui',
+      contactId: null,
+      deletedAt: null,
+      counts: const <String, dynamic>{},
+    );
+  }
 }
 
 void main() {
-  testWidgets('memory page opens as a menu and shows the contact memory editor', (WidgetTester tester) async {
+  testWidgets('memory page exposes the global reset action', (WidgetTester tester) async {
+    final apiService = _FakeApiService();
     final binding = TestWidgetsFlutterBinding.ensureInitialized();
     await binding.setSurfaceSize(const Size(1400, 900));
 
@@ -93,7 +137,7 @@ void main() {
         home: Scaffold(
           body: SingleChildScrollView(
             child: MemoryPage(
-              apiService: _FakeApiService(),
+              apiService: apiService,
               onConfigUpdated: () {},
             ),
           ),
@@ -103,16 +147,53 @@ void main() {
 
     await tester.pumpAndSettle();
 
-  expect(find.text('Ventana de memoria'), findsOneWidget);
-  expect(find.text('Memoria por contacto'), findsOneWidget);
+    expect(find.text('Ventana de memoria'), findsOneWidget);
+    expect(find.text('Memoria por contacto'), findsOneWidget);
 
-  await tester.tap(find.text('Memoria por contacto'));
-  await tester.pumpAndSettle();
+    await tester.tap(find.text('Ventana de memoria'));
+    await tester.pumpAndSettle();
 
-  expect(find.text('Maria'), findsWidgets);
+    expect(find.text('Resetear toda la memoria'), findsOneWidget);
+
+    await binding.setSurfaceSize(null);
+  });
+
+  testWidgets('memory page shows contact deletion controls with confirmation', (WidgetTester tester) async {
+    final apiService = _FakeApiService();
+    final binding = TestWidgetsFlutterBinding.ensureInitialized();
+    await binding.setSurfaceSize(const Size(1400, 900));
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: MemoryPage(
+              apiService: apiService,
+              onConfigUpdated: () {},
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Memoria por contacto'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Maria'), findsWidgets);
     expect(find.text('Guardar memoria'), findsOneWidget);
+    expect(find.text('Borrar memoria del cliente'), findsOneWidget);
+    expect(find.text('Limpiar conversación'), findsOneWidget);
     expect(find.text('Prefiere entrega en la tarde'), findsOneWidget);
     expect(find.text('Cliente interesada en te detox; espera seguimiento.'), findsOneWidget);
+
+    await tester.tap(find.text('Borrar memoria del cliente'));
+    await tester.pumpAndSettle();
+    expect(find.text('¿Seguro que deseas borrar esta información? Esto no se puede deshacer.'), findsOneWidget);
+    await tester.tap(find.text('Cancelar'));
+    await tester.pumpAndSettle();
+    expect(apiService.deleteClientCalls, 0);
 
     await binding.setSurfaceSize(null);
   });

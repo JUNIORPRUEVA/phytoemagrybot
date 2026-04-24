@@ -27,19 +27,27 @@ abstract class BotPromptConfigPageStateAccess {
 
 class _BotPromptConfigPageState extends State<BotPromptConfigPage>
     implements BotPromptConfigPageStateAccess {
-  static const String _uiFallbackBase =
-      'Este bot responde como vendedor de WhatsApp. Habla corto, claro y natural. Puedes editar este mensaje.';
-  static const String _defaultShort = 'Responde en maximo 2 lineas y menos de 15 palabras.';
-  static const String _defaultHuman =
-      'Habla como humano. Usa expresiones naturales como: claro, perfecto, dale. No suenes robotico.';
-  static const String _defaultSales =
-      'Despues de responder, intenta cerrar la venta de forma natural. Ej: te lo envio?, lo quieres hoy?';
+  static const String _defaultPromptBase =
+      'Eres el cerebro comercial del negocio. Responde por WhatsApp con criterio, calidez, claridad y foco en conversion.';
 
   final TextEditingController _promptBaseController = TextEditingController();
-  final TextEditingController _promptShortController = TextEditingController();
-  final TextEditingController _promptHumanController = TextEditingController();
-  final TextEditingController _promptSalesController = TextEditingController();
+  final TextEditingController _assistantNameController = TextEditingController();
+  final TextEditingController _roleController = TextEditingController();
+  final TextEditingController _objectiveController = TextEditingController();
+  final TextEditingController _toneController = TextEditingController();
+  final TextEditingController _personalityController = TextEditingController();
+  final TextEditingController _responseStyleController = TextEditingController();
+  final TextEditingController _signatureController = TextEditingController();
+  final TextEditingController _guardrailsController = TextEditingController();
+  final TextEditingController _rulesController = TextEditingController();
+  final TextEditingController _openingController = TextEditingController();
+  final TextEditingController _qualificationController = TextEditingController();
+  final TextEditingController _offerController = TextEditingController();
+  final TextEditingController _objectionController = TextEditingController();
+  final TextEditingController _closingController = TextEditingController();
+  final TextEditingController _followUpController = TextEditingController();
 
+  ClientConfigData? _currentConfig;
   bool _isLoading = true;
   bool _isSaving = false;
   String? _loadError;
@@ -61,9 +69,21 @@ class _BotPromptConfigPageState extends State<BotPromptConfigPage>
   @override
   void dispose() {
     _promptBaseController.dispose();
-    _promptShortController.dispose();
-    _promptHumanController.dispose();
-    _promptSalesController.dispose();
+    _assistantNameController.dispose();
+    _roleController.dispose();
+    _objectiveController.dispose();
+    _toneController.dispose();
+    _personalityController.dispose();
+    _responseStyleController.dispose();
+    _signatureController.dispose();
+    _guardrailsController.dispose();
+    _rulesController.dispose();
+    _openingController.dispose();
+    _qualificationController.dispose();
+    _offerController.dispose();
+    _objectionController.dispose();
+    _closingController.dispose();
+    _followUpController.dispose();
     super.dispose();
   }
 
@@ -74,8 +94,17 @@ class _BotPromptConfigPageState extends State<BotPromptConfigPage>
     });
 
     try {
-      final config = await widget.apiService.getBotPromptConfig();
-      _applyConfig(config);
+      final config = await widget.apiService.getConfig();
+      BotPromptConfigData? botConfig;
+
+      try {
+        botConfig = await widget.apiService.getBotPromptConfig();
+      } catch (_) {
+        botConfig = null;
+      }
+
+      _currentConfig = config;
+      _applyConfig(config, botConfig);
     } catch (error) {
       _applyFallback();
       if (!mounted) {
@@ -94,39 +123,168 @@ class _BotPromptConfigPageState extends State<BotPromptConfigPage>
     }
   }
 
-  void _applyConfig(BotPromptConfigData config) {
-    _promptBaseController.text = config.promptBase;
-    _promptShortController.text = config.promptShort;
-    _promptHumanController.text = config.promptHuman;
-    _promptSalesController.text = config.promptSales;
+  void _applyConfig(ClientConfigData config, BotPromptConfigData? botConfig) {
+    final BotIdentityConfigData identity = config.botIdentity;
+    final SalesPromptBundleData salesPrompts = config.salesPrompts;
+
+    _promptBaseController.text = config.promptBase.isNotEmpty
+        ? config.promptBase
+        : (botConfig?.promptBase ?? _defaultPromptBase);
+    _assistantNameController.text = identity.assistantName;
+    _roleController.text = identity.role;
+    _objectiveController.text = identity.objective;
+    _toneController.text = identity.tone;
+    _personalityController.text = identity.personality.isNotEmpty
+        ? identity.personality
+        : (botConfig?.promptHuman ?? 'Humana, clara, segura y comercial.');
+    _responseStyleController.text = identity.responseStyle.isNotEmpty
+        ? identity.responseStyle
+        : (botConfig?.promptShort ??
+            'Breve cuando convenga, completa cuando el cliente necesite contexto.');
+    _signatureController.text = identity.signature;
+    _guardrailsController.text = identity.guardrails;
+    _rulesController.text = config.botRules.join('\n');
+    _openingController.text = salesPrompts.opening.isNotEmpty
+        ? salesPrompts.opening
+        : config.greetingPrompt;
+    _qualificationController.text = salesPrompts.qualification;
+    _offerController.text = salesPrompts.offer.isNotEmpty
+        ? salesPrompts.offer
+        : config.salesGuidelinesPrompt;
+    _objectionController.text = salesPrompts.objectionHandling.isNotEmpty
+        ? salesPrompts.objectionHandling
+        : config.objectionHandlingPrompt;
+    _closingController.text = salesPrompts.closing.isNotEmpty
+        ? salesPrompts.closing
+        : config.closingPrompt;
+    _followUpController.text = salesPrompts.followUp.isNotEmpty
+        ? salesPrompts.followUp
+        : (botConfig?.promptSales.isNotEmpty == true
+            ? botConfig!.promptSales
+            : config.supportPrompt);
   }
 
   void _applyFallback() {
-    _promptBaseController.text = _uiFallbackBase;
-    _promptShortController.text = _defaultShort;
-    _promptHumanController.text = _defaultHuman;
-    _promptSalesController.text = _defaultSales;
+    _promptBaseController.text = _defaultPromptBase;
+    _assistantNameController.text = 'Aura';
+    _roleController.text = 'Asesora comercial por WhatsApp';
+    _objectiveController.text =
+        'Detectar interes, orientar bien y mover la conversacion a compra.';
+    _toneController.text = 'Cercana, premium y segura';
+    _personalityController.text =
+        'Natural, agil, elegante y persuasiva sin presionar.';
+    _responseStyleController.text =
+        'Responde con criterio: corta si es puntual, completa si el cliente necesita confianza.';
+    _signatureController.clear();
+    _guardrailsController.text =
+        'Nunca inventes precios, stock ni resultados medicos. Si algo no esta configurado, dilo con honestidad.';
+    _rulesController.text =
+        'Siempre responde en texto\nNo contradigas politicas del negocio\nCierra con una accion concreta cuando el cliente este listo';
+    _openingController.text =
+        'Abre conversacion con contexto y cercania, no con frases roboticas.';
+    _qualificationController.text =
+        'Haz preguntas utiles para entender necesidad, presupuesto o urgencia cuando haga falta.';
+    _offerController.text =
+        'Presenta la mejor recomendacion con beneficio claro, precio y siguiente paso.';
+    _objectionController.text =
+        'Responde objeciones con seguridad, evidencia comercial y tacto.';
+    _closingController.text =
+        'Cierra suave con una accion puntual: pedir datos, confirmar envio o tomar pedido.';
+    _followUpController.text =
+        'Si el cliente no decide, deja una puerta abierta elegante para retomar.';
   }
 
   Future<void> _saveConfig() async {
+    final ClientConfigData? current = _currentConfig;
+    if (current == null) {
+      return;
+    }
+
     setState(() {
       _isSaving = true;
     });
 
+    final BotIdentityConfigData identity = BotIdentityConfigData(
+      assistantName: _assistantNameController.text.trim(),
+      role: _roleController.text.trim(),
+      objective: _objectiveController.text.trim(),
+      tone: _toneController.text.trim(),
+      personality: _personalityController.text.trim(),
+      responseStyle: _responseStyleController.text.trim(),
+      signature: _signatureController.text.trim(),
+      guardrails: _guardrailsController.text.trim(),
+    );
+    final SalesPromptBundleData salesPrompts = SalesPromptBundleData(
+      opening: _openingController.text.trim(),
+      qualification: _qualificationController.text.trim(),
+      offer: _offerController.text.trim(),
+      objectionHandling: _objectionController.text.trim(),
+      closing: _closingController.text.trim(),
+      followUp: _followUpController.text.trim(),
+    );
+    final List<String> botRules = _rulesController.text
+        .split('\n')
+        .map((String line) => line.trim())
+        .where((String line) => line.isNotEmpty)
+        .toList();
+
     try {
+      final ClientConfigData updatedConfig = await widget.apiService.savePrompts(
+        promptBase: _promptBaseController.text.trim(),
+        greetingPrompt: _firstNonEmpty(
+          _openingController.text,
+          current.greetingPrompt,
+        ),
+        companyInfoPrompt: current.companyInfoPrompt,
+        productInfoPrompt: current.productInfoPrompt,
+        salesGuidelinesPrompt: _firstNonEmpty(
+          _offerController.text,
+          current.salesGuidelinesPrompt,
+        ),
+        objectionHandlingPrompt: _firstNonEmpty(
+          _objectionController.text,
+          current.objectionHandlingPrompt,
+        ),
+        closingPrompt: _firstNonEmpty(
+          _closingController.text,
+          current.closingPrompt,
+        ),
+        supportPrompt: _firstNonEmpty(
+          _followUpController.text,
+          current.supportPrompt,
+        ),
+        identity: identity,
+        botRules: botRules,
+        salesPromptBundle: salesPrompts,
+        products: current.products,
+      );
+
       await widget.apiService.saveBotPromptConfig(
         promptBase: _promptBaseController.text.trim(),
-        promptShort: _promptShortController.text.trim(),
-        promptHuman: _promptHumanController.text.trim(),
-        promptSales: _promptSalesController.text.trim(),
+        promptShort: _responseStyleController.text.trim(),
+        promptHuman: <String>[
+          _toneController.text.trim(),
+          _personalityController.text.trim(),
+          _guardrailsController.text.trim(),
+        ].where((String line) => line.isNotEmpty).join('\n'),
+        promptSales: <String>[
+          _offerController.text.trim(),
+          _closingController.text.trim(),
+          _followUpController.text.trim(),
+        ].where((String line) => line.isNotEmpty).join('\n'),
       );
 
       if (!mounted) {
         return;
       }
 
+      setState(() {
+        _currentConfig = updatedConfig;
+      });
       widget.onConfigUpdated();
-      _showMessage('Configuracion guardada.');
+      _showMessage(
+        'Instrucciones guardadas. El bot ya responde con esta nueva estructura.',
+      );
     } catch (error) {
       if (!mounted) {
         return;
@@ -142,6 +300,14 @@ class _BotPromptConfigPageState extends State<BotPromptConfigPage>
     }
   }
 
+  String _firstNonEmpty(String primary, String fallback) {
+    final String normalizedPrimary = primary.trim();
+    if (normalizedPrimary.isNotEmpty) {
+      return normalizedPrimary;
+    }
+    return fallback.trim();
+  }
+
   @override
   void triggerSave() {
     if (!_isLoading && !_isSaving) {
@@ -150,269 +316,358 @@ class _BotPromptConfigPageState extends State<BotPromptConfigPage>
   }
 
   void _showMessage(String message, {bool isError = false}) {
-    final messenger = ScaffoldMessenger.of(context);
+    final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
     messenger.hideCurrentSnackBar();
     messenger.showSnackBar(
       SnackBar(
         content: Text(message.replaceFirst('Exception: ', '')),
-        backgroundColor: isError ? const Color(0xFF9F1239) : const Color(0xFF166534),
+        backgroundColor:
+            isError ? const Color(0xFF9F1239) : const Color(0xFF166534),
       ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    final isBusy = _isLoading || _isSaving;
-    final isMobile = MediaQuery.sizeOf(context).width < 900;
-
-    if (isMobile) {
-      return _buildMobileLayout(isBusy);
-    }
-
-    return SecondaryPageLayout(
-      caption: 'Configura respuestas cortas, humanas y enfocadas en cerrar ventas por WhatsApp.',
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          SectionCard(
-          title: 'Prompt del bot vendedor',
-          subtitle: 'Define como responde el bot antes de enviar cada mensaje a OpenAI.',
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              if (_loadError != null)
-                Container(
-                  width: double.infinity,
-                  margin: const EdgeInsets.only(bottom: 18),
-                  padding: const EdgeInsets.symmetric(vertical: 4),
-                  decoration: BoxDecoration(
-                    border: Border(
-                      left: BorderSide(color: const Color(0xFFD97706), width: 3),
-                    ),
-                  ),
-                  child: Padding(
-                    padding: const EdgeInsets.only(left: 14),
-                    child: Text(
-                      _loadError!,
-                      style: const TextStyle(color: Color(0xFF475569)),
-                    ),
-                  ),
-                ),
-              LayoutBuilder(
-                builder: (context, constraints) {
-                  final fullWidth = constraints.maxWidth;
-                  final halfWidth = fullWidth > 1100 ? (fullWidth - 18) / 2 : fullWidth;
-
-                  return Wrap(
-                    spacing: 18,
-                    runSpacing: 18,
-                    children: <Widget>[
-                      _PromptField(
-                        width: fullWidth,
-                        label: 'Prompt Base',
-                        controller: _promptBaseController,
-                        hint: _uiFallbackBase,
-                        enabled: !isBusy,
-                      ),
-                      _PromptField(
-                        width: halfWidth,
-                        label: 'Prompt Corto',
-                        controller: _promptShortController,
-                        hint: _defaultShort,
-                        enabled: !isBusy,
-                      ),
-                      _PromptField(
-                        width: halfWidth,
-                        label: 'Prompt Humano',
-                        controller: _promptHumanController,
-                        hint: _defaultHuman,
-                        enabled: !isBusy,
-                      ),
-                      _PromptField(
-                        width: fullWidth,
-                        label: 'Prompt Ventas',
-                        controller: _promptSalesController,
-                        hint: _defaultSales,
-                        enabled: !isBusy,
-                      ),
-                    ],
-                  );
-                },
+    final bool isBusy = _isLoading || _isSaving;
+    final bool isMobile = MediaQuery.sizeOf(context).width < 900;
+    final Widget content = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        if (isMobile) ...<Widget>[
+          Align(
+            alignment: Alignment.topLeft,
+            child: IconButton(
+              onPressed: widget.onRequestBack,
+              tooltip: 'Regresar',
+              style: IconButton.styleFrom(
+                backgroundColor: const Color(0x33FFFFFF),
+                foregroundColor: const Color(0xFF0F172A),
               ),
-              const SizedBox(height: 20),
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(18),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFF8FAFC),
-                  borderRadius: BorderRadius.circular(18),
-                  border: Border.all(color: const Color(0xFFE2E8F0)),
-                ),
-                child: const Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: <Widget>[
-                    Text(
-                      'Ejemplo',
-                      style: TextStyle(
-                        color: Color(0xFF0F172A),
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    SizedBox(height: 10),
-                    Text(
-                      'Cliente: Precio?\nBot: RD\$1,500 👍\n\nCliente: ok\nBot: Perfecto, te lo envio hoy?',
-                      style: TextStyle(color: Color(0xFF334155), height: 1.6),
-                    ),
-                  ],
-                ),
-              ),
-            ],
+              icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 18),
+            ),
+          ),
+          const SizedBox(height: 10),
+        ],
+        _buildHero(),
+        const SizedBox(height: 28),
+        SectionCard(
+          title: 'IDENTIDAD Y COMPORTAMIENTO',
+          subtitle:
+              'Define la personalidad comercial del bot, como piensa y como debe sonar frente al cliente.',
+          child: LayoutBuilder(
+            builder: (BuildContext context, BoxConstraints constraints) {
+              final double fullWidth = constraints.maxWidth;
+              final double halfWidth =
+                  fullWidth > 1040 ? (fullWidth - 18) / 2 : fullWidth;
+
+              return Wrap(
+                spacing: 18,
+                runSpacing: 18,
+                children: <Widget>[
+                  _InstructionField(
+                    width: fullWidth,
+                    label: 'Prompt maestro',
+                    controller: _promptBaseController,
+                    enabled: !isBusy,
+                    maxLines: 5,
+                    hint: _defaultPromptBase,
+                  ),
+                  _InstructionField(
+                    width: halfWidth,
+                    label: 'Nombre interno del bot',
+                    controller: _assistantNameController,
+                    enabled: !isBusy,
+                    hint: 'Ej. Aura',
+                  ),
+                  _InstructionField(
+                    width: halfWidth,
+                    label: 'Rol comercial',
+                    controller: _roleController,
+                    enabled: !isBusy,
+                    hint: 'Ej. Asesora premium de ventas por WhatsApp',
+                  ),
+                  _InstructionField(
+                    width: halfWidth,
+                    label: 'Objetivo principal',
+                    controller: _objectiveController,
+                    enabled: !isBusy,
+                    maxLines: 4,
+                    hint: 'Que debe lograr en cada conversacion.',
+                  ),
+                  _InstructionField(
+                    width: halfWidth,
+                    label: 'Tono de voz',
+                    controller: _toneController,
+                    enabled: !isBusy,
+                    hint: 'Cercano, premium, directo, sereno...',
+                  ),
+                  _InstructionField(
+                    width: halfWidth,
+                    label: 'Personalidad',
+                    controller: _personalityController,
+                    enabled: !isBusy,
+                    maxLines: 4,
+                    hint: 'Como debe proyectarse el bot al escribir.',
+                  ),
+                  _InstructionField(
+                    width: halfWidth,
+                    label: 'Estilo de respuesta',
+                    controller: _responseStyleController,
+                    enabled: !isBusy,
+                    maxLines: 4,
+                    hint:
+                        'Cuando ser breve, cuando profundizar y como organizar la respuesta.',
+                  ),
+                  _InstructionField(
+                    width: halfWidth,
+                    label: 'Firma o cierre sugerido',
+                    controller: _signatureController,
+                    enabled: !isBusy,
+                    hint: 'Opcional. Ej. Quedo atenta, te ayudo con eso.',
+                  ),
+                  _InstructionField(
+                    width: fullWidth,
+                    label: 'Guardrails e instrucciones criticas',
+                    controller: _guardrailsController,
+                    enabled: !isBusy,
+                    maxLines: 5,
+                    hint:
+                        'Limites, prohibiciones y condiciones que nunca debe romper.',
+                  ),
+                ],
+              );
+            },
           ),
         ),
-          const SizedBox(height: 20),
-          Wrap(
-            spacing: 12,
-            runSpacing: 12,
-            children: <Widget>[
-              ElevatedButton(
-                onPressed: isBusy ? null : _saveConfig,
-                child: Text(_isSaving ? 'Guardando...' : 'Guardar'),
-              ),
-              OutlinedButton(
-                onPressed: isBusy ? null : _loadConfig,
-                child: const Text('Recargar'),
-              ),
-            ],
+        SectionCard(
+          title: 'REGLAS DEL BOT',
+          subtitle:
+              'Escribe una regla por linea. Estas reglas se convierten en instrucciones duras dentro del contexto del bot.',
+          child: AppTextField(
+            label: 'Reglas operativas',
+            controller: _rulesController,
+            enabled: !isBusy,
+            maxLines: 8,
+            hintText:
+                'Siempre responde en texto\nNunca inventes precios\nPide datos solo cuando el cliente este listo',
           ),
-        ],
-      ),
-    );
-  }
+        ),
+        SectionCard(
+          title: 'PROMPTS DE VENTAS',
+          subtitle:
+              'Configura el flujo comercial: apertura, diagnostico, presentacion, manejo de objeciones y cierre.',
+          child: LayoutBuilder(
+            builder: (BuildContext context, BoxConstraints constraints) {
+              final double fullWidth = constraints.maxWidth;
+              final double halfWidth =
+                  fullWidth > 1040 ? (fullWidth - 18) / 2 : fullWidth;
 
-  Widget _buildMobileLayout(bool isBusy) {
-    return ConstrainedBox(
-      constraints: const BoxConstraints(maxWidth: 430),
-      child: Padding(
-        padding: const EdgeInsets.only(bottom: 96),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+              return Wrap(
+                spacing: 18,
+                runSpacing: 18,
+                children: <Widget>[
+                  _InstructionField(
+                    width: halfWidth,
+                    label: 'Apertura',
+                    controller: _openingController,
+                    enabled: !isBusy,
+                    maxLines: 4,
+                    hint:
+                        'Como debe arrancar una conversacion o retomar un interes.',
+                  ),
+                  _InstructionField(
+                    width: halfWidth,
+                    label: 'Calificacion',
+                    controller: _qualificationController,
+                    enabled: !isBusy,
+                    maxLines: 4,
+                    hint:
+                        'Que debe preguntar para entender necesidad y urgencia.',
+                  ),
+                  _InstructionField(
+                    width: halfWidth,
+                    label: 'Presentacion de oferta',
+                    controller: _offerController,
+                    enabled: !isBusy,
+                    maxLines: 4,
+                    hint:
+                        'Como presentar recomendacion, precio, valor y CTA.',
+                  ),
+                  _InstructionField(
+                    width: halfWidth,
+                    label: 'Manejo de objeciones',
+                    controller: _objectionController,
+                    enabled: !isBusy,
+                    maxLines: 4,
+                    hint:
+                        'Precio, tiempo, confianza, resultados, comparaciones.',
+                  ),
+                  _InstructionField(
+                    width: halfWidth,
+                    label: 'Cierre',
+                    controller: _closingController,
+                    enabled: !isBusy,
+                    maxLines: 4,
+                    hint: 'Como convertir sin sonar forzado.',
+                  ),
+                  _InstructionField(
+                    width: halfWidth,
+                    label: 'Seguimiento',
+                    controller: _followUpController,
+                    enabled: !isBusy,
+                    maxLines: 4,
+                    hint:
+                        'Como retomar o dejar puerta abierta si no compra en el momento.',
+                  ),
+                ],
+              );
+            },
+          ),
+        ),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 12,
+          runSpacing: 12,
           children: <Widget>[
-            Align(
-              alignment: Alignment.topLeft,
-              child: IconButton(
-                onPressed: widget.onRequestBack,
-                tooltip: 'Regresar',
-                style: IconButton.styleFrom(
-                  backgroundColor: const Color(0x33FFFFFF),
-                  foregroundColor: const Color(0xFF0F172A),
-                ),
-                icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 18),
+            ElevatedButton(
+              onPressed: isBusy ? null : _saveConfig,
+              child: Text(
+                _isSaving ? 'Guardando...' : 'Guardar instrucciones',
               ),
             ),
-            const SizedBox(height: 10),
-            if (_loadError != null)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 16),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: <Widget>[
-                    Container(
-                      width: 4,
-                      height: 40,
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFD97706),
-                        borderRadius: BorderRadius.circular(999),
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Text(
-                        _loadError!,
-                        style: const TextStyle(
-                          color: Color(0xFF64748B),
-                          fontSize: 12,
-                          height: 1.45,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            const Text(
-              'Base',
-              style: TextStyle(
-                color: Color(0xFF0F172A),
-                fontSize: 16,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            const SizedBox(height: 12),
-            _MobilePromptField(
-              label: 'Prompt base',
-              controller: _promptBaseController,
-              hint: _uiFallbackBase,
-              enabled: !isBusy,
-              maxLines: 5,
-            ),
-            const SizedBox(height: 22),
-            const Text(
-              'Ajustes rapidos',
-              style: TextStyle(
-                color: Color(0xFF0F172A),
-                fontSize: 16,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            const SizedBox(height: 12),
-            _MobilePromptField(
-              label: 'Prompt corto',
-              controller: _promptShortController,
-              hint: _defaultShort,
-              enabled: !isBusy,
-              maxLines: 4,
-            ),
-            const SizedBox(height: 14),
-            _MobilePromptField(
-              label: 'Prompt humano',
-              controller: _promptHumanController,
-              hint: _defaultHuman,
-              enabled: !isBusy,
-              maxLines: 4,
-            ),
-            const SizedBox(height: 14),
-            _MobilePromptField(
-              label: 'Prompt ventas',
-              controller: _promptSalesController,
-              hint: _defaultSales,
-              enabled: !isBusy,
-              maxLines: 4,
-            ),
-            const SizedBox(height: 16),
-            TextButton(
+            OutlinedButton(
               onPressed: isBusy ? null : _loadConfig,
               child: const Text('Recargar'),
             ),
           ],
         ),
+      ],
+    );
+
+    if (isMobile) {
+      return ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 460),
+        child: Padding(
+          padding: const EdgeInsets.only(bottom: 96),
+          child: content,
+        ),
+      );
+    }
+
+    return SecondaryPageLayout(
+      caption:
+          'Centro premium para definir como piensa, vende y se comporta el bot en cada conversacion.',
+      child: content,
+    );
+  }
+
+  Widget _buildHero() {
+    final int rulesCount = _rulesController.text
+        .split('\n')
+        .where((String line) => line.trim().isNotEmpty)
+        .length;
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: <Color>[
+            Color(0xFF0F172A),
+            Color(0xFF1D4ED8),
+            Color(0xFF93C5FD),
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(28),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          const Text(
+            'INSTRUCCIONES',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 28,
+              fontWeight: FontWeight.w900,
+              letterSpacing: 1.2,
+            ),
+          ),
+          const SizedBox(height: 10),
+          const Text(
+            'Convierte prompts sueltos en una direccion operativa clara para el bot: identidad, reglas y guiones de venta listos para produccion.',
+            style: TextStyle(
+              color: Color(0xFFE2E8F0),
+              height: 1.55,
+            ),
+          ),
+          const SizedBox(height: 18),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: <Widget>[
+              _HeroBadge(
+                label: 'Identidad',
+                value: _assistantNameController.text.trim().isEmpty
+                    ? 'Pendiente'
+                    : 'Definida',
+              ),
+              _HeroBadge(
+                label: 'Reglas',
+                value: rulesCount == 0 ? '0 activas' : '$rulesCount activas',
+              ),
+              _HeroBadge(
+                label: 'Ventas',
+                value: _offerController.text.trim().isEmpty
+                    ? 'Sin guion'
+                    : 'Lista',
+              ),
+              _HeroBadge(
+                label: 'Productos',
+                value: '${_currentConfig?.products.length ?? 0} cargados',
+              ),
+            ],
+          ),
+          if (_loadError != null) ...<Widget>[
+            const SizedBox(height: 18),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: const Color(0x33FFFFFF),
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(color: const Color(0x66FCA5A5)),
+              ),
+              child: Text(
+                _loadError!,
+                style: const TextStyle(color: Colors.white),
+              ),
+            ),
+          ],
+        ],
       ),
     );
   }
 }
 
-class _PromptField extends StatelessWidget {
-  const _PromptField({
+class _InstructionField extends StatelessWidget {
+  const _InstructionField({
     required this.width,
     required this.label,
     required this.controller,
-    required this.hint,
     required this.enabled,
+    required this.hint,
+    this.maxLines = 3,
   });
 
   final double width;
   final String label;
   final TextEditingController controller;
-  final String hint;
   final bool enabled;
+  final String hint;
+  final int maxLines;
 
   @override
   Widget build(BuildContext context) {
@@ -421,73 +676,51 @@ class _PromptField extends StatelessWidget {
       child: AppTextField(
         label: label,
         controller: controller,
-        maxLines: 6,
         enabled: enabled,
+        maxLines: maxLines,
         hintText: hint,
       ),
     );
   }
 }
 
-class _MobilePromptField extends StatelessWidget {
-  const _MobilePromptField({
-    required this.label,
-    required this.controller,
-    required this.hint,
-    required this.enabled,
-    required this.maxLines,
-  });
+class _HeroBadge extends StatelessWidget {
+  const _HeroBadge({required this.label, required this.value});
 
   final String label;
-  final TextEditingController controller;
-  final String hint;
-  final bool enabled;
-  final int maxLines;
+  final String value;
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: <Widget>[
-        Text(
-          label,
-          style: const TextStyle(
-            color: Color(0xFF334155),
-            fontSize: 12,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-        const SizedBox(height: 10),
-        TextField(
-          controller: controller,
-          enabled: enabled,
-          maxLines: maxLines,
-          style: const TextStyle(
-            color: Color(0xFF0F172A),
-            fontSize: 13,
-            height: 1.45,
-          ),
-          decoration: InputDecoration(
-            hintText: hint,
-            isDense: true,
-            filled: true,
-            fillColor: const Color(0xFFF8FAFC),
-            contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(16),
-              borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
-            ),
-            enabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(16),
-              borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
-            ),
-            focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(16),
-              borderSide: const BorderSide(color: Color(0xFF2563EB)),
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: const Color(0x22FFFFFF),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0x33FFFFFF)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Text(
+            label,
+            style: const TextStyle(
+              color: Color(0xFFBFDBFE),
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.8,
             ),
           ),
-        ),
-      ],
+          const SizedBox(height: 4),
+          Text(
+            value,
+            style: const TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

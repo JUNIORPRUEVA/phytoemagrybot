@@ -1,12 +1,8 @@
 import 'package:flutter/material.dart';
 
 import '../pages/bot_prompt_config_page.dart';
-import '../pages/company_context_page.dart';
-import '../pages/connect_whatsapp_page.dart';
 import '../pages/config_page.dart';
-import '../pages/gallery_page.dart';
-import '../pages/memory_page.dart';
-import '../pages/tools_page.dart';
+import '../pages/products_page.dart';
 import '../services/api_client.dart';
 import '../services/api_service.dart';
 
@@ -23,35 +19,22 @@ class DashboardShell extends StatefulWidget {
 }
 
 class _DashboardShellState extends State<DashboardShell> {
-  static const int _channelsPageIndex = 0;
-  static const int _memoryPageIndex = 1;
-  static const int _promptPageIndex = 2;
-  static const int _companyContextPageIndex = 3;
-  static const int _galleryPageIndex = 4;
-  static const int _toolsPageIndex = 5;
-  static const int _configPageIndex = 6;
+  static const int _promptPageIndex = 0;
+  static const int _galleryPageIndex = 1;
+  static const int _configPageIndex = 2;
 
   int _selectedIndex = 0;
   int _mobileLastPrimaryPageIndex = 0;
-  bool _isCompanyContextMainView = true;
   final GlobalKey<State<BotPromptConfigPage>> _promptPageKey =
       GlobalKey<State<BotPromptConfigPage>>();
-  final GlobalKey<State<CompanyContextPage>> _companyContextPageKey =
-      GlobalKey<State<CompanyContextPage>>();
+  final GlobalKey<State<ConfigPage>> _configPageKey =
+      GlobalKey<State<ConfigPage>>();
   late final ApiService _apiService;
   late Future<ClientConfigData> _overviewFuture;
 
-  static const List<int> _mobileBottomNavIndices = <int>[
-    _galleryPageIndex,
-    _promptPageIndex,
-    _channelsPageIndex,
-  ];
-  static const List<int> _mobileDrawerIndices = <int>[
-    _memoryPageIndex,
-    _companyContextPageIndex,
-    _toolsPageIndex,
-  ];
-  static const int _mobileMainPageIndex = _channelsPageIndex;
+  static const List<int> _mobileBottomNavIndices = <int>[_galleryPageIndex, _promptPageIndex];
+  static const List<int> _mobileDrawerIndices = <int>[_configPageIndex];
+  static const int _mobileMainPageIndex = _promptPageIndex;
 
   @override
   void initState() {
@@ -69,58 +52,33 @@ class _DashboardShellState extends State<DashboardShell> {
   @override
   Widget build(BuildContext context) {
     final pages = <Widget>[
-      ConnectWhatsAppPage(
-        apiService: _apiService,
-        onConfigUpdated: _refreshOverview,
-      ),
-      MemoryPage(apiService: _apiService, onConfigUpdated: _refreshOverview),
       BotPromptConfigPage(
         key: _promptPageKey,
         apiService: _apiService,
         onConfigUpdated: _refreshOverview,
         onRequestBack: () => _selectPage(_mobileMainPageIndex),
       ),
-      CompanyContextPage(
-        key: _companyContextPageKey,
-        apiService: _apiService,
-        onConfigUpdated: _refreshOverview,
-        onRequestBack: () => _selectPage(_mobileMainPageIndex),
-        onMainViewChanged: (isMainView) {
-          if (_isCompanyContextMainView == isMainView) {
-            return;
-          }
-
-          setState(() {
-            _isCompanyContextMainView = isMainView;
-          });
-        },
-      ),
-      GalleryPage(
+      ProductsPage(
         apiService: _apiService,
         onConfigUpdated: _refreshOverview,
         onRequestBack: () => _selectPage(_mobileMainPageIndex),
       ),
-      ToolsPage(apiService: _apiService, onConfigUpdated: _refreshOverview),
-      ConfigPage(apiService: _apiService, onConfigUpdated: _refreshOverview),
+      ConfigPage(
+        key: _configPageKey,
+        apiService: _apiService,
+        onConfigUpdated: _refreshOverview,
+      ),
     ];
 
     final labels = <String>[
-      'Canales',
-      'Memoria',
-      'Prompts',
-      'Empresa',
-      'Galeria',
-      'Herramientas',
+      'Instrucciones',
+      'Productos',
       'Configuracion',
     ];
 
     final icons = <IconData>[
-      Icons.hub_rounded,
-      Icons.psychology_alt_rounded,
       Icons.auto_awesome_rounded,
-      Icons.business_center_rounded,
-      Icons.photo_library,
-      Icons.extension_rounded,
+      Icons.inventory_2_rounded,
       Icons.settings_rounded,
     ];
 
@@ -129,8 +87,7 @@ class _DashboardShellState extends State<DashboardShell> {
         isMobile && _selectedIndex == _mobileMainPageIndex;
     final bool hideMobileAppBar =
         isMobile &&
-        (_selectedIndex == _promptPageIndex ||
-            _selectedIndex == _galleryPageIndex);
+      _selectedIndex == _galleryPageIndex;
     final int mobileNavIndex = _mobileBottomNavIndices.indexOf(
       _mobileLastPrimaryPageIndex,
     );
@@ -169,7 +126,7 @@ class _DashboardShellState extends State<DashboardShell> {
                     )
                   : isMobile
                   ? IconButton(
-                      onPressed: () => _selectPage(_mobileMainPageIndex),
+                      onPressed: _handleMobileBack,
                       tooltip: 'Regresar',
                       icon: const Icon(Icons.arrow_back_rounded),
                     )
@@ -241,19 +198,7 @@ class _DashboardShellState extends State<DashboardShell> {
                   .toList(),
             )
           : _AppFooter(overviewFuture: _overviewFuture),
-      floatingActionButton: _selectedIndex == _companyContextPageIndex &&
-              _isCompanyContextMainView
-          ? FloatingActionButton.extended(
-              onPressed: () {
-                final state =
-                    _companyContextPageKey.currentState
-                        as CompanyContextPageStateAccess?;
-                state?.openUsageRulesEditor();
-              },
-              icon: const Icon(Icons.tune_rounded),
-              label: const Text('Reglas de uso del bot'),
-            )
-          : isMobile && _selectedIndex == _promptPageIndex
+      floatingActionButton: isMobile && _selectedIndex == _promptPageIndex
           ? FloatingActionButton.extended(
               onPressed: () {
                 final state =
@@ -397,6 +342,18 @@ class _DashboardShellState extends State<DashboardShell> {
       }
       _selectedIndex = index;
     });
+  }
+
+  void _handleMobileBack() {
+    if (_selectedIndex == _configPageIndex) {
+      final state = _configPageKey.currentState as ConfigPageStateAccess?;
+      final handled = state?.handleBackNavigation() ?? false;
+      if (handled) {
+        return;
+      }
+    }
+
+    _selectPage(_mobileMainPageIndex);
   }
 
   void _showProfileSheet() {

@@ -1,5 +1,7 @@
 import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
 import { MemoryService } from './memory.service';
+import { MemoryDeleteContactDto } from './dto/memory-delete-contact.dto';
+import { MemoryResetAllDto } from './dto/memory-reset-all.dto';
 import { UpdateMemoryEntryDto } from './dto/update-memory-entry.dto';
 
 @Controller('memory')
@@ -27,5 +29,20 @@ export class MemoryController {
     @Body() dto: UpdateMemoryEntryDto,
   ) {
     return this.memoryService.updateMemoryEntry(contactId, dto);
+  }
+
+  @Post('delete-client')
+  async deleteClientMemory(@Body() dto: MemoryDeleteContactDto) {
+    return this.memoryService.deleteClientMemory(dto.contactId, dto.actor);
+  }
+
+  @Post('delete-conversation')
+  async deleteConversation(@Body() dto: MemoryDeleteContactDto) {
+    return this.memoryService.deleteConversation(dto.contactId, dto.actor);
+  }
+
+  @Post('reset-all')
+  async resetAllMemory(@Body() dto: MemoryResetAllDto) {
+    return this.memoryService.resetAllMemory(dto.actor);
   }
 }

@@ -145,7 +145,7 @@ export class AiService {
     leadStage: AssistantLeadStage;
     replyObjective: AssistantReplyObjective;
   }): string {
-    const promptSections = this.readPromptSections(params.config?.configurations);
+    const promptSections = this.buildBotContext(params.config);
 
     return [
       params.fullPrompt.trim() ||
@@ -317,8 +317,56 @@ export class AiService {
     return 'Modo de respuesta: equilibrado. Responde natural, clara y util, sin quedarte corto ni hablar de mas. Prioriza que la respuesta salga completa y entendible.';
   }
 
-  private readPromptSections(configurations: unknown): string[] {
-    const prompts = this.asRecord(this.asRecord(configurations).prompts);
+  private buildBotContext(config?: AppConfigRecord): string[] {
+    const configurations = this.asRecord(config?.configurations);
+    const instructions = this.asRecord(configurations.instructions);
+    const identity = this.asRecord(instructions.identity);
+    const rules = this.asStringList(instructions.rules);
+    const salesPrompts = this.asRecord(instructions.salesPrompts);
+    const rawProducts = Array.isArray(instructions.products)
+      ? instructions.products
+      : [];
+    const sections: string[] = [];
+
+    this.appendStructuredFields(sections, 'Identidad y comportamiento del bot', [
+      ['Nombre interno del bot', identity['assistantName']],
+      ['Rol comercial', identity['role']],
+      ['Objetivo principal', identity['objective']],
+      ['Tono de voz', identity['tone']],
+      ['Personalidad', identity['personality']],
+      ['Estilo de respuesta', identity['responseStyle']],
+      ['Firma o cierre sugerido', identity['signature']],
+      ['Guardrails e instrucciones criticas', identity['guardrails']],
+    ]);
+
+    if (rules.length > 0) {
+      sections.push(`Reglas del bot:\n${rules.map((rule) => `- ${rule}`).join('\n')}`);
+    }
+
+    this.appendStructuredFields(sections, 'Prompts de ventas', [
+      ['Apertura', salesPrompts['opening']],
+      ['Calificacion', salesPrompts['qualification']],
+      ['Presentacion de oferta', salesPrompts['offer']],
+      ['Manejo de objeciones', salesPrompts['objectionHandling']],
+      ['Cierre', salesPrompts['closing']],
+      ['Seguimiento', salesPrompts['followUp']],
+    ]);
+
+    const productBlocks = rawProducts
+      .map((item) => this.formatProductBlock(item))
+      .filter((item): item is string => Boolean(item));
+
+    if (productBlocks.length > 0) {
+      sections.push(`Productos disponibles:\n${productBlocks.join('\n\n')}`);
+    }
+
+    sections.push(...this.readLegacyPromptSections(configurations));
+
+    return sections;
+  }
+
+  private readLegacyPromptSections(configurations: Record<string, unknown>): string[] {
+    const prompts = this.asRecord(configurations.prompts);
     const sections: string[] = [];
 
     this.appendPromptSection(sections, 'Saludo inicial', prompts['greeting']);
@@ -330,6 +378,25 @@ export class AiService {
     this.appendPromptSection(sections, 'Soporte y postventa', prompts['supportPrompt']);
 
     return sections;
+  }
+
+  private appendStructuredFields(
+    sections: string[],
+    title: string,
+    fields: Array<[string, unknown]>,
+  ): void {
+    const lines = fields
+      .map(([label, value]) => {
+        const content = typeof value === 'string' ? value.trim() : '';
+        return content ? `- ${label}: ${content}` : '';
+      })
+      .filter((line) => line.length > 0);
+
+    if (lines.length === 0) {
+      return;
+    }
+
+    sections.push(`${title}:\n${lines.join('\n')}`);
   }
 
   private appendPromptSection(
@@ -346,12 +413,55 @@ export class AiService {
     sections.push(`${title}:\n${content}`);
   }
 
+  private formatProductBlock(value: unknown): string | null {
+    const product = this.asRecord(value);
+    const name = this.asString(product.name);
+
+    if (!name) {
+      return null;
+    }
+
+    const lines = [
+      name,
+      this.formatProductField('Categoria', product.category),
+      this.formatProductField('Resumen', product.summary),
+      this.formatProductField('Precio', product.price),
+      this.formatProductField('CTA', product.cta),
+      this.formatProductField('Beneficios', product.benefits),
+      this.formatProductField('Uso recomendado', product.usage),
+      this.formatProductField('Notas comerciales', product.notes),
+      this.formatProductField('Palabras clave', this.asStringList(product.keywords).join(', ')),
+    ].filter((line) => line.length > 0);
+
+    return lines.join('\n');
+  }
+
+  private formatProductField(label: string, value: unknown): string {
+    const content = typeof value === 'string' ? value.trim() : '';
+    return content ? `- ${label}: ${content}` : '';
+  }
+
+  private asStringList(value: unknown): string[] {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+
+    return value
+      .filter((item) => typeof item === 'string')
+      .map((item) => item.trim())
+      .filter((item) => item.length > 0);
+  }
+
   private asRecord(value: unknown): Record<string, unknown> {
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
       return {};
     }
 
     return value as Record<string, unknown>;
+  }
+
+  private asString(value: unknown): string {
+    return typeof value === 'string' ? value.trim() : '';
   }
 
   private parseAssistantReply(response: string): AssistantReply {

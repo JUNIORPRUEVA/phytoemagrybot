@@ -42,6 +42,10 @@ class ClientConfigData {
     required this.companyName,
     required this.companyDetails,
     required this.companyLogoUrl,
+    this.botIdentity = const BotIdentityConfigData(),
+    this.botRules = const <String>[],
+    this.salesPrompts = const SalesPromptBundleData(),
+    this.products = const <ProductCatalogItemData>[],
   });
 
   final int id;
@@ -81,6 +85,10 @@ class ClientConfigData {
   final String companyName;
   final String companyDetails;
   final String companyLogoUrl;
+  final BotIdentityConfigData botIdentity;
+  final List<String> botRules;
+  final SalesPromptBundleData salesPrompts;
+  final List<ProductCatalogItemData> products;
 
   bool get whatsappConfigured =>
       evolutionApiUrl.isNotEmpty &&
@@ -174,6 +182,10 @@ class ClientConfigData {
       companyName: companyName,
       companyDetails: companyDetails,
       companyLogoUrl: companyLogoUrl,
+      botIdentity: botIdentity,
+      botRules: botRules,
+      salesPrompts: salesPrompts,
+      products: products,
     );
   }
 
@@ -217,6 +229,10 @@ class ClientConfigData {
       companyName: '',
       companyDetails: '',
       companyLogoUrl: '',
+      botIdentity: const BotIdentityConfigData(),
+      botRules: const <String>[],
+      salesPrompts: const SalesPromptBundleData(),
+      products: const <ProductCatalogItemData>[],
     );
   }
 
@@ -244,6 +260,20 @@ class ClientConfigData {
     final branding =
         (configurations['branding'] as Map<String, dynamic>?) ??
         <String, dynamic>{};
+    final instructions =
+      (configurations['instructions'] as Map<String, dynamic>?) ??
+      <String, dynamic>{};
+    final identity =
+      (instructions['identity'] as Map<String, dynamic>?) ??
+      <String, dynamic>{};
+    final salesPrompts =
+      (instructions['salesPrompts'] as Map<String, dynamic>?) ??
+      <String, dynamic>{};
+    final products = _asJsonList(instructions['products']);
+    final rules = ((instructions['rules'] as List<dynamic>?) ?? const <dynamic>[])
+      .map((dynamic item) => item.toString().trim())
+      .where((String item) => item.isNotEmpty)
+      .toList();
 
     return ClientConfigData(
       id: (json['id'] as int?) ?? 1,
@@ -283,7 +313,182 @@ class ClientConfigData {
       companyName: (branding['companyName'] as String?) ?? '',
       companyDetails: (branding['companyDetails'] as String?) ?? '',
       companyLogoUrl: (branding['companyLogoUrl'] as String?) ?? '',
+      botIdentity: BotIdentityConfigData.fromJson(identity),
+      botRules: rules,
+      salesPrompts: SalesPromptBundleData.fromJson(salesPrompts),
+      products: products.map(ProductCatalogItemData.fromJson).toList(),
     );
+  }
+}
+
+class BotIdentityConfigData {
+  const BotIdentityConfigData({
+    this.assistantName = '',
+    this.role = '',
+    this.objective = '',
+    this.tone = '',
+    this.personality = '',
+    this.responseStyle = '',
+    this.signature = '',
+    this.guardrails = '',
+  });
+
+  final String assistantName;
+  final String role;
+  final String objective;
+  final String tone;
+  final String personality;
+  final String responseStyle;
+  final String signature;
+  final String guardrails;
+
+  bool get isEmpty =>
+      assistantName.isEmpty &&
+      role.isEmpty &&
+      objective.isEmpty &&
+      tone.isEmpty &&
+      personality.isEmpty &&
+      responseStyle.isEmpty &&
+      signature.isEmpty &&
+      guardrails.isEmpty;
+
+  factory BotIdentityConfigData.fromJson(Map<String, dynamic> json) {
+    return BotIdentityConfigData(
+      assistantName: (json['assistantName'] as String?) ?? '',
+      role: (json['role'] as String?) ?? '',
+      objective: (json['objective'] as String?) ?? '',
+      tone: (json['tone'] as String?) ?? '',
+      personality: (json['personality'] as String?) ?? '',
+      responseStyle: (json['responseStyle'] as String?) ?? '',
+      signature: (json['signature'] as String?) ?? '',
+      guardrails: (json['guardrails'] as String?) ?? '',
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return <String, dynamic>{
+      'assistantName': assistantName,
+      'role': role,
+      'objective': objective,
+      'tone': tone,
+      'personality': personality,
+      'responseStyle': responseStyle,
+      'signature': signature,
+      'guardrails': guardrails,
+    };
+  }
+}
+
+class SalesPromptBundleData {
+  const SalesPromptBundleData({
+    this.opening = '',
+    this.qualification = '',
+    this.offer = '',
+    this.objectionHandling = '',
+    this.closing = '',
+    this.followUp = '',
+  });
+
+  final String opening;
+  final String qualification;
+  final String offer;
+  final String objectionHandling;
+  final String closing;
+  final String followUp;
+
+  factory SalesPromptBundleData.fromJson(Map<String, dynamic> json) {
+    return SalesPromptBundleData(
+      opening: (json['opening'] as String?) ?? '',
+      qualification: (json['qualification'] as String?) ?? '',
+      offer: (json['offer'] as String?) ?? '',
+      objectionHandling: (json['objectionHandling'] as String?) ?? '',
+      closing: (json['closing'] as String?) ?? '',
+      followUp: (json['followUp'] as String?) ?? '',
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return <String, dynamic>{
+      'opening': opening,
+      'qualification': qualification,
+      'offer': offer,
+      'objectionHandling': objectionHandling,
+      'closing': closing,
+      'followUp': followUp,
+    };
+  }
+}
+
+class ProductCatalogItemData {
+  const ProductCatalogItemData({
+    this.id = '',
+    this.name = '',
+    this.category = '',
+    this.summary = '',
+    this.price = '',
+    this.cta = '',
+    this.benefits = '',
+    this.usage = '',
+    this.notes = '',
+    this.keywords = const <String>[],
+    this.mediaIds = const <int>[],
+    this.mediaUrls = const <String>[],
+  });
+
+  final String id;
+  final String name;
+  final String category;
+  final String summary;
+  final String price;
+  final String cta;
+  final String benefits;
+  final String usage;
+  final String notes;
+  final List<String> keywords;
+  final List<int> mediaIds;
+  final List<String> mediaUrls;
+
+  factory ProductCatalogItemData.fromJson(Map<String, dynamic> json) {
+    return ProductCatalogItemData(
+      id: (json['id'] as String?) ?? '',
+      name: (json['name'] as String?) ?? '',
+      category: (json['category'] as String?) ?? '',
+      summary: (json['summary'] as String?) ?? '',
+      price: (json['price'] as String?) ?? '',
+      cta: (json['cta'] as String?) ?? '',
+      benefits: (json['benefits'] as String?) ?? '',
+      usage: (json['usage'] as String?) ?? '',
+      notes: (json['notes'] as String?) ?? '',
+      keywords: ((json['keywords'] as List<dynamic>?) ?? const <dynamic>[])
+          .map((dynamic item) => item.toString().trim())
+          .where((String item) => item.isNotEmpty)
+          .toList(),
+      mediaIds: ((json['mediaIds'] as List<dynamic>?) ?? const <dynamic>[])
+          .map((dynamic item) => item is num ? item.toInt() : int.tryParse(item.toString()) ?? -1)
+          .where((int item) => item >= 0)
+          .toList(),
+      mediaUrls: ((json['mediaUrls'] as List<dynamic>?) ?? const <dynamic>[])
+          .map((dynamic item) => item.toString().trim())
+          .where((String item) => item.isNotEmpty)
+          .toList(),
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return <String, dynamic>{
+      'id': id,
+      'name': name,
+      'category': category,
+      'summary': summary,
+      'price': price,
+      'cta': cta,
+      'benefits': benefits,
+      'usage': usage,
+      'notes': notes,
+      'keywords': keywords,
+      'mediaIds': mediaIds,
+      'mediaUrls': mediaUrls,
+    };
   }
 }
 
@@ -681,6 +886,35 @@ class ConversationContextData {
   }
 }
 
+class MemoryDeleteActionResultData {
+  const MemoryDeleteActionResultData({
+    required this.ok,
+    required this.action,
+    required this.actor,
+    required this.contactId,
+    required this.deletedAt,
+    required this.counts,
+  });
+
+  final bool ok;
+  final String action;
+  final String actor;
+  final String? contactId;
+  final DateTime? deletedAt;
+  final Map<String, dynamic> counts;
+
+  factory MemoryDeleteActionResultData.fromJson(Map<String, dynamic> json) {
+    return MemoryDeleteActionResultData(
+      ok: (json['ok'] as bool?) ?? false,
+      action: (json['action'] as String?) ?? '',
+      actor: (json['actor'] as String?) ?? '',
+      contactId: json['contactId'] as String?,
+      deletedAt: _parseDateTime(json['deletedAt']),
+      counts: (json['counts'] as Map<String, dynamic>?) ?? <String, dynamic>{},
+    );
+  }
+}
+
 class DeleteWhatsAppInstanceResponse {
   const DeleteWhatsAppInstanceResponse({
     required this.message,
@@ -854,6 +1088,42 @@ class _MemoryRepository {
       body: payload,
     );
     return ConversationContextData.fromJson(data);
+  }
+
+  Future<MemoryDeleteActionResultData> deleteClient({
+    required String contactId,
+    required String actor,
+  }) async {
+    final data = await _client.postJson(
+      '/memory/delete-client',
+      body: <String, dynamic>{
+        'contactId': contactId,
+        'actor': actor,
+      },
+    );
+    return MemoryDeleteActionResultData.fromJson(data);
+  }
+
+  Future<MemoryDeleteActionResultData> deleteConversation({
+    required String contactId,
+    required String actor,
+  }) async {
+    final data = await _client.postJson(
+      '/memory/delete-conversation',
+      body: <String, dynamic>{
+        'contactId': contactId,
+        'actor': actor,
+      },
+    );
+    return MemoryDeleteActionResultData.fromJson(data);
+  }
+
+  Future<MemoryDeleteActionResultData> resetAll({required String actor}) async {
+    final data = await _client.postJson(
+      '/memory/reset-all',
+      body: <String, dynamic>{'actor': actor},
+    );
+    return MemoryDeleteActionResultData.fromJson(data);
   }
 }
 
@@ -1231,8 +1501,12 @@ class ApiService {
     required String objectionHandlingPrompt,
     required String closingPrompt,
     required String supportPrompt,
+    BotIdentityConfigData? identity,
+    List<String>? botRules,
+    SalesPromptBundleData? salesPromptBundle,
+    List<ProductCatalogItemData>? products,
   }) async {
-    await _configRepository.save(<String, dynamic>{
+    final payload = <String, dynamic>{
       'promptBase': promptBase,
       'configurations': <String, dynamic>{
         'prompts': <String, dynamic>{
@@ -1244,9 +1518,27 @@ class ApiService {
           'closingPrompt': closingPrompt,
           'supportPrompt': supportPrompt,
         },
+        if (identity != null ||
+            botRules != null ||
+            salesPromptBundle != null ||
+            products != null)
+          'instructions': <String, dynamic>{
+            if (identity != null) 'identity': identity.toJson(),
+            if (botRules != null)
+              'rules': botRules
+                  .map((String item) => item.trim())
+                  .where((String item) => item.isNotEmpty)
+                  .toList(),
+            if (salesPromptBundle != null) 'salesPrompts': salesPromptBundle.toJson(),
+            if (products != null)
+              'products': products.map((ProductCatalogItemData item) => item.toJson()).toList(),
+          },
       },
-    });
-    return getConfig();
+    };
+
+    _invalidateConfigCache();
+    await _configRepository.save(payload);
+    return _loadConfig(forceRefresh: true);
   }
 
   Future<ApiHealthData> getHealth() async {
@@ -1406,6 +1698,24 @@ class ApiService {
         'summary': summary,
       },
     );
+  }
+
+  Future<MemoryDeleteActionResultData> deleteClientMemory(String contactId) async {
+    return _memoryRepository.deleteClient(
+      contactId: contactId,
+      actor: 'dashboard-ui',
+    );
+  }
+
+  Future<MemoryDeleteActionResultData> deleteConversationMemory(String contactId) async {
+    return _memoryRepository.deleteConversation(
+      contactId: contactId,
+      actor: 'dashboard-ui',
+    );
+  }
+
+  Future<MemoryDeleteActionResultData> resetAllMemory() async {
+    return _memoryRepository.resetAll(actor: 'dashboard-ui');
   }
 
   Future<WhatsAppChannelData> getWhatsAppChannel() async {

@@ -177,7 +177,7 @@ void main() {
 
     expect(find.text('Logo'), findsOneWidget);
     await tester.enterText(find.byType(TextField).first, 'Phyto Emagry RD');
-    await tester.tap(find.widgetWithText(OutlinedButton, 'Volver a empresa'));
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Atras'));
     await tester.pumpAndSettle();
 
     await tester.tap(find.text('Ubicacion'));
