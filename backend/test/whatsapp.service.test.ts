@@ -489,7 +489,39 @@ test('connectInstance configures the webhook after requesting the QR', async () 
   const result = await service.connectInstance('demo');
 
   assert.equal(result.instanceName, 'demo');
+  assert.equal(result.qrCode, null);
   assert.deepEqual(webhookCalls, ['demo']);
+});
+
+test('getQr returns a textual QR when Evolution does not send image base64', async () => {
+  const service = createService();
+
+  service.getInstanceStatus = async (name: string) => ({
+    id: 1,
+    name,
+    displayName: null,
+    status: 'disconnected',
+    phone: null,
+    connected: false,
+    webhookReady: false,
+    webhookTarget: null,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  });
+  service.getEvolutionClient = () => ({
+    get: async () => ({
+      data: {
+        code: '2@LOCAL_QR_TOKEN',
+      },
+    }),
+  });
+
+  const result = await service.getQr('demo');
+
+  assert.equal(result.instanceName, 'demo');
+  assert.equal(result.qrCode, '2@LOCAL_QR_TOKEN');
+  assert.equal(result.qrCodeBase64, null);
+  assert.equal(result.message, 'QR obtenido correctamente.');
 });
 
 test('onModuleInit reapplies the configured webhook when instance and url are present', async () => {

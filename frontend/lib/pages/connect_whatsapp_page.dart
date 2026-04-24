@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 
 import '../services/api_service.dart';
 import '../widgets/app_text_field.dart';
@@ -42,6 +43,7 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
   List<ManagedWhatsAppInstanceData> _instances =
       const <ManagedWhatsAppInstanceData>[];
   String? _selectedInstanceName;
+  String? _qrCode;
   String? _qrCodeBase64;
   bool _isLoading = true;
   bool _isCreating = false;
@@ -145,16 +147,20 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
       final instances = await widget.apiService.getInstances();
       final selected = _resolvePreferredInstance(instances);
       final nextSelectedName = selected?.name;
+      String? nextQrCode = _qrCode;
       String? nextQrCodeBase64 = _qrCodeBase64;
 
       if (selected == null) {
+        nextQrCode = null;
         nextQrCodeBase64 = null;
       } else if (selected.connected) {
+        nextQrCode = null;
         nextQrCodeBase64 = null;
       } else if (nextSelectedName != _selectedInstanceName ||
-          nextQrCodeBase64 == null ||
-          nextQrCodeBase64.isEmpty) {
+          ((nextQrCodeBase64 == null || nextQrCodeBase64.isEmpty) &&
+              (nextQrCode == null || nextQrCode.isEmpty))) {
         final qr = await widget.apiService.getQr(selected.name);
+        nextQrCode = qr.qrCode;
         nextQrCodeBase64 = qr.qrCodeBase64;
       }
 
@@ -165,6 +171,7 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
       setState(() {
         _instances = instances;
         _selectedInstanceName = nextSelectedName;
+        _qrCode = nextQrCode;
         _qrCodeBase64 = nextQrCodeBase64;
         _displayNameController.text = selected?.displayName ?? '';
         _phoneController.text = selected?.phone ?? '';
@@ -258,6 +265,7 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
       _newInstanceNameController.clear();
       _newInstancePhoneController.clear();
       _selectedInstanceName = created.name;
+      _qrCode = qr.qrCode;
       _qrCodeBase64 = qr.qrCodeBase64;
       _webhookMessage = webhook.message;
 
@@ -598,6 +606,7 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
         _selectedInstanceName = status.name;
         _displayNameController.text = status.displayName ?? '';
         _phoneController.text = status.phone ?? '';
+        _qrCode = status.connected ? null : qr?.qrCode;
         _qrCodeBase64 = status.connected ? null : qr?.qrCodeBase64;
       });
     } catch (error) {
@@ -711,6 +720,7 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
 
       if (_selectedInstanceName == instanceName) {
         _selectedInstanceName = null;
+        _qrCode = null;
         _qrCodeBase64 = null;
       }
 
@@ -804,6 +814,7 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
   @override
   Widget build(BuildContext context) {
     final selectedInstance = _selectedInstance;
+    final qrCodeValue = (_qrCode ?? '').trim();
     final qrImageBytes = _decodeQrImage(_qrCodeBase64);
     final hasConfigGaps = !_hasEvolutionConfig || !_hasWebhookBaseConfig;
 
@@ -1118,6 +1129,23 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
                                       qrImageBytes,
                                       width: compact ? 220 : 260,
                                       height: compact ? 220 : 260,
+                                    ),
+                                  ),
+                                ),
+                              )
+                            else if (qrCodeValue.isNotEmpty)
+                              Align(
+                                alignment: compact
+                                    ? Alignment.centerLeft
+                                    : Alignment.center,
+                                child: ColoredBox(
+                                  color: Colors.white,
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(12),
+                                    child: QrImageView(
+                                      data: qrCodeValue,
+                                      size: compact ? 220 : 260,
+                                      backgroundColor: Colors.white,
                                     ),
                                   ),
                                 ),

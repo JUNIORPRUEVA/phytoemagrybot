@@ -312,6 +312,7 @@ export class WhatsAppService implements OnModuleInit {
     if (status.connected) {
       return {
         instanceName,
+        qrCode: null,
         qrCodeBase64: null,
         status: 'connected',
         message: 'La instancia ya se encuentra conectada.',
@@ -321,13 +322,15 @@ export class WhatsAppService implements OnModuleInit {
     try {
       const response = await this.getEvolutionClient().get(`/instance/connect/${instanceName}`);
       const payload = this.asRecord(response.data);
+      const qrCode = this.extractQrCode(payload);
       const qrCodeBase64 = this.extractQrCodeBase64(payload);
 
       return {
         instanceName,
+        qrCode,
         qrCodeBase64,
         status: 'disconnected',
-        message: qrCodeBase64
+        message: qrCodeBase64 || qrCode
           ? 'QR obtenido correctamente.'
           : 'No hay QR disponible para esta instancia.',
       };
@@ -385,6 +388,7 @@ export class WhatsAppService implements OnModuleInit {
     const instance = await this.getInstanceStatus(name);
     const qr = instance.connected
       ? {
+          qrCode: null,
           qrCodeBase64: null,
         }
       : await this.getQr(name);
@@ -394,7 +398,7 @@ export class WhatsAppService implements OnModuleInit {
       instanceName: instance.name,
       status: instance.status,
       connected: instance.connected,
-      qrCode: qr.qrCodeBase64,
+      qrCode: qr.qrCode,
       qrCodeBase64: qr.qrCodeBase64,
       details: {
         id: instance.id,
@@ -2875,6 +2879,22 @@ export class WhatsAppService implements OnModuleInit {
       this.asString(qr.image);
 
     return base64?.trim() ? base64.trim() : null;
+  }
+
+  private extractQrCode(payload: JsonRecord): string | null {
+    const qrcode = this.asRecord(payload.qrcode);
+    const qr = this.asRecord(payload.qr);
+    const value =
+      this.asString(payload.code) ||
+      this.asString(payload.qrCode) ||
+      this.asString(payload.qrcode) ||
+      this.asString(qrcode.code) ||
+      this.asString(qrcode.value) ||
+      this.asString(qr.code) ||
+      this.asString(qr.value) ||
+      this.asString(qr.text);
+
+    return value?.trim() ? value.trim() : null;
   }
 
   private readHeader(headers: HeaderMap, headerName: string): string | undefined {

@@ -46,13 +46,16 @@ class _FakeApiService extends ApiService {
   }
 
   @override
-  Future<ManagedWhatsAppInstanceData> createInstance(String instanceName) async {
+  Future<ManagedWhatsAppInstanceData> createInstance(
+    String instanceName, {
+    required String phone,
+  }) async {
     return ManagedWhatsAppInstanceData(
       id: 1,
       name: instanceName,
       displayName: null,
       status: 'connecting',
-      phone: null,
+      phone: phone,
       connected: false,
       webhookReady: true,
       webhookTarget: 'https://example.com/webhook/whatsapp',
@@ -93,6 +96,7 @@ class _FakeApiService extends ApiService {
   Future<WhatsAppQrData> getQr(String instanceName) async {
     return const WhatsAppQrData(
       instanceName: 'test-instance',
+      qrCode: null,
       qrCodeBase64: _qrBase64,
       status: 'disconnected',
       message: 'QR obtenido correctamente.',
@@ -204,7 +208,7 @@ void main() {
 
     await tester.pumpAndSettle();
 
-    await tester.tap(find.widgetWithText(OutlinedButton, 'Ver QR'));
+    await tester.tap(find.widgetWithText(TextButton, 'Ver QR'));
     await tester.pumpAndSettle();
 
     expect(find.byType(Image), findsOneWidget);
@@ -271,6 +275,7 @@ void main() {
     await tester.pumpAndSettle();
 
     await tester.enterText(find.byType(TextField).first, 'persisted-instance');
+    await tester.enterText(find.byType(TextField).at(1), '8095551234');
     await tester.tap(find.widgetWithText(ElevatedButton, 'Crear instancia'));
     await tester.pumpAndSettle();
 
@@ -301,7 +306,7 @@ void main() {
 
     await tester.pumpAndSettle();
 
-    await tester.tap(find.widgetWithText(OutlinedButton, 'Ver QR'));
+    await tester.tap(find.widgetWithText(TextButton, 'Ver QR'));
     await tester.pumpAndSettle();
     await tester.dragUntilVisible(
       find.widgetWithText(FilledButton, 'Usar esta instancia').first,
@@ -338,7 +343,7 @@ void main() {
 
     await tester.pumpAndSettle();
 
-    await tester.tap(find.widgetWithText(OutlinedButton, 'Ver QR'));
+    await tester.tap(find.widgetWithText(TextButton, 'Ver QR'));
     await tester.pumpAndSettle();
 
     await tester.dragUntilVisible(
@@ -346,8 +351,8 @@ void main() {
       find.byType(Scrollable).first,
       const Offset(0, -300),
     );
-    await tester.enterText(find.byType(TextField).at(1), 'Bot ventas');
-    await tester.enterText(find.byType(TextField).at(2), '8095551234');
+    await tester.enterText(find.byType(TextField).at(2), 'Bot ventas');
+    await tester.enterText(find.byType(TextField).at(3), '8095551234');
     await tester.dragUntilVisible(
       find.widgetWithText(FilledButton, 'Guardar cambios').first,
       find.byType(Scrollable).first,

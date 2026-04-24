@@ -313,12 +313,14 @@ class WhatsAppChannelData {
 class WhatsAppQrData {
   const WhatsAppQrData({
     required this.instanceName,
+    required this.qrCode,
     required this.qrCodeBase64,
     required this.status,
     required this.message,
   });
 
   final String instanceName;
+  final String? qrCode;
   final String? qrCodeBase64;
   final String status;
   final String message;
@@ -328,6 +330,7 @@ class WhatsAppQrData {
   factory WhatsAppQrData.fromJson(Map<String, dynamic> json) {
     return WhatsAppQrData(
       instanceName: (json['instanceName'] as String?) ?? '',
+      qrCode: json['qrCode'] as String?,
       qrCodeBase64: json['qrCodeBase64'] as String?,
       status: (json['status'] as String?) ?? 'disconnected',
       message: (json['message'] as String?) ?? '',

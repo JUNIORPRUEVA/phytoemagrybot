@@ -63,6 +63,7 @@ export interface ManagedWhatsAppInstance {
 
 export interface WhatsAppQrResponse {
   instanceName: string;
+  qrCode: string | null;
   qrCodeBase64: string | null;
   status: 'connected' | 'disconnected';
   message: string;
