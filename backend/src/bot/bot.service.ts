@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { AiService } from '../ai/ai.service';
+import { AssistantResponseStyle } from '../ai/ai.types';
 import { BotConfigService } from '../bot-config/bot-config.service';
 import { ClientConfigService } from '../config/config.service';
 import { MediaService } from '../media/media.service';
@@ -78,6 +79,7 @@ export class BotService {
     );
     const mediaFiles = await this.selectMedia(normalizedMessage, intent);
     const preferredReplyType = this.resolvePreferredReplyType(normalizedMessage);
+    const responseStyle = this.resolveResponseStyle(normalizedMessage, intent);
     const usedMemory = this.hasUsefulMemory(memoryContext, history.length);
     const cacheKey = this.getReplyCacheKey(normalizedContactId, normalizedMessage);
     const cachedReply = await this.redisService.get<BotReplyResult>(cacheKey);
@@ -106,6 +108,7 @@ export class BotService {
       hotLead,
       mediaFiles,
       preferredReplyType,
+      responseStyle,
       usedMemory,
     });
 
@@ -129,6 +132,7 @@ export class BotService {
       message: normalizedMessage,
       history,
       context: this.buildConversationContext(memoryContext),
+      responseStyle,
     });
 
     await this.memoryService.saveMessage({
@@ -362,9 +366,13 @@ export class BotService {
     hotLead: boolean;
     mediaFiles: Awaited<ReturnType<BotService['getMediaByKeyword']>>;
     preferredReplyType: BotReplyResult['replyType'];
+    responseStyle: AssistantResponseStyle;
     usedMemory: boolean;
   }): BotReplyResult | null {
-    if (this.requiresDetailedResponse(params.message)) {
+    if (
+      this.requiresDetailedResponse(params.message) ||
+      this.requiresSpecificDirectAnswer(params.message, params.intent)
+    ) {
       return null;
     }
 
@@ -449,6 +457,21 @@ export class BotService {
     return this.prefersVoiceReply(message) ? 'audio' : 'text';
   }
 
+  private resolveResponseStyle(
+    message: string,
+    intent: BotIntent,
+  ): AssistantResponseStyle {
+    if (this.requiresDetailedResponse(message)) {
+      return 'detailed';
+    }
+
+    if (this.requiresSpecificDirectAnswer(message, intent)) {
+      return 'brief';
+    }
+
+    return 'balanced';
+  }
+
   private shouldTreatAsHotLead(
     message: string,
     intent: BotIntent,
@@ -497,6 +520,30 @@ export class BotService {
       'un poco de',
       'de la pastilla',
       'de las pastillas',
+      'informacion',
+      'información',
+      'detalle',
+      'detalles',
+    ].some((keyword) => normalized.includes(keyword));
+  }
+
+  private requiresSpecificDirectAnswer(message: string, intent: BotIntent): boolean {
+    const normalized = message.trim().toLowerCase();
+    if (!normalized) {
+      return false;
+    }
+
+    return [
+      'precio',
+      'cuanto cuesta',
+      'cuánto cuesta',
+      'cuanto vale',
+      'cuánto vale',
+      'disponible',
+      'hay disponible',
+      'envio',
+      'envío',
+      'delivery',
     ].some((keyword) => normalized.includes(keyword));
   }
 

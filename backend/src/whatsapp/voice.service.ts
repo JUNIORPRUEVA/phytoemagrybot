@@ -12,6 +12,11 @@ export interface GeneratedVoiceAudio {
   mimetype: string;
 }
 
+export interface PrepareSpokenReplyParams {
+  text: string;
+  openAiKey?: string;
+}
+
 @Injectable()
 export class VoiceService {
   async transcribeAudio(
@@ -104,6 +109,44 @@ export class VoiceService {
     );
   }
 
+  async prepareSpokenReply(params: PrepareSpokenReplyParams): Promise<string> {
+    const normalized = this.normalizeSpokenText(params.text);
+    const openAiKey = params.openAiKey?.trim();
+
+    if (!normalized) {
+      throw new HttpException('Voice text is required', HttpStatus.BAD_REQUEST);
+    }
+
+    if (!openAiKey) {
+      return normalized;
+    }
+
+    try {
+      const openai = new OpenAI({ apiKey: openAiKey });
+      const completion = await openai.chat.completions.create({
+        model: 'gpt-4o-mini',
+        temperature: 0.7,
+        max_completion_tokens: 120,
+        messages: [
+          {
+            role: 'system',
+            content:
+              'Convierte el texto a una version hablada para una nota de voz de WhatsApp. Debe sonar natural, cercana, humana y comercial, en espanol latino. Mantener el mismo significado. Usa una sola idea corta o dos ideas breves. No uses emojis, listas, ni comillas. Devuelve solo texto plano.',
+          },
+          {
+            role: 'user',
+            content: normalized,
+          },
+        ],
+      });
+
+      const rewritten = completion.choices[0]?.message?.content?.trim() || '';
+      return this.normalizeSpokenText(rewritten || normalized);
+    } catch {
+      return normalized;
+    }
+  }
+
   private async generateWithElevenLabs(
     text: string,
     apiKey: string,
@@ -160,5 +203,29 @@ export class VoiceService {
     }
 
     return normalized;
+  }
+
+  private normalizeSpokenText(value: string): string {
+    const withoutEmoji = value.replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, ' ');
+    const normalized = withoutEmoji
+      .replace(/[“”"']/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    if (!normalized) {
+      return '';
+    }
+
+    const limitedSentences = normalized
+      .split(/(?<=[.!?])\s+/)
+      .filter((part) => part.trim().length > 0)
+      .slice(0, 2)
+      .join(' ')
+      .trim();
+
+    const words = limitedSentences.split(/\s+/).filter((word) => word.length > 0);
+    const compact = words.length > 40 ? words.slice(0, 40).join(' ') : limitedSentences;
+
+    return /[.!?]$/.test(compact) ? compact : `${compact}.`;
   }
 }

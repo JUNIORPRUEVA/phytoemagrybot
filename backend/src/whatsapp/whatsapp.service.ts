@@ -877,7 +877,10 @@ export class WhatsAppService implements OnModuleInit {
 
     if (shouldSendAudioReply) {
       try {
-        const spokenReply = this.prepareReplyForVoice(botReply.reply);
+        const spokenReply = await this.voiceService.prepareSpokenReply({
+          text: this.prepareReplyForVoice(botReply.reply),
+          openAiKey: resolved.config.openaiKey,
+        });
         const audio = await this.voiceService.generateVoice({
           text: spokenReply,
           openAiKey: resolved.config.openaiKey,

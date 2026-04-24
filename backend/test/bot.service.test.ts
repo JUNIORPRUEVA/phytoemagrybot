@@ -8,6 +8,7 @@ function createService(options?: {
   mediaCount?: number;
   lastIntent?: string | null;
   aiReply?: string;
+  onGenerateReply?: (params: Record<string, unknown>) => void;
 }) {
   const savedMessages: Array<{ role: string; content: string }> = [];
   const memoryState = {
@@ -16,7 +17,8 @@ function createService(options?: {
 
   const service = new BotService(
     {
-      async generateReply() {
+      async generateReply(params: Record<string, unknown>) {
+        options?.onGenerateReply?.(params);
         return {
           type: 'text' as const,
           content: options?.aiReply ?? 'Claro 👌 te ayudo con eso.',
@@ -117,13 +119,21 @@ function createService(options?: {
   return service;
 }
 
-test('price message uses gallery with a short reply', async () => {
-  const service = createService({ mediaCount: 1 });
+test('price message uses ai with a brief answer style', async () => {
+  let capturedParams: Record<string, unknown> | null = null;
+  const service = createService({
+    mediaCount: 1,
+    aiReply: 'Cuesta 1,500 pesos. Si quieres, te digo cómo pedirla.',
+    onGenerateReply: (params) => {
+      capturedParams = params;
+    },
+  });
   const result = await service.processIncomingMessage('18095551234', 'precio');
 
   assert.equal(result.usedGallery, true);
-  assert.equal(result.source, 'galeria');
-  assert.ok(result.reply.split(/\s+/).length <= 15);
+  assert.equal(result.source, 'ai');
+  assert.equal((capturedParams as { responseStyle?: string } | null)?.responseStyle, 'brief');
+  assert.match(result.reply.toLowerCase(), /cuesta|pesos/);
 });
 
 test('closing message answers with sales close', async () => {
@@ -203,5 +213,24 @@ test('informational request after a hot lead uses AI instead of the hot close', 
 
   assert.equal(result.source, 'ai');
   assert.equal(result.hotLead, false);
+  assert.match(result.reply.toLowerCase(), /explico|funciona|pastilla/);
+});
+
+test('informational request uses detailed response style', async () => {
+  let capturedParams: Record<string, unknown> | null = null;
+  const service = createService({
+    aiReply: 'Claro, te explico bien. Esta pastilla ayuda a controlar el apetito y normalmente se usa como apoyo junto con buena alimentacion e hidratacion.',
+    onGenerateReply: (params) => {
+      capturedParams = params;
+    },
+  });
+
+  const result = await service.processIncomingMessage(
+    '18095551234',
+    'Hablame de la pastilla y dime como funciona',
+  );
+
+  assert.equal(result.source, 'ai');
+  assert.equal((capturedParams as { responseStyle?: string } | null)?.responseStyle, 'detailed');
   assert.match(result.reply.toLowerCase(), /explico|funciona|pastilla/);
 });

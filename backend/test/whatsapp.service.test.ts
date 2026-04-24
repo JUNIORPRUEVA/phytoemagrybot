@@ -39,6 +39,7 @@ function createAudioFlowService() {
 
   const voiceService = {
     transcribeAudio: async () => 'quiero precio',
+    prepareSpokenReply: async ({ text }: { text: string }) => text,
     generateVoice: async () => ({
       buffer: Buffer.from('audio'),
       fileName: 'reply.mp3',
@@ -2005,6 +2006,29 @@ test('prepareReplyForVoice removes emojis and leaves spoken punctuation', () => 
   assert.equal(result.includes('👍'), false);
   assert.match(result, /^Perfecto,/);
   assert.match(result, /\?$/);
+});
+
+test('processAndDeliverMessage rewrites the text before generating voice', async () => {
+  const { service, voiceService } = createAudioFlowService();
+  let preparedText = '';
+
+  voiceService.prepareSpokenReply = async ({ text }: { text: string }) => {
+    preparedText = text;
+    return 'Claro, te explico un poco mejor como funciona.';
+  };
+
+  await service.processAndDeliverMessage(
+    createResolvedConfig(),
+    '18095551234',
+    'explicame por voz',
+    'audio',
+    {
+      preferAudioReply: true,
+      outboundAddress: '18095551234@s.whatsapp.net',
+    },
+  );
+
+  assert.match(preparedText, /te ayudo ahora mismo|claro|perfecto/i);
 });
 
 test('processIncomingAudioMessage rejects audios longer than 60 seconds', async () => {

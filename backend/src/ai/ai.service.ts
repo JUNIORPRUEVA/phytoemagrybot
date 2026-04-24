@@ -5,12 +5,16 @@ import {
 } from '@nestjs/common';
 import OpenAI from 'openai';
 import { AppConfigRecord } from '../config/config.types';
-import { AssistantReply, GenerateReplyParams } from './ai.types';
+import {
+  AssistantReply,
+  AssistantResponseStyle,
+  GenerateReplyParams,
+} from './ai.types';
 
 @Injectable()
 export class AiService {
   async generateReply(params: GenerateReplyParams): Promise<AssistantReply> {
-    const { config, fullPrompt, contactId, history, message, context } = params;
+    const { config, fullPrompt, contactId, history, message, context, responseStyle } = params;
     const aiSettings = config.aiSettings;
     const modelName = process.env.OPENAI_MODEL?.trim() || aiSettings?.modelName || 'gpt-4o-mini';
     const temperature = aiSettings?.temperature ?? 0.4;
@@ -35,6 +39,7 @@ export class AiService {
               fullPrompt,
               contactId,
               config,
+              responseStyle,
             }),
           },
           ...(context.trim()
@@ -78,6 +83,7 @@ export class AiService {
     fullPrompt: string;
     contactId: string;
     config?: AppConfigRecord;
+    responseStyle: AssistantResponseStyle;
   }): string {
     const promptSections = this.readPromptSections(params.config?.configurations);
 
@@ -88,10 +94,23 @@ export class AiService {
       `Contacto actual: ${params.contactId}`,
       'Responde breve, útil y alineado al negocio del cliente.',
       'Si el cliente pide que le expliques, le cuentes o le hables de un producto, responde de forma conversacional y orientativa, no con un cierre de venta automatico.',
+      this.buildResponseStyleInstruction(params.responseStyle),
       'Devuelve siempre un JSON valido con las claves "type" y "content".',
       'Usa type="text" para respuestas normales.',
       'Usa type="audio" solo cuando el usuario pida explicitamente una respuesta en audio o voz.',
     ].join('\n\n');
+  }
+
+  private buildResponseStyleInstruction(style: AssistantResponseStyle): string {
+    if (style === 'brief') {
+      return 'Modo de respuesta: breve. Si preguntan precio, disponibilidad, envio o una duda puntual, responde directo y concreto. Da solo lo necesario y como mucho una pregunta corta para avanzar la conversacion.';
+    }
+
+    if (style === 'detailed') {
+      return 'Modo de respuesta: con contexto. Si piden informacion, explicacion, beneficios, contenido o como funciona, responde con suficiente contexto, de forma natural y ordenada, sin sonar largo ni robotico.';
+    }
+
+    return 'Modo de respuesta: equilibrado. Responde natural, clara y util, sin quedarte corto ni hablar de mas.';
   }
 
   private readPromptSections(configurations: unknown): string[] {
