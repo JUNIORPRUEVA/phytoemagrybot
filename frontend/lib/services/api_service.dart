@@ -595,8 +595,11 @@ class ApiService {
   ApiService({this.baseUrl = defaultBaseUrl, http.Client? client})
     : _client = client ?? http.Client();
 
-  static const String defaultBaseUrl =
-      'https://ai-business-platform-phytoemagrybot-backend.onqyr1.easypanel.host';
+  static const String defaultBaseUrl = String.fromEnvironment(
+    'API_BASE_URL',
+    defaultValue:
+      'https://ai-business-platform-phytoemagrybot-backend.onqyr1.easypanel.host',
+  );
 
   final String baseUrl;
   final http.Client _client;

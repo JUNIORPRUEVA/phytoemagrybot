@@ -393,8 +393,13 @@ test('setWebhook posts the n8n webhook for messages.upsert and validates the ins
   assert.equal(calls.length, 1);
   assert.equal(calls[0]?.path, '/webhook/set/demo');
   assert.deepEqual(calls[0]?.body, {
-    url: 'https://n8n-n8n.gcdndd.easypanel.host/webhook/7e488a8b-fc78-4702-bbf4-8159f7ca094e',
-    events: ['messages.upsert'],
+    webhook: {
+      enabled: true,
+      url: 'https://n8n-n8n.gcdndd.easypanel.host/webhook/7e488a8b-fc78-4702-bbf4-8159f7ca094e',
+      events: ['MESSAGES_UPSERT'],
+      byEvents: false,
+      base64: true,
+    },
   });
   assert.equal(result.instanceName, 'demo');
   assert.equal(
@@ -453,6 +458,48 @@ test('createInstance configures the webhook after creating the instance', async 
   assert.deepEqual(webhookCalls, ['demo-new']);
 });
 
+test('createInstance continues when automatic webhook setup fails', async () => {
+  const service = createService();
+
+  service.prisma = {
+    whatsAppInstance: {
+      findUnique: async () => null,
+      findFirst: async () => null,
+      upsert: async ({ create }: { create: Record<string, unknown> }) => ({
+        id: 1,
+        name: create.name,
+        status: create.status,
+        phone: create.phone,
+      }),
+    },
+  };
+  service.syncInstancesFromEvolution = async () => undefined;
+  service.getEvolutionClient = () => ({
+    post: async () => ({ data: { instance: { instanceName: 'demo-new' } } }),
+  });
+  service.setWebhook = async () => {
+    throw new Error('Bad Request');
+  };
+  service.waitForManagedStatus = async (name: string) => ({
+    id: 1,
+    name,
+    displayName: null,
+    status: 'connecting',
+    phone: null,
+    connected: false,
+    webhookReady: false,
+    webhookTarget: null,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  });
+
+  const result = await service.createInstance('demo-new', {
+    phone: '8090000000',
+  });
+
+  assert.equal(result.name, 'demo-new');
+});
+
 test('connectInstance configures the webhook after requesting the QR', async () => {
   const service = createService();
   const webhookCalls: string[] = [];
@@ -491,6 +538,38 @@ test('connectInstance configures the webhook after requesting the QR', async () 
   assert.equal(result.instanceName, 'demo');
   assert.equal(result.qrCode, null);
   assert.deepEqual(webhookCalls, ['demo']);
+});
+
+test('connectInstance continues when automatic webhook setup fails', async () => {
+  const service = createService();
+
+  service.getInstanceStatus = async (name: string) => ({
+    id: 1,
+    name,
+    displayName: null,
+    status: 'disconnected',
+    phone: null,
+    connected: false,
+    webhookReady: false,
+    webhookTarget: null,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  });
+  service.getEvolutionClient = () => ({
+    get: async () => ({
+      data: {
+        base64: 'qr-demo',
+      },
+    }),
+  });
+  service.setWebhook = async () => {
+    throw new Error('Bad Request');
+  };
+
+  const result = await service.connectInstance('demo');
+
+  assert.equal(result.instanceName, 'demo');
+  assert.equal(result.qrCodeBase64, 'qr-demo');
 });
 
 test('getQr returns a textual QR when Evolution does not send image base64', async () => {

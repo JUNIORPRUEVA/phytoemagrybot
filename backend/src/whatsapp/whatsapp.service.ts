@@ -204,7 +204,7 @@ export class WhatsAppService implements OnModuleInit {
       },
     });
 
-    await this.setWebhook(instanceName);
+    await this.trySetWebhook(instanceName);
 
     return this.waitForManagedStatus(instanceName);
   }
@@ -300,7 +300,7 @@ export class WhatsAppService implements OnModuleInit {
 
   async connectInstance(name: string): Promise<WhatsAppQrResponse> {
     const qr = await this.getQr(name);
-    await this.setWebhook(name);
+    await this.trySetWebhook(name);
 
     return qr;
   }
@@ -353,6 +353,7 @@ export class WhatsAppService implements OnModuleInit {
     const requestEvents = (events?.length ? events : WhatsAppService.AUTO_WEBHOOK_EVENTS)
       .map((event) => event.trim())
       .filter((event) => event.length > 0);
+    const resolvedEvents = this.normalizeWebhookEvents(requestEvents);
 
     if (!resolvedWebhook) {
       throw new HttpException(
@@ -363,8 +364,13 @@ export class WhatsAppService implements OnModuleInit {
 
     try {
       await this.getEvolutionClient().post(`/webhook/set/${instanceName}`, {
-        url: resolvedWebhook,
-        events: requestEvents,
+        webhook: {
+          enabled: true,
+          url: resolvedWebhook,
+          events: resolvedEvents,
+          byEvents: false,
+          base64: true,
+        },
       });
       console.log('Webhook configurado correctamente');
 
@@ -374,7 +380,7 @@ export class WhatsAppService implements OnModuleInit {
       return {
         instanceName,
         webhook: remoteWebhook?.url || resolvedWebhook,
-        events: remoteWebhook?.events.length ?? 0 > 0 ? remoteWebhook!.events : requestEvents,
+        events: remoteWebhook?.events.length ?? 0 > 0 ? remoteWebhook!.events : resolvedEvents,
         message: webhookVerified
           ? 'Webhook configurado y verificado en Evolution.'
           : 'Webhook enviado a Evolution, pero todavia no se pudo confirmar su activacion.',
@@ -3424,6 +3430,20 @@ export class WhatsAppService implements OnModuleInit {
     }
 
     throw new HttpException('La instancia no existe', HttpStatus.NOT_FOUND);
+  }
+
+  private async trySetWebhook(instanceName: string): Promise<void> {
+    try {
+      await this.setWebhook(instanceName);
+    } catch (error) {
+      this.logger.warn(
+        JSON.stringify({
+          event: 'whatsapp_webhook_auto_config_failed',
+          instanceName,
+          error: error instanceof Error ? error.message : 'Unknown error',
+        }),
+      );
+    }
   }
 
   private async getConfiguredWebhookMetadata(): Promise<{
