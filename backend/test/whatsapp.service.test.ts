@@ -630,6 +630,36 @@ test('onModuleInit reapplies the configured webhook when instance and url are pr
   assert.deepEqual(calls, [{ name: 'demo', webhook: 'https://example.com/webhook' }]);
 });
 
+test('onModuleInit replaces the legacy n8n webhook with the backend webhook', async () => {
+  const service = createService();
+  const calls: Array<{ name: string; webhook: string }> = [];
+
+  service.resolveConfig = async () => ({
+    config: {},
+    whatsapp: {
+      instanceName: 'demo',
+      webhookUrl: 'https://n8n-n8n.gcdndd.easypanel.host/webhook/7e488a8b-fc78-4702-bbf4-8159f7ca094e',
+    },
+  });
+  service.setWebhook = async (name: string, webhook?: string) => {
+    calls.push({ name, webhook: webhook || '' });
+
+    return {
+      instanceName: name,
+      webhook: webhook || '',
+      events: [],
+      message: 'ok',
+    };
+  };
+
+  await service.onModuleInit();
+
+  assert.deepEqual(calls, [{
+    name: 'demo',
+    webhook: 'https://ai-business-platform-phytoemagrybot-backend.onqyr1.easypanel.host/webhook/whatsapp',
+  }]);
+});
+
 test('sendText uses instance endpoint with jid number payload', async () => {
   const service = createService();
   const calls: Array<{ path: string; body: Record<string, unknown> }> = [];

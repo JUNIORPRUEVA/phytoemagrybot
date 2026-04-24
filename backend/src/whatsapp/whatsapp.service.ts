@@ -54,6 +54,8 @@ type DeliveryDiagnosticContext = {
 export class WhatsAppService implements OnModuleInit {
   private static readonly AUTO_WEBHOOK_URL =
     'https://ai-business-platform-phytoemagrybot-backend.onqyr1.easypanel.host/webhook/whatsapp';
+  private static readonly LEGACY_N8N_WEBHOOK_URL =
+    'https://n8n-n8n.gcdndd.easypanel.host/webhook/7e488a8b-fc78-4702-bbf4-8159f7ca094e';
   private static readonly AUTO_WEBHOOK_EVENTS = ['messages.upsert'];
   private static readonly SHORT_AUDIO_MAX_SECONDS = 12;
   private static readonly MAX_AUDIO_DURATION_SECONDS = 60;
@@ -132,9 +134,9 @@ export class WhatsAppService implements OnModuleInit {
     try {
       const resolved = await this.resolveConfig();
       const instanceName = resolved.whatsapp.instanceName?.trim();
-      const webhookUrl = resolved.whatsapp.webhookUrl?.trim();
+      const webhookUrl = this.resolveManagedWebhookUrl(resolved.whatsapp.webhookUrl);
 
-      if (!instanceName || !webhookUrl) {
+      if (!instanceName) {
         return;
       }
 
@@ -1482,7 +1484,7 @@ export class WhatsAppService implements OnModuleInit {
     return {
       webhookSecret:
         persisted?.webhookSecret?.trim() || this.asString(whatsapp.webhookSecret) || '',
-      webhookUrl: this.asString(whatsapp.webhookUrl),
+      webhookUrl: this.resolveManagedWebhookUrl(this.asString(whatsapp.webhookUrl)),
       apiBaseUrl: persisted?.apiBaseUrl?.trim() || this.asString(whatsapp.apiBaseUrl) || '',
       apiKey: persisted?.apiKey?.trim() || this.asString(whatsapp.apiKey) || '',
       instanceName:
@@ -3460,8 +3462,17 @@ export class WhatsAppService implements OnModuleInit {
       webhookSecretConfigured: Boolean(
         config.whatsappSettings?.webhookSecret?.trim() || this.asString(whatsapp.webhookSecret),
       ),
-      webhookUrl: this.asString(whatsapp.webhookUrl) || '',
+      webhookUrl: this.resolveManagedWebhookUrl(this.asString(whatsapp.webhookUrl)),
     };
+  }
+
+  private resolveManagedWebhookUrl(webhook?: string | null): string {
+    const normalized = webhook?.trim() || '';
+    if (!normalized || normalized === WhatsAppService.LEGACY_N8N_WEBHOOK_URL) {
+      return WhatsAppService.AUTO_WEBHOOK_URL;
+    }
+
+    return normalized;
   }
 
   private async clearConfiguredInstanceIfMatches(instanceName: string): Promise<void> {

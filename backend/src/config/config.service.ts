@@ -8,6 +8,10 @@ import { AppConfigRecord } from './config.types';
 @Injectable()
 export class ClientConfigService {
   private static readonly CONFIG_ID = 1;
+  private static readonly DEFAULT_WHATSAPP_WEBHOOK_URL =
+    'https://ai-business-platform-phytoemagrybot-backend.onqyr1.easypanel.host/webhook/whatsapp';
+  private static readonly LEGACY_N8N_WEBHOOK_URL =
+    'https://n8n-n8n.gcdndd.easypanel.host/webhook/7e488a8b-fc78-4702-bbf4-8159f7ca094e';
   private static readonly DEFAULT_PROMPT =
     'Eres un asistente profesional de WhatsApp. Responde con claridad, foco comercial y tono amable.';
   private static readonly DEFAULT_AI_MODEL = 'gpt-4o-mini';
@@ -292,6 +296,9 @@ export class ClientConfigService {
     const envWebhookUrl = this.readEnv('WEBHOOK_URL');
     const envWebhookSecret = this.readEnv('WEBHOOK_SECRET');
     const envBotEnableAudio = this.readEnv('BOT_ENABLE_AUDIO');
+    const persistedWebhookUrl = this.normalizeWebhookUrl(
+      this.asString(whatsapp['webhookUrl']) || envWebhookUrl,
+    );
 
     const nextConfigurations = this.mergeRecords(configurations, {
       bot: {
@@ -302,7 +309,7 @@ export class ClientConfigService {
         apiKey: this.asString(whatsapp['apiKey']) || envEvolutionKey,
         instanceName: this.asString(whatsapp['instanceName']) || envEvolutionInstanceName,
         audioVoiceId: whatsapp['audioVoiceId'] || envElevenLabsVoiceId,
-        webhookUrl: this.asString(whatsapp['webhookUrl']) || envWebhookUrl,
+        webhookUrl: persistedWebhookUrl,
         webhookSecret: this.asString(whatsapp['webhookSecret']) || envWebhookSecret,
       },
       elevenlabs: {
@@ -335,6 +342,19 @@ export class ClientConfigService {
           }
         : config.botSettings,
     };
+  }
+
+  private normalizeWebhookUrl(value: string): string {
+    const normalized = value.trim();
+    if (!normalized) {
+      return normalized;
+    }
+
+    if (normalized === ClientConfigService.LEGACY_N8N_WEBHOOK_URL) {
+      return ClientConfigService.DEFAULT_WHATSAPP_WEBHOOK_URL;
+    }
+
+    return normalized;
   }
 
   private asRecord(value: unknown): Record<string, unknown> {
