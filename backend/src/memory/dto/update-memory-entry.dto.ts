@@ -1,4 +1,8 @@
-import { IsOptional, IsString } from 'class-validator';
+import { IsArray, IsIn, IsOptional, IsString } from 'class-validator';
+import { ClientObjective, ClientStatus } from '../memory.types';
+
+const OBJECTIVES: ClientObjective[] = ['rebajar', 'info', 'comprar'];
+const STATUSES: ClientStatus[] = ['nuevo', 'interesado', 'cliente'];
 
 export class UpdateMemoryEntryDto {
   @IsOptional()
@@ -6,8 +10,20 @@ export class UpdateMemoryEntryDto {
   name?: string | null;
 
   @IsOptional()
+  @IsIn(OBJECTIVES)
+  objective?: ClientObjective | null;
+
+  @IsOptional()
   @IsString()
   interest?: string | null;
+
+  @IsOptional()
+  @IsArray()
+  objections?: string[] | null;
+
+  @IsOptional()
+  @IsIn(STATUSES)
+  status?: ClientStatus | null;
 
   @IsOptional()
   @IsString()

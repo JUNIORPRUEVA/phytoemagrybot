@@ -62,6 +62,16 @@ export class RedisService implements OnModuleDestroy {
     return result === 'OK';
   }
 
+  async increment(key: string, ttlSeconds?: number): Promise<number> {
+    const value = await this.client.incr(key);
+
+    if (ttlSeconds && ttlSeconds > 0) {
+      await this.client.expire(key, ttlSeconds);
+    }
+
+    return value;
+  }
+
   async get<T = string>(key: string): Promise<T | null> {
     const value = await this.client.get(key);
 
@@ -92,7 +102,7 @@ export class RedisService implements OnModuleDestroy {
   async appendConversationMessage(
     contactId: string,
     message: StoredMessage,
-    limit = 10,
+    limit = 20,
     ttlSeconds = 60 * 60 * 24,
   ): Promise<StoredMessage[]> {
     const bufferKey = this.getConversationBufferKey(contactId);
@@ -118,7 +128,7 @@ export class RedisService implements OnModuleDestroy {
     const pipeline = this.client.pipeline();
     pipeline.del(bufferKey);
 
-    const recent = messages.slice(-10);
+    const recent = messages.slice(-20);
     for (const message of recent) {
       pipeline.rpush(bufferKey, this.serialize(message));
     }

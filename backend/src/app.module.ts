@@ -1,8 +1,10 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule as NestConfigModule } from '@nestjs/config';
+import { ScheduleModule } from '@nestjs/schedule';
 import { AiModule } from './ai/ai.module';
 import { BotModule } from './bot/bot.module';
 import { BotConfigModule } from './bot-config/bot-config.module';
+import { CompanyContextModule } from './company-context/company-context.module';
 import { ClientConfigModule } from './config/config.module';
 import { HealthController } from './health.controller';
 import { MediaModule } from './media/media.module';
@@ -14,10 +16,12 @@ import { WhatsAppModule } from './whatsapp/whatsapp.module';
 @Module({
   imports: [
     NestConfigModule.forRoot({ isGlobal: true }),
+    ScheduleModule.forRoot(),
     PrismaModule,
     RedisModule,
     ClientConfigModule,
     BotConfigModule,
+    CompanyContextModule,
     MemoryModule,
     MediaModule,
     AiModule,

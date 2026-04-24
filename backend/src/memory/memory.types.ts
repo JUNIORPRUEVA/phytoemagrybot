@@ -1,5 +1,9 @@
 export type ConversationRole = 'user' | 'assistant';
 
+export type ClientObjective = 'rebajar' | 'info' | 'comprar';
+export type ClientInterest = 'precio' | 'resultados' | 'dudas';
+export type ClientStatus = 'nuevo' | 'interesado' | 'cliente';
+
 export interface StoredMessage {
   role: ConversationRole;
   content: string;
@@ -9,22 +13,29 @@ export interface StoredMessage {
 export interface ClientMemorySnapshot {
   contactId: string;
   name: string | null;
+  objective: ClientObjective | null;
   interest: string | null;
+  objections: string[];
+  status: ClientStatus;
   lastIntent: string | null;
   notes: string | null;
   updatedAt: Date | null;
+  expiresAt: Date | null;
 }
 
 export interface ConversationSummarySnapshot {
   contactId: string;
   summary: string | null;
   updatedAt: Date | null;
+  expiresAt: Date | null;
 }
 
 export interface MemoryContactListItem {
   contactId: string;
   name: string | null;
+  objective: ClientObjective | null;
   interest: string | null;
+  status: ClientStatus;
   lastIntent: string | null;
   summary: string | null;
   lastMessageAt: Date | null;
@@ -34,7 +45,10 @@ export interface MemoryContactListItem {
 
 export interface UpdateMemoryEntryInput {
   name?: string | null;
+  objective?: ClientObjective | null;
   interest?: string | null;
+  objections?: string[] | null;
+  status?: ClientStatus | null;
   lastIntent?: string | null;
   notes?: string | null;
   summary?: string | null;

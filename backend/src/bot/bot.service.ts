@@ -1,7 +1,12 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { AiService } from '../ai/ai.service';
-import { AssistantResponseStyle } from '../ai/ai.types';
+import {
+  AssistantLeadStage,
+  AssistantReplyObjective,
+  AssistantResponseStyle,
+} from '../ai/ai.types';
 import { BotConfigService } from '../bot-config/bot-config.service';
+import { CompanyContextService } from '../company-context/company-context.service';
 import { ClientConfigService } from '../config/config.service';
 import { MediaService } from '../media/media.service';
 import { MemoryService } from '../memory/memory.service';
@@ -20,6 +25,7 @@ export class BotService {
   constructor(
     private readonly aiService: AiService,
     private readonly botConfigService: BotConfigService,
+    private readonly companyContextService: CompanyContextService,
     private readonly clientConfigService: ClientConfigService,
     private readonly mediaService: MediaService,
     private readonly memoryService: MemoryService,
@@ -77,12 +83,14 @@ export class BotService {
       intent,
       memoryContext.clientMemory.lastIntent,
     );
-    const mediaFiles = await this.selectMedia(normalizedMessage, intent);
     const preferredReplyType = this.resolvePreferredReplyType(normalizedMessage);
     const responseStyle = this.resolveResponseStyle(normalizedMessage, intent);
+    const leadStage = this.resolveLeadStage(normalizedMessage, intent, hotLead);
+    const replyObjective = this.resolveReplyObjective(normalizedMessage, intent, hotLead);
     const usedMemory = this.hasUsefulMemory(memoryContext, history.length);
     const cacheKey = this.getReplyCacheKey(normalizedContactId, normalizedMessage);
     const cachedReply = await this.redisService.get<BotReplyResult>(cacheKey);
+    const galleryMediaFiles = await this.selectMedia(normalizedMessage, intent);
 
     if (cachedReply) {
       const result: BotReplyResult = {
@@ -106,7 +114,7 @@ export class BotService {
       message: normalizedMessage,
       intent,
       hotLead,
-      mediaFiles,
+      mediaFiles: galleryMediaFiles,
       preferredReplyType,
       responseStyle,
       usedMemory,
@@ -125,15 +133,24 @@ export class BotService {
       return fastLaneReply;
     }
 
+    const companyContext = await this.companyContextService.buildAgentContext();
+
     const reply = await this.aiService.generateReply({
       config,
       fullPrompt: this.botConfigService.getFullPrompt(botConfig),
+      companyContext,
       contactId: normalizedContactId,
       message: normalizedMessage,
       history,
       context: this.buildConversationContext(memoryContext),
       responseStyle,
+      leadStage,
+      replyObjective,
     });
+
+    const mediaFiles = this.shouldAttachMediaToAiReply(normalizedMessage, intent)
+      ? galleryMediaFiles
+      : [];
 
     await this.memoryService.saveMessage({
       contactId: normalizedContactId,
@@ -333,14 +350,17 @@ export class BotService {
       memoryContext.clientMemory.name
         ? `Nombre del cliente: ${memoryContext.clientMemory.name}`
         : null,
+      memoryContext.clientMemory.objective
+        ? `Objetivo principal: ${memoryContext.clientMemory.objective}`
+        : null,
       memoryContext.clientMemory.interest
         ? `Interes detectado: ${memoryContext.clientMemory.interest}`
         : null,
-      memoryContext.clientMemory.lastIntent
-        ? `Ultima intencion detectada: ${memoryContext.clientMemory.lastIntent}`
+      memoryContext.clientMemory.status
+        ? `Estado del cliente: ${memoryContext.clientMemory.status}`
         : null,
-      memoryContext.clientMemory.notes
-        ? `Notas importantes: ${memoryContext.clientMemory.notes}`
+      (memoryContext.clientMemory.objections?.length ?? 0) > 0
+        ? `Objeciones detectadas: ${memoryContext.clientMemory.objections.join(', ')}`
         : null,
     ].filter((value): value is string => Boolean(value));
 
@@ -350,6 +370,9 @@ export class BotService {
 
     sections.push(
       'Usa esta memoria para continuar la conversacion de forma natural, recordar datos del cliente y evitar repetir preguntas ya resueltas.',
+    );
+    sections.push(
+      'Si el cliente ya pregunto precio, responde directo y enfoca el cierre. Si su objetivo es rebajar, resalta resultados. Si hay objeciones, responde con confianza y prueba, sin sonar robotico.',
     );
 
     return sections.join('\n\n');
@@ -374,42 +397,6 @@ export class BotService {
       this.requiresSpecificDirectAnswer(params.message, params.intent)
     ) {
       return null;
-    }
-
-    if (params.hotLead || params.intent === 'hot') {
-      return this.createResult(
-        'Perfecto 👍 te lo dejo listo, ¿te lo envío hoy?',
-        'hot',
-        params.intent,
-        true,
-        params.mediaFiles,
-        params.preferredReplyType,
-        params.usedMemory,
-      );
-    }
-
-    if (params.intent === 'duda') {
-      return this.createResult(
-        'Sí, funciona excelente 👌 es de los que más vendemos.',
-        'duda',
-        params.intent,
-        false,
-        params.mediaFiles,
-        params.preferredReplyType,
-        params.usedMemory,
-      );
-    }
-
-    if (params.intent === 'cierre') {
-      return this.createResult(
-        'Perfecto 👍 te lo dejo listo, ¿te lo envío hoy?',
-        'cierre',
-        params.intent,
-        false,
-        params.mediaFiles,
-        params.preferredReplyType,
-        params.usedMemory,
-      );
     }
 
     if (params.mediaFiles.length > 0) {
@@ -457,6 +444,10 @@ export class BotService {
     return this.prefersVoiceReply(message) ? 'audio' : 'text';
   }
 
+  private shouldAttachMediaToAiReply(message: string, intent: BotIntent): boolean {
+    return intent === 'catalogo' || this.isVisualRequest(message);
+  }
+
   private resolveResponseStyle(
     message: string,
     intent: BotIntent,
@@ -470,6 +461,58 @@ export class BotService {
     }
 
     return 'balanced';
+  }
+
+  private resolveLeadStage(
+    message: string,
+    intent: BotIntent,
+    hotLead: boolean,
+  ): AssistantLeadStage {
+    if (this.hasSkepticalSignal(message)) {
+      return 'dudoso';
+    }
+
+    if (this.requiresDetailedResponse(message)) {
+      return 'curioso';
+    }
+
+    if (hotLead || intent === 'hot' || intent === 'compra' || intent === 'cierre') {
+      return 'listo_para_comprar';
+    }
+
+    if (intent === 'duda') {
+      return 'dudoso';
+    }
+
+    if (intent === 'interes') {
+      return 'interesado';
+    }
+
+    return 'curioso';
+  }
+
+  private resolveReplyObjective(
+    message: string,
+    intent: BotIntent,
+    hotLead: boolean,
+  ): AssistantReplyObjective {
+    if (this.hasSkepticalSignal(message)) {
+      return 'resolver_duda';
+    }
+
+    if (this.requiresDetailedResponse(message)) {
+      return 'generar_confianza';
+    }
+
+    if (hotLead || intent === 'hot' || intent === 'compra' || intent === 'cierre') {
+      return 'cerrar_venta';
+    }
+
+    if (intent === 'duda') {
+      return 'resolver_duda';
+    }
+
+    return 'avanzar_conversacion';
   }
 
   private shouldTreatAsHotLead(
@@ -547,6 +590,24 @@ export class BotService {
     ].some((keyword) => normalized.includes(keyword));
   }
 
+  private hasSkepticalSignal(message: string): boolean {
+    const normalized = message.trim().toLowerCase();
+    if (!normalized) {
+      return false;
+    }
+
+    return [
+      'funciona de verdad',
+      'eso funciona',
+      'seguro',
+      'me da miedo',
+      'no quiero botar mi dinero',
+      'y si no me funciona',
+      'es verdad',
+      'sirve de verdad',
+    ].some((keyword) => normalized.includes(keyword));
+  }
+
   private prefersVoiceReply(message: string): boolean {
     const normalized = message.trim().toLowerCase();
     if (!normalized) {
@@ -605,9 +666,10 @@ export class BotService {
       historyLength > 0 ||
         memoryContext.summary.summary?.trim() ||
         memoryContext.clientMemory.name ||
+        memoryContext.clientMemory.objective ||
         memoryContext.clientMemory.interest ||
-        memoryContext.clientMemory.lastIntent ||
-        memoryContext.clientMemory.notes,
+        (memoryContext.clientMemory.objections?.length ?? 0) > 0 ||
+        memoryContext.clientMemory.status !== 'nuevo',
     );
   }
 

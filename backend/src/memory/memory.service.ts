@@ -1,15 +1,15 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import { Cron, CronExpression } from '@nestjs/schedule';
+import { ClientMemory, ConversationSummary } from '@prisma/client';
 import OpenAI from 'openai';
-import {
-  ClientMemory,
-  ConversationMessage,
-  ConversationSummary,
-} from '@prisma/client';
 import { ClientConfigService } from '../config/config.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
 import {
+  ClientInterest,
   ClientMemorySnapshot,
+  ClientObjective,
+  ClientStatus,
   ConversationContextSnapshot,
   ConversationRole,
   ConversationSummarySnapshot,
@@ -21,6 +21,12 @@ import {
 @Injectable()
 export class MemoryService {
   private readonly logger = new Logger(MemoryService.name);
+  private static readonly SHORT_MEMORY_LIMIT = 20;
+  private static readonly SHORT_MEMORY_TTL_SECONDS = 60 * 60 * 24;
+  private static readonly LONG_MEMORY_TTL_DAYS = 15;
+  private static readonly LONG_MEMORY_TTL_SECONDS = 60 * 60 * 24 * 15;
+  private static readonly SUMMARY_REFRESH_INTERVAL = 5;
+  private static readonly MAX_SUMMARY_CHARS = 2048;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -32,56 +38,49 @@ export class MemoryService {
     contactId: string;
     role: ConversationRole;
     content: string;
-  }): Promise<ConversationMessage> {
-    const contactId = params.contactId.trim();
+  }): Promise<StoredMessage> {
+    const contactId = this.normalizeContactId(params.contactId);
     const content = params.content.trim();
-
-    if (!contactId) {
-      throw new BadRequestException('contactId is required');
-    }
 
     if (!content) {
       throw new BadRequestException('content is required');
     }
 
-    const message = await this.prisma.conversationMessage.create({
-      data: {
-        contactId,
-        role: params.role,
-        content,
-      },
-    });
+    const message: StoredMessage = {
+      role: params.role,
+      content,
+      createdAt: new Date(),
+    };
 
-    await this.syncRedisConversation(contactId);
+    const recentMessages = await this.redisService.appendConversationMessage(
+      contactId,
+      message,
+      MemoryService.SHORT_MEMORY_LIMIT,
+      MemoryService.SHORT_MEMORY_TTL_SECONDS,
+    );
 
     if (params.role === 'user') {
-      await this.updateClientMemory(contactId, content);
-    }
+      await this.touchLongMemoryExpiry(contactId);
+      await this.updateClientMemory(contactId, content, recentMessages);
 
-    const messageCount = await this.prisma.conversationMessage.count({
-      where: { contactId },
-    });
+      const messageCount = await this.redisService.increment(
+        this.getSummaryCounterKey(contactId),
+        MemoryService.LONG_MEMORY_TTL_SECONDS,
+      );
 
-    if (messageCount > 0 && messageCount % 10 === 0) {
-      await this.updateSummary(contactId);
+      if (messageCount % MemoryService.SUMMARY_REFRESH_INTERVAL === 0) {
+        await this.updateSummary(contactId, recentMessages);
+      }
     }
 
     return message;
   }
 
   async getRecentMessages(contactId: string, limit = 10): Promise<StoredMessage[]> {
-    const normalizedContactId = contactId.trim();
-
-    if (!normalizedContactId) {
-      throw new BadRequestException('contactId is required');
-    }
+    const normalizedContactId = this.normalizeContactId(contactId);
 
     try {
-      const cachedMessages = await this.redisService.getConversationMessages(
-        normalizedContactId,
-        limit,
-      );
-
+      const cachedMessages = await this.redisService.getConversationMessages(normalizedContactId, limit);
       if (cachedMessages.length > 0) {
         return cachedMessages.slice(-limit);
       }
@@ -120,6 +119,11 @@ export class MemoryService {
       where: { contactId: normalizedContactId },
     });
 
+    if (memory?.expiresAt && memory.expiresAt.getTime() <= Date.now()) {
+      await this.prisma.clientMemory.deleteMany({ where: { contactId: normalizedContactId } });
+      return this.toClientMemorySnapshot(normalizedContactId, null);
+    }
+
     return this.toClientMemorySnapshot(normalizedContactId, memory);
   }
 
@@ -128,6 +132,11 @@ export class MemoryService {
     const summary = await this.prisma.conversationSummary.findUnique({
       where: { contactId: normalizedContactId },
     });
+
+    if (summary?.expiresAt && summary.expiresAt.getTime() <= Date.now()) {
+      await this.prisma.conversationSummary.deleteMany({ where: { contactId: normalizedContactId } });
+      return this.toSummarySnapshot(normalizedContactId, null);
+    }
 
     return this.toSummarySnapshot(normalizedContactId, summary);
   }
@@ -152,6 +161,7 @@ export class MemoryService {
 
   async listContacts(query?: string): Promise<MemoryContactListItem[]> {
     const normalizedQuery = query?.trim().toLowerCase() ?? '';
+    const now = new Date();
     const [messageGroups, memories, summaries] = await Promise.all([
       this.prisma.conversationMessage.groupBy({
         by: ['contactId'],
@@ -162,10 +172,12 @@ export class MemoryService {
         take: 100,
       }),
       this.prisma.clientMemory.findMany({
+        where: { expiresAt: { gt: now } },
         orderBy: { updatedAt: 'desc' },
         take: 100,
       }),
       this.prisma.conversationSummary.findMany({
+        where: { expiresAt: { gt: now } },
         orderBy: { updatedAt: 'desc' },
         take: 100,
       }),
@@ -192,8 +204,10 @@ export class MemoryService {
         return {
           contactId: contactId as string,
           name: memory?.name ?? null,
+          objective: this.normalizeObjective(memory?.objective ?? null),
           interest: memory?.interest ?? null,
-          lastIntent: memory?.lastIntent ?? null,
+          status: this.normalizeStatus(memory?.status ?? null),
+          lastIntent: this.buildLegacyIntent(memory),
           summary: summary?.summary ?? null,
           lastMessageAt,
           memoryUpdatedAt: memory?.updatedAt ?? null,
@@ -208,7 +222,9 @@ export class MemoryService {
         const haystack = [
           item.contactId,
           item.name,
+          item.objective,
           item.interest,
+          item.status,
           item.lastIntent,
           item.summary,
         ]
@@ -255,20 +271,33 @@ export class MemoryService {
   ): Promise<ConversationContextSnapshot> {
     const normalizedContactId = this.normalizeContactId(contactId);
 
+    const objective = this.normalizeObjective(input.objective ?? input.lastIntent ?? null);
+    const interest = this.normalizeInterest(input.interest);
+    const objections = this.normalizeObjections(input.objections ?? this.parseLegacyNotes(input.notes));
+    const status = this.normalizeStatus(input.status ?? this.deriveStatusFromLegacyIntent(input.lastIntent));
+
     const memory = await this.prisma.clientMemory.upsert({
       where: { contactId: normalizedContactId },
       create: {
         contactId: normalizedContactId,
         name: this.normalizeOptionalText(input.name),
-        interest: this.normalizeOptionalText(input.interest),
+        objective,
+        interest,
+        objections,
+        status,
         lastIntent: this.normalizeOptionalText(input.lastIntent),
         notes: this.normalizeOptionalText(input.notes),
+        expiresAt: this.buildLongMemoryExpiry(),
       },
       update: {
         name: this.normalizeOptionalText(input.name),
-        interest: this.normalizeOptionalText(input.interest),
+        objective,
+        interest,
+        objections,
+        status,
         lastIntent: this.normalizeOptionalText(input.lastIntent),
         notes: this.normalizeOptionalText(input.notes),
+        expiresAt: this.buildLongMemoryExpiry(),
       },
     });
 
@@ -278,18 +307,18 @@ export class MemoryService {
         where: { contactId: normalizedContactId },
         create: {
           contactId: normalizedContactId,
-          summary: summaryText,
+          summary: this.truncateSummary(summaryText),
+          expiresAt: this.buildLongMemoryExpiry(),
         },
         update: {
-          summary: summaryText,
+          summary: this.truncateSummary(summaryText),
+          expiresAt: this.buildLongMemoryExpiry(),
         },
       });
     }
 
     if (summaryText == null) {
-      await this.prisma.conversationSummary.deleteMany({
-        where: { contactId: normalizedContactId },
-      });
+      await this.prisma.conversationSummary.deleteMany({ where: { contactId: normalizedContactId } });
     }
 
     return {
@@ -299,94 +328,135 @@ export class MemoryService {
     };
   }
 
-  async updateClientMemory(contactId: string, text: string): Promise<ClientMemorySnapshot> {
+  async updateClientMemory(
+    contactId: string,
+    text: string,
+    recentMessages?: StoredMessage[],
+  ): Promise<ClientMemorySnapshot> {
     const normalizedContactId = this.normalizeContactId(contactId);
     const normalizedText = text.trim();
+    const shortMemory = recentMessages ?? await this.getRecentMessages(normalizedContactId);
+
     const current = await this.prisma.clientMemory.findUnique({
       where: { contactId: normalizedContactId },
     });
 
-    const detectedName = this.extractName(normalizedText) ?? current?.name ?? null;
-    const detectedInterest = this.extractInterest(normalizedText) ?? current?.interest ?? null;
-    const detectedIntent = this.resolveIntent(current?.lastIntent ?? null, normalizedText);
-    const mergedNotes = this.mergeNotes(current?.notes ?? null, this.extractNote(normalizedText));
+    if (!this.shouldStoreProfileSignal(normalizedText, shortMemory)) {
+      return this.toClientMemorySnapshot(normalizedContactId, current);
+    }
+
+    const extracted = this.extractProfileSignal(normalizedText);
+    const mergedObjections = this.mergeObjections(
+      this.readObjections(current?.objections),
+      extracted.objections,
+    );
+
+    const detectedName = extracted.name ?? current?.name ?? null;
+    const detectedObjective = extracted.objective ?? this.normalizeObjective(current?.objective ?? null);
+    const detectedInterest = extracted.interest ?? this.normalizeInterest(current?.interest);
+    const detectedStatus = this.resolveStatus(current?.status ?? null, extracted.status);
+    const legacyIntent = this.buildLegacyIntent({
+      objective: detectedObjective,
+      interest: detectedInterest,
+      status: detectedStatus,
+      lastIntent: current?.lastIntent ?? null,
+    });
+    const legacyNotes = mergedObjections.length > 0 ? mergedObjections.join(' | ') : null;
 
     const memory = await this.prisma.clientMemory.upsert({
       where: { contactId: normalizedContactId },
       create: {
         contactId: normalizedContactId,
         name: detectedName,
+        objective: detectedObjective,
         interest: detectedInterest,
-        lastIntent: detectedIntent,
-        notes: mergedNotes,
+        objections: mergedObjections,
+        status: detectedStatus,
+        lastIntent: legacyIntent,
+        notes: legacyNotes,
+        expiresAt: this.buildLongMemoryExpiry(),
       },
       update: {
         name: detectedName,
+        objective: detectedObjective,
         interest: detectedInterest,
-        lastIntent: detectedIntent,
-        notes: mergedNotes,
+        objections: mergedObjections,
+        status: detectedStatus,
+        lastIntent: legacyIntent,
+        notes: legacyNotes,
+        expiresAt: this.buildLongMemoryExpiry(),
       },
     });
 
     return this.toClientMemorySnapshot(normalizedContactId, memory);
   }
 
-  async updateSummary(contactId: string): Promise<ConversationSummarySnapshot> {
+  async updateSummary(
+    contactId: string,
+    recentMessages?: StoredMessage[],
+  ): Promise<ConversationSummarySnapshot> {
     const normalizedContactId = this.normalizeContactId(contactId);
-    const [messages, clientMemory] = await Promise.all([
-      this.prisma.conversationMessage.findMany({
-        where: { contactId: normalizedContactId },
-        orderBy: { createdAt: 'desc' },
-        take: 30,
-      }),
+    const [messages, clientMemory, currentSummary] = await Promise.all([
+      recentMessages
+        ? Promise.resolve(recentMessages)
+        : this.getRecentMessages(normalizedContactId, MemoryService.SHORT_MEMORY_LIMIT),
       this.getClientMemory(normalizedContactId),
+      this.getSummary(normalizedContactId),
     ]);
 
-    const orderedMessages = messages.reverse();
-    const summaryText = await this.generateSummaryText(normalizedContactId, orderedMessages, clientMemory);
+    const summaryText = await this.generateSummaryText(
+      normalizedContactId,
+      messages,
+      clientMemory,
+      currentSummary.summary,
+    );
 
     const summary = await this.prisma.conversationSummary.upsert({
       where: { contactId: normalizedContactId },
       create: {
         contactId: normalizedContactId,
-        summary: summaryText,
+        summary: this.truncateSummary(summaryText),
+        expiresAt: this.buildLongMemoryExpiry(),
       },
       update: {
-        summary: summaryText,
+        summary: this.truncateSummary(summaryText),
+        expiresAt: this.buildLongMemoryExpiry(),
       },
     });
 
     return this.toSummarySnapshot(normalizedContactId, summary);
   }
 
-  private async syncRedisConversation(contactId: string): Promise<void> {
-    try {
-      const latestMessages = await this.prisma.conversationMessage.findMany({
-        where: { contactId },
-        orderBy: { createdAt: 'desc' },
-        take: 10,
-      });
+  @Cron(CronExpression.EVERY_DAY_AT_3AM)
+  async cleanupExpiredMemory(): Promise<void> {
+    const now = new Date();
+    const threshold = new Date(
+      now.getTime() - MemoryService.LONG_MEMORY_TTL_DAYS * 24 * 60 * 60 * 1000,
+    );
 
-      await this.redisService.setConversationMessages(
-        contactId,
-        latestMessages.reverse().map((message) => ({
-          role: message.role as ConversationRole,
-          content: message.content,
-          createdAt: message.createdAt,
-        })),
-      );
-    } catch (error) {
-      this.logger.warn(
-        `Redis conversation sync failed for ${contactId}: ${
-          error instanceof Error ? error.message : 'Unknown error'
-        }`,
-      );
-    }
+    const [expiredProfiles, expiredSummaries, oldMessages] = await Promise.all([
+      this.prisma.clientMemory.deleteMany({ where: { expiresAt: { lte: now } } }),
+      this.prisma.conversationSummary.deleteMany({ where: { expiresAt: { lte: now } } }),
+      this.prisma.conversationMessage.deleteMany({ where: { createdAt: { lt: threshold } } }),
+    ]);
+
+    this.logger.log(
+      JSON.stringify({
+        event: 'memory_cleanup_completed',
+        deletedProfiles: expiredProfiles.count,
+        deletedSummaries: expiredSummaries.count,
+        deletedOldMessages: oldMessages.count,
+      }),
+    );
   }
 
   private async safePrimeRedis(contactId: string, messages: StoredMessage[]): Promise<void> {
     try {
-      await this.redisService.setConversationMessages(contactId, messages);
+      await this.redisService.setConversationMessages(
+        contactId,
+        messages,
+        MemoryService.SHORT_MEMORY_TTL_SECONDS,
+      );
     } catch (error) {
       this.logger.warn(
         `Redis conversation prime failed for ${contactId}: ${
@@ -398,16 +468,18 @@ export class MemoryService {
 
   private async generateSummaryText(
     contactId: string,
-    messages: ConversationMessage[],
+    messages: StoredMessage[],
     clientMemory: ClientMemorySnapshot,
+    previousSummary: string | null,
   ): Promise<string> {
-    if (messages.length === 0) {
-      return this.buildFallbackSummary(contactId, messages, clientMemory);
+    const relevantMessages = this.filterSummaryMessages(messages);
+    if (relevantMessages.length === 0) {
+      return this.buildFallbackSummary(contactId, messages, clientMemory, previousSummary);
     }
 
     const config = await this.clientConfigService.getConfig();
     if (!config.openaiKey.trim()) {
-      return this.buildFallbackSummary(contactId, messages, clientMemory);
+      return this.buildFallbackSummary(contactId, messages, clientMemory, previousSummary);
     }
 
     try {
@@ -421,18 +493,20 @@ export class MemoryService {
           {
             role: 'system',
             content:
-              'Resume conversaciones de ventas por WhatsApp. Devuelve un resumen corto y util para continuar la conversacion sin repetir preguntas. Incluye nombre, interes, intencion y proximos pasos si existen.',
+              'Resume conversaciones de ventas por WhatsApp en menos de 2KB. Devuelve un resumen util para continuar la conversacion sin repetir preguntas. Incluye objetivo, interes, objeciones y proximo paso si aplica.',
           },
           {
             role: 'user',
             content: [
               `Contacto: ${contactId}`,
               `Nombre recordado: ${clientMemory.name ?? 'N/D'}`,
+              `Objetivo recordado: ${clientMemory.objective ?? 'N/D'}`,
               `Interes recordado: ${clientMemory.interest ?? 'N/D'}`,
-              `Ultima intencion: ${clientMemory.lastIntent ?? 'N/D'}`,
-              `Notas: ${clientMemory.notes ?? 'N/D'}`,
+              `Objeciones recordadas: ${clientMemory.objections.join(' | ') || 'N/D'}`,
+              `Estado del cliente: ${clientMemory.status}`,
+              `Resumen anterior: ${previousSummary ?? 'N/D'}`,
               'Mensajes recientes:',
-              ...messages.map((message) => `${message.role}: ${message.content}`),
+              ...relevantMessages.map((message) => `${message.role}: ${message.content}`),
             ].join('\n'),
           },
         ],
@@ -440,7 +514,7 @@ export class MemoryService {
 
       const summary = response.choices[0]?.message?.content?.trim();
       if (summary) {
-        return summary;
+        return this.truncateSummary(summary);
       }
     } catch (error) {
       this.logger.warn(
@@ -450,23 +524,84 @@ export class MemoryService {
       );
     }
 
-    return this.buildFallbackSummary(contactId, messages, clientMemory);
+    return this.buildFallbackSummary(contactId, messages, clientMemory, previousSummary);
   }
 
   private buildFallbackSummary(
     contactId: string,
-    messages: ConversationMessage[],
+    messages: StoredMessage[],
     clientMemory: ClientMemorySnapshot,
+    previousSummary: string | null,
   ): string {
-    const lastLines = messages.slice(-6).map((message) => `${message.role}: ${message.content}`);
-    return [
-      `Contacto: ${contactId}`,
-      `Nombre: ${clientMemory.name ?? 'No identificado'}`,
-      `Interes: ${clientMemory.interest ?? 'Sin interes claro todavia'}`,
-      `Ultima intencion: ${clientMemory.lastIntent ?? 'Sin intencion detectada'}`,
-      `Notas: ${clientMemory.notes ?? 'Sin notas'}`,
-      `Historial reciente: ${lastLines.join(' | ')}`,
-    ].join('\n');
+    const lastLines = this.filterSummaryMessages(messages)
+      .slice(-6)
+      .map((message) => `${message.role}: ${message.content}`);
+
+    return this.truncateSummary(
+      [
+        `Contacto: ${contactId}`,
+        `Nombre: ${clientMemory.name ?? 'No identificado'}`,
+        `Objetivo: ${clientMemory.objective ?? 'Sin objetivo claro'}`,
+        `Interes: ${clientMemory.interest ?? 'Sin interes claro todavia'}`,
+        `Objeciones: ${clientMemory.objections.join(', ') || 'Sin objeciones detectadas'}`,
+        `Estado: ${clientMemory.status}`,
+        previousSummary ? `Resumen previo: ${previousSummary}` : null,
+        `Historial reciente: ${lastLines.join(' | ')}`,
+      ]
+        .filter((line): line is string => Boolean(line))
+        .join('\n'),
+    );
+  }
+
+  private shouldStoreProfileSignal(text: string, recentMessages: StoredMessage[]): boolean {
+    const normalized = text.trim().toLowerCase();
+    if (!normalized || this.isNoiseMessage(normalized)) {
+      return false;
+    }
+
+    const previousUserMessage = [...recentMessages]
+      .reverse()
+      .slice(1)
+      .find((message) => message.role === 'user');
+
+    if (previousUserMessage?.content.trim().toLowerCase() === normalized) {
+      return false;
+    }
+
+    const extracted = this.extractProfileSignal(text);
+    return Boolean(
+      extracted.name ||
+        extracted.objective ||
+        extracted.interest ||
+        extracted.objections.length > 0 ||
+        extracted.status,
+    );
+  }
+
+  private isNoiseMessage(normalized: string): boolean {
+    if (normalized.length < 2) {
+      return true;
+    }
+
+    return ['hola', 'buenas', 'buen dia', 'buenos dias', 'ok', 'gracias', 'dale', '👍', '🙏'].includes(normalized);
+  }
+
+  private extractProfileSignal(text: string): {
+    name: string | null;
+    objective: ClientObjective | null;
+    interest: ClientInterest | null;
+    objections: string[];
+    status: ClientStatus | null;
+  } {
+    const normalized = text.toLowerCase();
+
+    return {
+      name: this.extractName(text),
+      objective: this.extractObjective(normalized),
+      interest: this.extractInterest(normalized),
+      objections: this.extractObjections(text),
+      status: this.extractStatus(normalized),
+    };
   }
 
   private extractName(text: string): string | null {
@@ -486,93 +621,142 @@ export class MemoryService {
     return null;
   }
 
-  private extractInterest(text: string): string | null {
-    const patterns = [
-      /(?:me interesa|quiero|busco|necesito)\s+([^.,!?\n]{3,120})/i,
-      /(?:estoy interesado en|estoy interesada en)\s+([^.,!?\n]{3,120})/i,
-    ];
+  private extractObjective(normalized: string): ClientObjective | null {
+    if (
+      ['rebajar', 'bajar de peso', 'perder peso', 'adelgazar', 'rebajar rapido', 'rebajar rápido']
+        .some((keyword) => normalized.includes(keyword))
+    ) {
+      return 'rebajar';
+    }
 
-    for (const pattern of patterns) {
-      const match = text.match(pattern);
-      const value = match?.[1]?.trim();
-      if (value) {
-        return value.replace(/[.,;!?]+$/, '');
-      }
+    if (
+      ['comprar', 'pedido', 'ordenar', 'lo quiero', 'como compro', 'cómo compro', 'me lo llevo']
+        .some((keyword) => normalized.includes(keyword))
+    ) {
+      return 'comprar';
+    }
+
+    if (
+      ['precio', 'cuanto cuesta', 'cuánto cuesta', 'info', 'informacion', 'información', 'quiero saber', 'explicame', 'explícame', 'dime']
+        .some((keyword) => normalized.includes(keyword))
+    ) {
+      return 'info';
     }
 
     return null;
   }
 
-  private extractIntent(text: string): string | null {
-    const normalized = text.toLowerCase();
-    const hotLeadKeywords = ['lo quiero', 'dame uno', 'como compro', 'cómo compro', 'lo compro', 'quiero comprar', 'te voy a comprar'];
-    if (hotLeadKeywords.some((keyword) => normalized.includes(keyword))) {
-      return 'HOT';
+  private extractInterest(normalized: string): ClientInterest | null {
+    if (
+      ['precio', 'cuanto cuesta', 'cuánto cuesta', 'vale', 'costo', 'cuesta']
+        .some((keyword) => normalized.includes(keyword))
+    ) {
+      return 'precio';
     }
 
-    const intents: Array<{ keywords: string[]; intent: string }> = [
-      { keywords: ['precio', 'cuesta', 'vale', 'coste'], intent: 'consulta_precio' },
-      { keywords: ['catalogo', 'catálogo'], intent: 'consulta_catalogo' },
-      { keywords: ['funciona', 'calidad', 'sirve', 'resultado', 'resultados', 'garantia', 'garantía'], intent: 'duda' },
-      { keywords: ['comprar', 'pedido', 'ordenar'], intent: 'compra' },
-      { keywords: ['ok', 'perfecto', 'dale', 'esta bien', 'está bien'], intent: 'cierre' },
-      { keywords: ['envio', 'delivery', 'entrega'], intent: 'consulta_envio' },
-      { keywords: ['info', 'informacion', 'detalles', 'explicame', 'explícame', 'hablame', 'háblame', 'cuentame', 'cuéntame', 'como funciona', 'cómo funciona'], intent: 'consulta_informacion' },
-      { keywords: ['hola', 'buenas', 'saludos'], intent: 'saludo' },
-      { keywords: ['ayuda', 'soporte', 'problema'], intent: 'soporte' },
-    ];
-
-    const detected = intents.find(({ keywords }) =>
-      keywords.some((keyword) => normalized.includes(keyword)),
-    );
-
-    return detected?.intent ?? null;
-  }
-
-  private extractNote(text: string): string | null {
-    const normalized = text.toLowerCase();
-    const objectionKeywords = ['funciona', 'calidad', 'sirve', 'resultado', 'resultados', 'garantia', 'garantía'];
-    if (objectionKeywords.some((keyword) => normalized.includes(keyword))) {
-      return `Objecion: ${text.replace(/[.,;!?]+$/, '').trim()}`;
+    if (
+      ['resultado', 'resultados', 'antes y despues', 'antes y después', 'testimonio', 'testimonios']
+        .some((keyword) => normalized.includes(keyword))
+    ) {
+      return 'resultados';
     }
 
-    const patterns = [
-      /(?:prefiero|prefiero que sea|me gustaria)\s+([^.,!?\n]{3,140})/i,
-      /(?:recuerda que|ten en cuenta que)\s+([^.,!?\n]{3,140})/i,
-      /(?:soy alergico a|soy alérgico a|no quiero)\s+([^.,!?\n]{3,140})/i,
-    ];
-
-    for (const pattern of patterns) {
-      const match = text.match(pattern);
-      const value = match?.[1]?.trim();
-      if (value) {
-        return value.replace(/[.,;!?]+$/, '');
-      }
+    if (
+      ['funciona', 'sirve', 'seguro', 'garantia', 'garantía', 'duda', 'dudas', 'no creo']
+        .some((keyword) => normalized.includes(keyword))
+    ) {
+      return 'dudas';
     }
 
     return null;
   }
 
-  private mergeNotes(current: string | null, next: string | null): string | null {
-    const parts = [current?.trim(), next?.trim()].filter(
-      (value): value is string => Boolean(value && value.length > 0),
-    );
+  private extractObjections(text: string): string[] {
+    const normalized = text.trim().toLowerCase();
+    const objections = new Set<string>();
 
-    if (parts.length === 0) {
-      return null;
+    for (const phrase of [
+      'no tengo dinero',
+      'no tengo cuarto',
+      'no creo',
+      'esta caro',
+      'está caro',
+      'muy caro',
+      'no me da confianza',
+    ]) {
+      if (normalized.includes(phrase)) {
+        objections.add(phrase);
+      }
     }
 
-    return Array.from(new Set(parts)).join(' | ');
+    if (['funciona', 'sirve', 'resultado', 'resultados'].some((keyword) => normalized.includes(keyword))) {
+      objections.add('tiene dudas sobre resultados');
+    }
+
+    return Array.from(objections);
   }
 
-  private resolveIntent(currentIntent: string | null, text: string): string | null {
-    const nextIntent = this.extractIntent(text);
-
-    if (currentIntent === 'HOT' && nextIntent && nextIntent !== 'HOT') {
-      return currentIntent;
+  private extractStatus(normalized: string): ClientStatus | null {
+    if (
+      ['ya compre', 'ya compré', 'ya pague', 'ya pagué', 'soy cliente', 'me llego', 'me llegó']
+        .some((keyword) => normalized.includes(keyword))
+    ) {
+      return 'cliente';
     }
 
-    return nextIntent ?? currentIntent ?? null;
+    if (
+      ['precio', 'cuanto cuesta', 'cuánto cuesta', 'lo quiero', 'comprar', 'pedido', 'resultado', 'funciona']
+        .some((keyword) => normalized.includes(keyword))
+    ) {
+      return 'interesado';
+    }
+
+    return null;
+  }
+
+  private readObjections(value: unknown): string[] {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+
+    return value
+      .filter((item): item is string => typeof item === 'string')
+      .map((item) => item.trim())
+      .filter((item) => item.length > 0);
+  }
+
+  private mergeObjections(current: string[], next: string[]): string[] {
+    return Array.from(new Set([...current, ...next])).slice(0, 6);
+  }
+
+  private filterSummaryMessages(messages: StoredMessage[]): StoredMessage[] {
+    return messages.filter((message) => !this.isNoiseMessage(message.content.trim().toLowerCase()));
+  }
+
+  private truncateSummary(summary: string): string {
+    const trimmed = summary.trim();
+    if (trimmed.length <= MemoryService.MAX_SUMMARY_CHARS) {
+      return trimmed;
+    }
+
+    return `${trimmed.slice(0, MemoryService.MAX_SUMMARY_CHARS - 3).trimEnd()}...`;
+  }
+
+  private buildLongMemoryExpiry(): Date {
+    return new Date(Date.now() + MemoryService.LONG_MEMORY_TTL_DAYS * 24 * 60 * 60 * 1000);
+  }
+
+  private async touchLongMemoryExpiry(contactId: string): Promise<void> {
+    const expiresAt = this.buildLongMemoryExpiry();
+
+    await Promise.all([
+      this.prisma.clientMemory.updateMany({ where: { contactId }, data: { expiresAt } }),
+      this.prisma.conversationSummary.updateMany({ where: { contactId }, data: { expiresAt } }),
+    ]);
+  }
+
+  private getSummaryCounterKey(contactId: string): string {
+    return `memory:summary-count:${contactId}`;
   }
 
   private capitalizeWords(value: string): string {
@@ -589,10 +773,14 @@ export class MemoryService {
     return {
       contactId,
       name: memory?.name ?? null,
-      interest: memory?.interest ?? null,
-      lastIntent: memory?.lastIntent ?? null,
-      notes: memory?.notes ?? null,
+      objective: this.normalizeObjective(memory?.objective ?? null),
+      interest: this.normalizeInterest(memory?.interest),
+      objections: this.readObjections(memory?.objections),
+      status: this.normalizeStatus(memory?.status ?? null),
+      lastIntent: this.buildLegacyIntent(memory),
+      notes: this.buildLegacyNotes(memory),
       updatedAt: memory?.updatedAt ?? null,
+      expiresAt: memory?.expiresAt ?? null,
     };
   }
 
@@ -604,6 +792,7 @@ export class MemoryService {
       contactId,
       summary: summary?.summary ?? null,
       updatedAt: summary?.updatedAt ?? null,
+      expiresAt: summary?.expiresAt ?? null,
     };
   }
 
@@ -624,6 +813,155 @@ export class MemoryService {
 
     const normalized = value.trim();
     return normalized.length === 0 ? null : normalized;
+  }
+
+  private normalizeObjective(value: string | null | undefined): ClientObjective | null {
+    if (!value) {
+      return null;
+    }
+
+    const normalized = value.trim().toLowerCase();
+    if (normalized === 'rebajar') {
+      return 'rebajar';
+    }
+    if (normalized === 'info' || normalized === 'informacion' || normalized === 'información') {
+      return 'info';
+    }
+    if (normalized === 'comprar' || normalized === 'compra') {
+      return 'comprar';
+    }
+
+    return null;
+  }
+
+  private normalizeInterest(value: string | null | undefined): ClientInterest | null {
+    if (!value) {
+      return null;
+    }
+
+    const normalized = value.trim().toLowerCase();
+    if (normalized === 'precio') {
+      return 'precio';
+    }
+    if (normalized === 'resultado' || normalized === 'resultados') {
+      return 'resultados';
+    }
+    if (normalized === 'duda' || normalized === 'dudas') {
+      return 'dudas';
+    }
+
+    return null;
+  }
+
+  private normalizeStatus(value: string | null | undefined): ClientStatus {
+    if (!value) {
+      return 'nuevo';
+    }
+
+    const normalized = value.trim().toLowerCase();
+    if (normalized === 'cliente') {
+      return 'cliente';
+    }
+    if (normalized === 'interesado') {
+      return 'interesado';
+    }
+
+    return 'nuevo';
+  }
+
+  private normalizeObjections(value: string[] | null | undefined): string[] {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+
+    return Array.from(
+      new Set(
+        value
+          .filter((item): item is string => typeof item === 'string')
+          .map((item) => item.trim())
+          .filter((item) => item.length > 0),
+      ),
+    ).slice(0, 6);
+  }
+
+  private buildLegacyIntent(memory: {
+    objective?: string | null;
+    interest?: string | null;
+    status?: string | null;
+    lastIntent?: string | null;
+  } | null): string | null {
+    if (memory?.lastIntent?.trim()) {
+      return memory.lastIntent.trim();
+    }
+
+    if (this.normalizeStatus(memory?.status ?? null) === 'cliente') {
+      return 'compra';
+    }
+    if (this.normalizeObjective(memory?.objective ?? null) === 'comprar') {
+      return 'HOT';
+    }
+    if (this.normalizeInterest(memory?.interest) === 'precio') {
+      return 'consulta_precio';
+    }
+    if (['resultados', 'dudas'].includes(this.normalizeInterest(memory?.interest) ?? '')) {
+      return 'duda';
+    }
+    if (this.normalizeObjective(memory?.objective ?? null) === 'info') {
+      return 'consulta_informacion';
+    }
+
+    return null;
+  }
+
+  private buildLegacyNotes(memory: Pick<ClientMemory, 'objections' | 'notes'> | null): string | null {
+    if (memory?.notes?.trim()) {
+      return memory.notes.trim();
+    }
+
+    const objections = this.readObjections(memory?.objections);
+    return objections.length > 0 ? objections.join(' | ') : null;
+  }
+
+  private resolveStatus(
+    currentStatus: string | null | undefined,
+    nextStatus: ClientStatus | null,
+  ): ClientStatus {
+    const current = this.normalizeStatus(currentStatus);
+    if (current === 'cliente' || nextStatus === 'cliente') {
+      return 'cliente';
+    }
+    if (current === 'interesado' || nextStatus === 'interesado') {
+      return 'interesado';
+    }
+
+    return 'nuevo';
+  }
+
+  private parseLegacyNotes(notes: string | null | undefined): string[] {
+    if (!notes?.trim()) {
+      return [];
+    }
+
+    return notes
+      .split('|')
+      .map((item) => item.trim())
+      .filter((item) => item.length > 0);
+  }
+
+  private deriveStatusFromLegacyIntent(lastIntent: string | null | undefined): ClientStatus | null {
+    const normalized = lastIntent?.trim().toLowerCase();
+    if (!normalized) {
+      return null;
+    }
+
+    if (normalized === 'cliente') {
+      return 'cliente';
+    }
+    if (normalized === 'hot' || normalized === 'compra' || normalized === 'consulta_precio') {
+      return 'interesado';
+    }
+
+    return 'nuevo';
   }
 
   private getLatestTimestamp(values: Array<Date | null>): Date | null {

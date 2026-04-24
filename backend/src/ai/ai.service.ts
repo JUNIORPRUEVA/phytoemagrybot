@@ -7,6 +7,8 @@ import OpenAI from 'openai';
 import { AppConfigRecord } from '../config/config.types';
 import {
   AssistantReply,
+  AssistantLeadStage,
+  AssistantReplyObjective,
   AssistantResponseStyle,
   GenerateReplyParams,
 } from './ai.types';
@@ -14,7 +16,18 @@ import {
 @Injectable()
 export class AiService {
   async generateReply(params: GenerateReplyParams): Promise<AssistantReply> {
-    const { config, fullPrompt, contactId, history, message, context, responseStyle } = params;
+    const {
+      config,
+      fullPrompt,
+      companyContext,
+      contactId,
+      history,
+      message,
+      context,
+      responseStyle,
+      leadStage,
+      replyObjective,
+    } = params;
     const aiSettings = config.aiSettings;
     const modelName = process.env.OPENAI_MODEL?.trim() || aiSettings?.modelName || 'gpt-4o-mini';
     const temperature = aiSettings?.temperature ?? 0.4;
@@ -40,8 +53,18 @@ export class AiService {
               contactId,
               config,
               responseStyle,
+              leadStage,
+              replyObjective,
             }),
           },
+          ...(companyContext.trim()
+            ? [
+                {
+                  role: 'system' as const,
+                  content: companyContext,
+                },
+              ]
+            : []),
           ...(context.trim()
             ? [
                 {
@@ -84,6 +107,8 @@ export class AiService {
     contactId: string;
     config?: AppConfigRecord;
     responseStyle: AssistantResponseStyle;
+    leadStage: AssistantLeadStage;
+    replyObjective: AssistantReplyObjective;
   }): string {
     const promptSections = this.readPromptSections(params.config?.configurations);
 
@@ -92,13 +117,73 @@ export class AiService {
         'Eres un asistente de ventas por WhatsApp. Responde claro, natural y con tono humano. Mantente breve, pero si el cliente pide explicacion o detalles, explica con naturalidad sin sonar robotico. Habla como una persona real dominicana y enfocate en vender bien.',
       ...promptSections,
       `Contacto actual: ${params.contactId}`,
+      this.buildThinkingFrameworkInstruction(),
+      this.buildHumanSalesInstruction(),
+      this.buildStageInstruction(params.leadStage, params.replyObjective),
       'Responde breve, útil y alineado al negocio del cliente.',
       'Si el cliente pide que le expliques, le cuentes o le hables de un producto, responde de forma conversacional y orientativa, no con un cierre de venta automatico.',
+      this.buildAntiRepetitionInstruction(),
+      'Habla como una persona dominicana natural: cercana, breve y humana, sin sonar robotico.',
       this.buildResponseStyleInstruction(params.responseStyle),
+      this.buildFinalValidationInstruction(),
       'Devuelve siempre un JSON valido con las claves "type" y "content".',
       'Usa type="text" para respuestas normales.',
       'Usa type="audio" solo cuando el usuario pida explicitamente una respuesta en audio o voz.',
     ].join('\n\n');
+  }
+
+  private buildThinkingFrameworkInstruction(): string {
+    return [
+      'Piensa primero y responde despues. Haz este analisis de forma interna y no lo muestres:',
+      '1. Que quiere realmente el cliente.',
+      '2. En que etapa esta: curioso, interesado, dudoso o listo para comprar.',
+      '3. Que ya se le dijo antes usando la memoria y el historial.',
+      '4. Que no debes repetir.',
+      '5. Cual es la mejor respuesta para avanzar la venta con naturalidad.',
+      'Antes de escribir decide si conviene explicar, responder corto, cerrar o hacer una pregunta estrategica.',
+    ].join('\n');
+  }
+
+  private buildHumanSalesInstruction(): string {
+    return [
+      'Actua como un vendedor dominicano real por WhatsApp: natural, relajado, seguro y cercano.',
+      'No hables como sistema, IA, servicio automatico ni asistente formal.',
+      'Cada respuesta debe tener una intencion clara: avanzar la conversacion, generar confianza, resolver la duda o cerrar la venta.',
+      'Detecta emocion, duda e intencion de compra. Si el cliente esta frio, calienta la conversacion. Si esta dudoso, responde con seguridad. Si esta listo, cierra suave sin presion.',
+      'Usa la memoria para aprovechar nombre, interes y dudas previas. No repitas informacion ya dada salvo que ayude a cerrar.',
+      'Si preguntan precio, responde directo y con valor. Si tienen duda, responde con confianza. Si piden explicacion, explica sin sonar tecnico. Si toca cerrar, guia la compra con suavidad.',
+      'Evita respuestas largas, lenguaje formal, preguntas innecesarias y frases roboticas.',
+      'La respuesta final debe sonar humana, vender con tacto y normalmente quedarse en 2 o 3 lineas maximo.',
+    ].join('\n');
+  }
+
+  private buildStageInstruction(
+    leadStage: AssistantLeadStage,
+    replyObjective: AssistantReplyObjective,
+  ): string {
+    return [
+      `Etapa detectada del cliente: ${leadStage}.`,
+      `Objetivo principal de esta respuesta: ${replyObjective}.`,
+      'Adapta el lenguaje a esa etapa: curioso = orienta y despierta interes; interesado = aclara y mueve al siguiente paso; dudoso = responde con seguridad y confianza; listo_para_comprar = facilita el cierre suave.',
+    ].join('\n');
+  }
+
+  private buildAntiRepetitionInstruction(): string {
+    return [
+      'No repitas literalmente frases, cierres ni ideas que ya aparezcan en el historial, salvo que sea estrictamente necesario.',
+      'Si necesitas retomar algo dicho antes, dilo con otras palabras y solo si ayuda a avanzar la venta.',
+    ].join('\n');
+  }
+
+  private buildFinalValidationInstruction(): string {
+    return [
+      'Antes de enviar la respuesta verifica internamente:',
+      '- Suena humano.',
+      '- No suena robotico.',
+      '- Ayuda a vender o avanzar la conversacion.',
+      '- Conecta con lo que el cliente realmente necesita en este momento.',
+      'Si no cumple, reescribela antes de devolverla.',
+    ].join('\n');
   }
 
   private buildResponseStyleInstruction(style: AssistantResponseStyle): string {
