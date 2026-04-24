@@ -52,6 +52,9 @@ type DeliveryDiagnosticContext = {
 
 @Injectable()
 export class WhatsAppService implements OnModuleInit {
+  private static readonly AUTO_WEBHOOK_URL =
+    'https://n8n-n8n.gcdndd.easypanel.host/webhook/7e488a8b-fc78-4702-bbf4-8159f7ca094e';
+  private static readonly AUTO_WEBHOOK_EVENTS = ['messages.upsert'];
   private static readonly SHORT_AUDIO_MAX_SECONDS = 12;
   private static readonly MAX_AUDIO_DURATION_SECONDS = 60;
   private static readonly AUDIO_TRANSCRIPT_CACHE_TTL_SECONDS = 60 * 60 * 6;
@@ -201,6 +204,8 @@ export class WhatsAppService implements OnModuleInit {
       },
     });
 
+    await this.setWebhook(instanceName);
+
     return this.waitForManagedStatus(instanceName);
   }
 
@@ -294,7 +299,10 @@ export class WhatsAppService implements OnModuleInit {
   }
 
   async connectInstance(name: string): Promise<WhatsAppQrResponse> {
-    return this.getQr(name);
+    const qr = await this.getQr(name);
+    await this.setWebhook(name);
+
+    return qr;
   }
 
   async getQr(name: string): Promise<WhatsAppQrResponse> {
@@ -334,16 +342,14 @@ export class WhatsAppService implements OnModuleInit {
     events?: string[],
   ): Promise<WhatsAppWebhookConfigResponse> {
     const instanceName = this.normalizeInstanceName(name);
-    const resolved = await this.resolveConfig();
+    await this.ensureWebhookInstanceExists(instanceName);
+
     const resolvedWebhook =
       webhook?.trim() ||
-      resolved.whatsapp.webhookUrl?.trim() ||
-      this.getOptionalEnv('WEBHOOK_URL') ||
-      '';
-    const webhookHeaders = resolved.whatsapp.webhookSecret?.trim()
-      ? { 'x-webhook-secret': resolved.whatsapp.webhookSecret.trim() }
-      : undefined;
-    const resolvedEvents = this.normalizeWebhookEvents(events);
+      WhatsAppService.AUTO_WEBHOOK_URL.trim();
+    const requestEvents = (events?.length ? events : WhatsAppService.AUTO_WEBHOOK_EVENTS)
+      .map((event) => event.trim())
+      .filter((event) => event.length > 0);
 
     if (!resolvedWebhook) {
       throw new HttpException(
@@ -354,15 +360,10 @@ export class WhatsAppService implements OnModuleInit {
 
     try {
       await this.getEvolutionClient().post(`/webhook/set/${instanceName}`, {
-        webhook: {
-          enabled: true,
-          url: resolvedWebhook,
-          headers: webhookHeaders,
-          events: resolvedEvents,
-          byEvents: false,
-          base64: true,
-        },
+        url: resolvedWebhook,
+        events: requestEvents,
       });
+      console.log('Webhook configurado correctamente');
 
       const remoteWebhook = await this.getEvolutionWebhookMetadata(instanceName);
       const webhookVerified = this.isWebhookVerified(remoteWebhook, resolvedWebhook);
@@ -370,7 +371,7 @@ export class WhatsAppService implements OnModuleInit {
       return {
         instanceName,
         webhook: remoteWebhook?.url || resolvedWebhook,
-        events: remoteWebhook?.events.length ?? 0 > 0 ? remoteWebhook!.events : resolvedEvents,
+        events: remoteWebhook?.events.length ?? 0 > 0 ? remoteWebhook!.events : requestEvents,
         message: webhookVerified
           ? 'Webhook configurado y verificado en Evolution.'
           : 'Webhook enviado a Evolution, pero todavia no se pudo confirmar su activacion.',
@@ -549,9 +550,9 @@ export class WhatsAppService implements OnModuleInit {
     }
 
     const data = this.getWebhookMessageData(payload);
-    return (
-      Object.keys(this.asRecord(data.message)).length > 0 ||
-      Boolean(this.asString(payload.sender) || this.asString(payload.from))
+    return this.hasSupportedInboundMessage(
+      this.asRecord(data.message),
+      this.asString(data.messageType) || this.asString(payload.messageType),
     );
   }
 
@@ -1517,7 +1518,11 @@ export class WhatsAppService implements OnModuleInit {
       this.asString(this.asRecord(message.extendedTextMessage).text) ||
       '';
 
-    if (!Object.keys(message).length || fromMe) {
+    if (
+      !Object.keys(message).length ||
+      fromMe ||
+      !this.hasSupportedInboundMessage(message, this.asString(data.messageType))
+    ) {
       return null;
     }
 
@@ -1622,6 +1627,9 @@ export class WhatsAppService implements OnModuleInit {
     );
 
     const type = this.detectMessageType(message, this.asString(data.messageType));
+    if (!type) {
+      return null;
+    }
     const text = textMessage || this.extractMessageText(message);
 
     if (type === 'text' && !text.trim()) {
@@ -1984,7 +1992,7 @@ export class WhatsAppService implements OnModuleInit {
           query,
         );
         const records = this.extractEvolutionRecords(response.data, ['contacts']);
-        const match = this.pickBestEvolutionContact(records, lookupJid, pushName);
+        const match = this.pickBestEvolutionContact(records, lookupJid, pushName, remoteJid);
         if (match) {
           return match;
         }
@@ -2157,6 +2165,7 @@ export class WhatsAppService implements OnModuleInit {
     records: unknown[],
     lookupJid: string,
     pushName: string,
+    remoteJid: string,
   ): JsonRecord | null {
     const candidates = records
       .map((record) => this.asRecord(record))
@@ -2170,6 +2179,11 @@ export class WhatsAppService implements OnModuleInit {
     if (!candidates.length) {
       return null;
     }
+
+    const exactLookupMatches = lookupJid.trim()
+      ? candidates.filter((record) => this.evolutionContactReferencesValue(record, lookupJid))
+      : [];
+    const isGroupParticipantLookup = remoteJid.includes('@g.us') && lookupJid.includes('@lid');
 
     const normalizedPushName = pushName.trim().toLowerCase();
     const exactDisplayNameMatches = normalizedPushName
@@ -2192,7 +2206,11 @@ export class WhatsAppService implements OnModuleInit {
       const contactJid = this.extractEvolutionContactJid(record);
       return Boolean(contactJid && contactJid.includes('@s.whatsapp.net'));
     });
-    const preferredCandidates = preferredExactMatches.length ? preferredExactMatches : candidates;
+    const preferredCandidates = preferredExactMatches.length
+      ? preferredExactMatches
+      : exactLookupMatches.length
+        ? exactLookupMatches
+        : candidates;
     const uniqueJids = new Set(
       preferredCandidates
         .map((record) => this.extractEvolutionContactJid(record))
@@ -2204,6 +2222,10 @@ export class WhatsAppService implements OnModuleInit {
         .map((record) => this.extractEvolutionContactJid(record))
         .filter((value): value is string => Boolean(value)),
     );
+
+    if (isGroupParticipantLookup && !exactLookupMatches.length && !preferredExactMatches.length) {
+      return null;
+    }
 
     if (uniqueExactRealJids.size === 1 && exactRealJidMatches.length >= 1) {
       return exactRealJidMatches[0] ?? null;
@@ -2229,6 +2251,29 @@ export class WhatsAppService implements OnModuleInit {
       preferredCandidates[0] ||
       null
     );
+  }
+
+  private evolutionContactReferencesValue(record: JsonRecord, value: string): boolean {
+    const normalizedValue = value.trim().toLowerCase();
+    if (!normalizedValue) {
+      return false;
+    }
+
+    const candidates = [
+      this.asString(record.remoteJid),
+      this.asString(record.jid),
+      this.asString(record.wuid),
+      this.asString(record.id),
+      this.asString(record.phone),
+      this.asString(record.participant),
+      this.asString(record.participantPn),
+      this.asString(record.participantAlt),
+      this.asString(record.senderPn),
+      this.asString(record.sender),
+      this.asString(record.remoteJidAlt),
+    ].filter((candidate): candidate is string => Boolean(candidate?.trim()));
+
+    return candidates.some((candidate) => candidate.trim().toLowerCase() === normalizedValue);
   }
 
   private getEvolutionContactNames(record: JsonRecord): string[] {
@@ -2517,7 +2562,14 @@ export class WhatsAppService implements OnModuleInit {
     };
   }
 
-  private detectMessageType(message: JsonRecord, messageType?: string): 'text' | 'image' | 'audio' {
+  private hasSupportedInboundMessage(message: JsonRecord, messageType?: string): boolean {
+    return Boolean(this.detectMessageType(message, messageType));
+  }
+
+  private detectMessageType(
+    message: JsonRecord,
+    messageType?: string,
+  ): 'text' | 'image' | 'audio' | null {
     if (messageType === 'audioMessage' || this.hasNestedObject(message, 'audioMessage')) {
       return 'audio';
     }
@@ -2526,7 +2578,16 @@ export class WhatsAppService implements OnModuleInit {
       return 'image';
     }
 
-    return 'text';
+    if (
+      messageType === 'conversation' ||
+      messageType === 'extendedTextMessage' ||
+      typeof message.conversation === 'string' ||
+      this.hasNestedObject(message, 'extendedTextMessage')
+    ) {
+      return 'text';
+    }
+
+    return null;
   }
 
   private extractMessageText(message: JsonRecord): string {
@@ -3326,6 +3387,23 @@ export class WhatsAppService implements OnModuleInit {
 
   private getOptionalEnv(name: 'WEBHOOK_URL'): string | undefined {
     return this.configService.get<string>(name)?.trim() || undefined;
+  }
+
+  private async ensureWebhookInstanceExists(instanceName: string): Promise<void> {
+    const existing = await this.prisma.whatsAppInstance.findUnique({
+      where: { name: instanceName },
+    });
+
+    if (existing) {
+      return;
+    }
+
+    const synced = await this.syncInstanceFromEvolution(instanceName);
+    if (synced) {
+      return;
+    }
+
+    throw new HttpException('La instancia no existe', HttpStatus.NOT_FOUND);
   }
 
   private async getConfiguredWebhookMetadata(): Promise<{

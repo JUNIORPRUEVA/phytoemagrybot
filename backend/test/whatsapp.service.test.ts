@@ -129,6 +129,21 @@ test('looksLikeMessageWebhook only accepts messages.upsert payloads', () => {
     }),
     false,
   );
+
+  assert.equal(
+    service.looksLikeMessageWebhook({
+      event: 'messages.upsert',
+      data: {
+        message: {
+          reactionMessage: {
+            text: '❤️',
+          },
+        },
+        messageType: 'reactionMessage',
+      },
+    }),
+    false,
+  );
 });
 
 test('normalizeWebhookPayload extracts contactId and text from messages.upsert', () => {
@@ -198,6 +213,32 @@ test('normalizeWebhookPayload ignores outbound and unsupported events', () => {
         key: { remoteJid: '18095551234@s.whatsapp.net', fromMe: true },
         message: { conversation: 'hola' },
       },
+    }),
+    null,
+  );
+
+  assert.equal(
+    service.normalizeWebhookPayload({
+      event: 'messages.upsert',
+      data: {
+        key: {
+          remoteJid: '120363382457717265@g.us',
+          participant: '199028952297530@lid',
+          fromMe: false,
+          id: 'reaction-123',
+        },
+        message: {
+          reactionMessage: {
+            key: {
+              remoteJid: '120363382457717265@g.us',
+              participant: '265794101493954@lid',
+            },
+            text: '❤️',
+          },
+        },
+        messageType: 'reactionMessage',
+      },
+      sender: '18295344286@s.whatsapp.net',
     }),
     null,
   );
@@ -325,11 +366,16 @@ test('executeEvolutionRequest requires a configured instance name', async () => 
   );
 });
 
-test('setWebhook requests rich Evolution payload options and broad events', async () => {
+test('setWebhook posts the n8n webhook for messages.upsert and validates the instance', async () => {
   const service = createService();
   const calls: Array<{ path: string; body: Record<string, unknown> }> = [];
 
-  service.resolveConfig = async () => createResolvedConfig();
+  service.prisma = {
+    whatsAppInstance: {
+      findUnique: async ({ where }: { where: { name: string } }) =>
+        where.name === 'demo' ? { name: 'demo' } : null,
+    },
+  };
   service.getEvolutionClient = () => ({
     post: async (path: string, body: Record<string, unknown>) => {
       calls.push({ path, body });
@@ -338,48 +384,112 @@ test('setWebhook requests rich Evolution payload options and broad events', asyn
   });
   service.getEvolutionWebhookMetadata = async () => ({
     enabled: true,
-    url: 'https://example.com/webhook',
-    events: ['MESSAGES_UPSERT', 'CONTACTS_UPSERT'],
+    url: 'https://n8n-n8n.gcdndd.easypanel.host/webhook/7e488a8b-fc78-4702-bbf4-8159f7ca094e',
+    events: ['MESSAGES_UPSERT'],
   });
 
-  const result = await service.setWebhook('demo', 'https://example.com/webhook');
+  const result = await service.setWebhook('demo');
 
   assert.equal(calls.length, 1);
   assert.equal(calls[0]?.path, '/webhook/set/demo');
   assert.deepEqual(calls[0]?.body, {
-    webhook: {
-      enabled: true,
-      url: 'https://example.com/webhook',
-      headers: {
-        'x-webhook-secret': 'secret',
-      },
-      events: [
-        'MESSAGES_UPSERT',
-        'MESSAGES_SET',
-        'MESSAGES_UPDATE',
-        'MESSAGES_DELETE',
-        'MESSAGES_EDITED',
-        'SEND_MESSAGE',
-        'CONTACTS_SET',
-        'CONTACTS_UPSERT',
-        'CONTACTS_UPDATE',
-        'CHATS_SET',
-        'CHATS_UPSERT',
-        'CHATS_UPDATE',
-        'CHATS_DELETE',
-        'PRESENCE_UPDATE',
-        'CONNECTION_UPDATE',
-        'GROUPS_UPSERT',
-        'GROUP_UPDATE',
-        'GROUP_PARTICIPANTS_UPDATE',
-        'CALL',
-      ],
-      byEvents: false,
-      base64: true,
-    },
+    url: 'https://n8n-n8n.gcdndd.easypanel.host/webhook/7e488a8b-fc78-4702-bbf4-8159f7ca094e',
+    events: ['messages.upsert'],
   });
   assert.equal(result.instanceName, 'demo');
-  assert.equal(result.webhook, 'https://example.com/webhook');
+  assert.equal(
+    result.webhook,
+    'https://n8n-n8n.gcdndd.easypanel.host/webhook/7e488a8b-fc78-4702-bbf4-8159f7ca094e',
+  );
+});
+
+test('createInstance configures the webhook after creating the instance', async () => {
+  const service = createService();
+  const webhookCalls: string[] = [];
+
+  service.prisma = {
+    whatsAppInstance: {
+      findUnique: async () => null,
+      findFirst: async ({ where }: { where: { status: string } }) =>
+        where.status === 'connected' ? null : null,
+      upsert: async ({ create }: { create: Record<string, unknown> }) => ({
+        id: 1,
+        name: create.name,
+        status: create.status,
+        phone: create.phone,
+      }),
+    },
+  };
+  service.syncInstancesFromEvolution = async () => undefined;
+  service.getEvolutionClient = () => ({
+    post: async () => ({ data: { instance: { instanceName: 'demo-new' } } }),
+  });
+  service.setWebhook = async (name: string) => {
+    webhookCalls.push(name);
+    return {
+      instanceName: name,
+      webhook: 'https://n8n-n8n.gcdndd.easypanel.host/webhook/7e488a8b-fc78-4702-bbf4-8159f7ca094e',
+      events: ['MESSAGES_UPSERT'],
+      message: 'ok',
+    };
+  };
+  service.waitForManagedStatus = async (name: string) => ({
+    id: 1,
+    name,
+    displayName: null,
+    status: 'connecting',
+    phone: null,
+    connected: false,
+    webhookReady: false,
+    webhookTarget: null,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  });
+
+  await service.createInstance('demo-new', {
+    phone: '8090000000',
+  });
+
+  assert.deepEqual(webhookCalls, ['demo-new']);
+});
+
+test('connectInstance configures the webhook after requesting the QR', async () => {
+  const service = createService();
+  const webhookCalls: string[] = [];
+
+  service.getInstanceStatus = async (name: string) => ({
+    id: 1,
+    name,
+    displayName: null,
+    status: 'disconnected',
+    phone: null,
+    connected: false,
+    webhookReady: false,
+    webhookTarget: null,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  });
+  service.getEvolutionClient = () => ({
+    get: async () => ({
+      data: {
+        base64: 'qr-demo',
+      },
+    }),
+  });
+  service.setWebhook = async (name: string) => {
+    webhookCalls.push(name);
+    return {
+      instanceName: name,
+      webhook: 'https://n8n-n8n.gcdndd.easypanel.host/webhook/7e488a8b-fc78-4702-bbf4-8159f7ca094e',
+      events: ['MESSAGES_UPSERT'],
+      message: 'ok',
+    };
+  };
+
+  const result = await service.connectInstance('demo');
+
+  assert.equal(result.instanceName, 'demo');
+  assert.deepEqual(webhookCalls, ['demo']);
 });
 
 test('onModuleInit reapplies the configured webhook when instance and url are present', async () => {
@@ -1030,6 +1140,123 @@ test('enrichWebhookPayloadFromEvolution resolves group participant lid through c
   assert.equal(normalized?.outboundAddress, '18095551234@s.whatsapp.net');
 });
 
+test('enrichWebhookPayloadFromEvolution refuses ambiguous group participant matches without the queried lid', async () => {
+  const service = createService();
+
+  service.configService = {
+    get: () => undefined,
+  };
+
+  service.getEvolutionClient = () => ({
+    post: async (path: string, body: Record<string, unknown>) => {
+      if (path === '/chat/findMessages/demo') {
+        return {
+          data: {
+            messages: {
+              total: 1,
+              pages: 1,
+              currentPage: 1,
+              records: [
+                {
+                  key: {
+                    remoteJid: '120363382457717265@g.us',
+                    participant: '199028952297530@lid',
+                    fromMe: false,
+                    id: 'group-participant-lid-ambiguous-1',
+                  },
+                  pushName: 'Keyla Blanco',
+                  message: {
+                    audioMessage: {
+                      mimetype: 'audio/ogg; codecs=opus',
+                      directPath: '/voice/path',
+                      mediaKey: 'media-key',
+                      seconds: 27,
+                      ptt: true,
+                    },
+                  },
+                  messageType: 'audioMessage',
+                },
+              ],
+            },
+          },
+        };
+      }
+
+      if (path === '/chat/findContacts/demo') {
+        const where = body.where as Record<string, unknown> | undefined;
+
+        if (where?.pushName) {
+          return {
+            data: {
+              contacts: {
+                total: 0,
+                pages: 0,
+                currentPage: 1,
+                records: [],
+              },
+            },
+          };
+        }
+
+        return {
+          data: {
+            contacts: {
+              total: 1,
+              pages: 1,
+              currentPage: 1,
+              records: [
+                {
+                  remoteJid: '18293526303@s.whatsapp.net',
+                  pushName: 'Otra Persona',
+                },
+              ],
+            },
+          },
+        };
+      }
+
+      throw new Error(`Unexpected path ${path}`);
+    },
+  });
+
+  const result = await service.enrichWebhookPayloadFromEvolution(
+    {
+      event: 'messages.upsert',
+      data: {
+        key: {
+          remoteJid: '120363382457717265@g.us',
+          participant: '199028952297530@lid',
+          fromMe: false,
+          id: 'group-participant-lid-ambiguous-1',
+        },
+        pushName: 'Keyla Blanco',
+        message: {
+          audioMessage: {
+            mimetype: 'audio/ogg; codecs=opus',
+            directPath: '/voice/path',
+            mediaKey: 'media-key',
+            seconds: 27,
+            ptt: true,
+          },
+        },
+        messageType: 'audioMessage',
+      },
+      sender: '18295344286@s.whatsapp.net',
+    },
+    'demo',
+  );
+
+  const enrichedData = service.getWebhookMessageData(result);
+  const enrichedKey = enrichedData.key;
+  const normalized = service.normalizeWebhookPayload(result, '18295344286@s.whatsapp.net');
+
+  assert.equal(enrichedKey.remoteJidAlt, undefined);
+  assert.equal(enrichedKey.participantAlt, undefined);
+  assert.equal(enrichedKey.participantPn, undefined);
+  assert.equal(enrichedKey.senderPn, undefined);
+  assert.equal(normalized, null);
+});
+
 test('enrichWebhookPayloadFromEvolution prefers the only real jid when contact lookup returns duplicate exact-name matches', async () => {
   const service = createService();
 
@@ -1387,6 +1614,7 @@ test('createInstance syncs Evolution state before validating local connected ins
   const service = createService();
   const calls: Array<{ path: string; body: Record<string, unknown> }> = [];
   const upsertCalls: Array<{ where: { name: string }; update: Record<string, unknown>; create: Record<string, unknown> }> = [];
+  const webhookCalls: string[] = [];
 
   service.prisma = {
     whatsAppInstance: {
@@ -1422,6 +1650,15 @@ test('createInstance syncs Evolution state before validating local connected ins
       return { data: { instance: { instanceName: 'demo-new' } } };
     },
   });
+  service.setWebhook = async (name: string) => {
+    webhookCalls.push(name);
+    return {
+      instanceName: name,
+      webhook: 'https://n8n-n8n.gcdndd.easypanel.host/webhook/7e488a8b-fc78-4702-bbf4-8159f7ca094e',
+      events: ['messages.upsert'],
+      message: 'ok',
+    };
+  };
   service.waitForManagedStatus = async (name: string) => ({
     id: 1,
     name,
@@ -1453,6 +1690,7 @@ test('createInstance syncs Evolution state before validating local connected ins
       },
     },
   ]);
+  assert.deepEqual(webhookCalls, ['demo-new']);
   assert.equal(result.name, 'demo-new');
 });
 
@@ -1694,6 +1932,99 @@ test('acceptWebhook returns a trace id for inbound message processing', async ()
 
   assert.equal(result.accepted, true);
   assert.match(result.traceId ?? '', /^[0-9a-f-]{36}$/i);
+});
+
+test('acceptWebhook ignores group reaction payloads without triggering bot replies', async () => {
+  let botCalls = 0;
+  const sentTexts: Array<{ to: string; text: string }> = [];
+  const sentAudios: Array<{ to: string; options?: Record<string, unknown> }> = [];
+
+  const service = new WhatsAppService(
+    {
+      processIncomingMessage: async () => {
+        botCalls += 1;
+        return {
+          reply: 'respuesta inesperada',
+          replyType: 'text',
+          mediaFiles: [],
+          intent: 'otro',
+          hotLead: false,
+          cached: false,
+          usedGallery: false,
+          usedMemory: false,
+          source: 'ai',
+        };
+      },
+    } as any,
+    {} as any,
+    {} as any,
+    {} as any,
+    {
+      get: async () => null,
+      set: async () => undefined,
+      setIfAbsent: async () => true,
+      appendGroupedMessage: async () => false,
+      consumeGroupedMessage: async () => null,
+    } as any,
+    {
+      transcribeAudio: async () => 'irrelevante',
+      generateVoice: async () => ({
+        buffer: Buffer.from('audio'),
+        fileName: 'reply.mp3',
+        mimetype: 'audio/mpeg',
+      }),
+    } as any,
+  ) as any;
+
+  service.sendText = async (_resolved: unknown, to: string, text: string) => {
+    sentTexts.push({ to, text });
+  };
+  service.sendAudioWithRetry = async (
+    _resolved: unknown,
+    to: string,
+    _audio: unknown,
+    options?: Record<string, unknown>,
+  ) => {
+    sentAudios.push({ to, options });
+  };
+
+  const result = await service.acceptWebhook(
+    {
+      event: 'messages.upsert',
+      instance: 'demo',
+      sender: '18295344286@s.whatsapp.net',
+      data: {
+        key: {
+          remoteJid: '120363382457717265@g.us',
+          fromMe: false,
+          id: 'reaction-group-accept-1',
+          participant: '199028952297530@lid',
+        },
+        pushName: 'Keyla Blanco',
+        status: 'DELIVERY_ACK',
+        message: {
+          reactionMessage: {
+            key: {
+              remoteJid: '120363382457717265@g.us',
+              fromMe: false,
+              id: 'reaction-origin-1',
+              participant: '265794101493954@lid',
+            },
+            text: '❤️',
+            senderTimestampMs: '1776947609442',
+          },
+        },
+        messageType: 'reactionMessage',
+      },
+    },
+    {},
+  );
+
+  assert.equal(result.ignored, true);
+  assert.match(result.traceId ?? '', /^[0-9a-f-]{36}$/i);
+  assert.equal(botCalls, 0);
+  assert.deepEqual(sentTexts, []);
+  assert.deepEqual(sentAudios, []);
 });
 
 test('processMessageWebhook emits precise routing diagnostics when recipient data is missing', async () => {
