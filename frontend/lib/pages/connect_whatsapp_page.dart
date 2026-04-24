@@ -52,6 +52,7 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
   bool _isCheckingWebhook = false;
   bool _isPersistingInstanceName = false;
   bool _isEditingInstance = false;
+  bool _isDialogOpen = false;
   String? _errorMessage;
   String? _webhookMessage;
 
@@ -76,11 +77,24 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
 
   bool get _hasWebhookBaseConfig => _config.webhookUrl.trim().isNotEmpty;
 
+  bool get _shouldPauseAutoRefresh =>
+      _isDialogOpen ||
+      _isCreating ||
+      _isDeleting ||
+      _isConfiguringWebhook ||
+      _isCheckingWebhook ||
+      _isPersistingInstanceName ||
+      _isEditingInstance;
+
   @override
   void initState() {
     super.initState();
     _loadPage();
     _refreshTimer = Timer.periodic(const Duration(seconds: 5), (_) {
+      if (_shouldPauseAutoRefresh || !mounted) {
+        return;
+      }
+
       unawaited(_loadInstances(showLoader: false, preserveMessage: true));
     });
   }
@@ -271,7 +285,7 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
 
       await _persistInstanceNameIfNeeded(created.name);
       await _loadInstances(showLoader: false, preserveMessage: true);
-      widget.onConfigUpdated();
+      _notifyConfigUpdated();
       _showMessage(
         qr.message.isEmpty ? 'Instancia creada correctamente.' : qr.message,
       );
@@ -311,13 +325,27 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
     });
 
     try {
-      final preparedConfig = await _ensureChannelConfig(instanceName);
+      final preparedConfig = await _ensureChannelBaseConfig(
+        instanceName,
+        requireWebhookUrl: false,
+      );
       if (preparedConfig == null) {
         return;
       }
+      final webhookUrl = await _promptWebhookUrl(
+        initialValue: preparedConfig.webhookUrl,
+      );
+      if (webhookUrl == null) {
+        return;
+      }
+      final updatedConfig = await _saveWebhookUrl(
+        instanceName,
+        webhookUrl,
+        preparedConfig,
+      );
       final response = await widget.apiService.setWebhook(
         instanceName,
-        webhookUrl: preparedConfig.webhookUrl,
+        webhookUrl: updatedConfig.webhookUrl,
       );
 
       if (!mounted) {
@@ -417,29 +445,30 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
   }
 
   Future<ClientConfigData?> _ensureChannelConfig(String instanceName) async {
+    return _ensureChannelBaseConfig(instanceName, requireWebhookUrl: true);
+  }
+
+  Future<ClientConfigData?> _ensureChannelBaseConfig(
+    String instanceName, {
+    required bool requireWebhookUrl,
+  }) async {
     final needsPrompt =
-        !_hasEvolutionConfig || _config.webhookUrl.trim().isEmpty;
+        !_hasEvolutionConfig ||
+        (requireWebhookUrl && _config.webhookUrl.trim().isEmpty);
 
     if (!needsPrompt) {
       return _persistInstanceNameIfNeeded(instanceName);
     }
 
-    final evolutionUrlController = TextEditingController(
-      text: _config.evolutionApiUrl,
-    );
-    final evolutionApiKeyController = TextEditingController(
-      text: _config.evolutionApiKey,
-    );
-    final webhookSecretController = TextEditingController(
-      text: _config.webhookSecret,
-    );
-    final webhookUrlController = TextEditingController(
-      text: _config.webhookUrl,
-    );
+    var evolutionApiUrl = _config.evolutionApiUrl;
+    var evolutionApiKey = _config.evolutionApiKey;
+    var webhookSecret = _config.webhookSecret;
+    var webhookUrl = _config.webhookUrl;
 
     final values = await showDialog<_ChannelConfigValues>(
       context: context,
       builder: (BuildContext context) {
+        _isDialogOpen = true;
         return AlertDialog(
           title: const Text('Completar canal y webhook'),
           content: SizedBox(
@@ -454,30 +483,42 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
                     style: TextStyle(color: Color(0xFF475569), height: 1.4),
                   ),
                   const SizedBox(height: 16),
-                  AppTextField(
-                    label: 'Evolution API URL',
-                    controller: evolutionUrlController,
-                    hintText: 'https://evolution.midominio.com',
+                  TextFormField(
+                    initialValue: evolutionApiUrl,
+                    onChanged: (value) => evolutionApiUrl = value,
+                    decoration: const InputDecoration(
+                      labelText: 'Evolution API URL',
+                      hintText: 'https://evolution.midominio.com',
+                    ),
                   ),
                   const SizedBox(height: 14),
-                  AppTextField(
-                    label: 'Evolution API key',
-                    controller: evolutionApiKeyController,
-                    hintText: 'apikey-super-segura',
+                  TextFormField(
+                    initialValue: evolutionApiKey,
+                    onChanged: (value) => evolutionApiKey = value,
                     obscureText: true,
+                    decoration: const InputDecoration(
+                      labelText: 'Evolution API key',
+                      hintText: 'apikey-super-segura',
+                    ),
                   ),
                   const SizedBox(height: 14),
-                  AppTextField(
-                    label: 'Webhook secret',
-                    controller: webhookSecretController,
-                    hintText: 'secreto-del-webhook',
+                  TextFormField(
+                    initialValue: webhookSecret,
+                    onChanged: (value) => webhookSecret = value,
                     obscureText: true,
+                    decoration: const InputDecoration(
+                      labelText: 'Webhook secret',
+                      hintText: 'secreto-del-webhook',
+                    ),
                   ),
                   const SizedBox(height: 14),
-                  AppTextField(
-                    label: 'Webhook URL',
-                    controller: webhookUrlController,
-                    hintText: 'https://tu-backend.com/webhook/whatsapp',
+                  TextFormField(
+                    initialValue: webhookUrl,
+                    onChanged: (value) => webhookUrl = value,
+                    decoration: const InputDecoration(
+                      labelText: 'Webhook URL',
+                      hintText: 'https://tu-backend.com/webhook/whatsapp',
+                    ),
                   ),
                 ],
               ),
@@ -485,17 +526,21 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
           ),
           actions: <Widget>[
             TextButton(
-              onPressed: () => Navigator.of(context).pop(),
+              onPressed: () {
+                FocusScope.of(context).unfocus();
+                Navigator.of(context).pop();
+              },
               child: const Text('Cancelar'),
             ),
             FilledButton(
               onPressed: () {
+                FocusScope.of(context).unfocus();
                 Navigator.of(context).pop(
                   _ChannelConfigValues(
-                    evolutionApiUrl: evolutionUrlController.text.trim(),
-                    evolutionApiKey: evolutionApiKeyController.text.trim(),
-                    webhookSecret: webhookSecretController.text.trim(),
-                    webhookUrl: webhookUrlController.text.trim(),
+                    evolutionApiUrl: evolutionApiUrl.trim(),
+                    evolutionApiKey: evolutionApiKey.trim(),
+                    webhookSecret: webhookSecret.trim(),
+                    webhookUrl: webhookUrl.trim(),
                   ),
                 );
               },
@@ -506,20 +551,21 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
       },
     );
 
-    evolutionUrlController.dispose();
-    evolutionApiKeyController.dispose();
-    webhookSecretController.dispose();
-    webhookUrlController.dispose();
+    _isDialogOpen = false;
 
     if (values == null) {
       return null;
     }
 
-    if (values.evolutionApiUrl.isEmpty ||
-        values.evolutionApiKey.isEmpty ||
-        values.webhookUrl.isEmpty) {
+    if (values.evolutionApiUrl.isEmpty || values.evolutionApiKey.isEmpty) {
       throw ApiException(
-        'La URL de Evolution, el API key y la URL del webhook son obligatorios.',
+        'La URL de Evolution y el API key son obligatorios.',
+      );
+    }
+
+    if (requireWebhookUrl && values.webhookUrl.isEmpty) {
+      throw ApiException(
+        'La URL del webhook es obligatoria.',
       );
     }
 
@@ -538,9 +584,109 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
     setState(() {
       _applyConfig(updatedConfig);
     });
-    widget.onConfigUpdated();
+    _notifyConfigUpdated();
 
     return updatedConfig;
+  }
+
+  Future<String?> _promptWebhookUrl({required String initialValue}) async {
+    var webhookUrl = initialValue;
+
+    _isDialogOpen = true;
+    final result = await showDialog<String>(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('Configurar URL del webhook'),
+          content: SizedBox(
+            width: 520,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                const Text(
+                  'Escribe la URL del webhook que Evolution debe usar, por ejemplo la de tu flujo de n8n.',
+                  style: TextStyle(color: Color(0xFF475569), height: 1.4),
+                ),
+                const SizedBox(height: 16),
+                TextFormField(
+                  initialValue: webhookUrl,
+                  onChanged: (value) => webhookUrl = value,
+                  decoration: const InputDecoration(
+                    labelText: 'Webhook URL',
+                    hintText: 'https://tu-n8n.com/webhook/...',
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () {
+                FocusScope.of(context).unfocus();
+                Navigator.of(context).pop();
+              },
+              child: const Text('Cancelar'),
+            ),
+            FilledButton(
+              onPressed: () {
+                FocusScope.of(context).unfocus();
+                Navigator.of(context).pop(
+                  webhookUrl.trim(),
+                );
+              },
+              child: const Text('Guardar y configurar'),
+            ),
+          ],
+        );
+      },
+    );
+    _isDialogOpen = false;
+
+    if (result == null) {
+      return null;
+    }
+
+    if (result.isEmpty) {
+      throw ApiException('La URL del webhook es obligatoria.');
+    }
+
+    return result;
+  }
+
+  Future<ClientConfigData> _saveWebhookUrl(
+    String instanceName,
+    String webhookUrl,
+    ClientConfigData sourceConfig,
+  ) async {
+    final updatedConfig = await widget.apiService.saveChannelSettings(
+      evolutionApiUrl: sourceConfig.evolutionApiUrl,
+      evolutionApiKey: sourceConfig.evolutionApiKey,
+      instanceName: instanceName,
+      webhookSecret: sourceConfig.webhookSecret,
+      webhookUrl: webhookUrl,
+    );
+
+    if (!mounted) {
+      return updatedConfig;
+    }
+
+    setState(() {
+      _applyConfig(updatedConfig);
+    });
+    _notifyConfigUpdated();
+
+    return updatedConfig;
+  }
+
+  void _notifyConfigUpdated() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+
+      widget.onConfigUpdated();
+    });
   }
 
   Future<ClientConfigData> _persistInstanceNameIfNeeded(
@@ -579,7 +725,7 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
       setState(() {
         _applyConfig(updatedConfig);
       });
-      widget.onConfigUpdated();
+      _notifyConfigUpdated();
       return updatedConfig;
     } finally {
       _isPersistingInstanceName = false;
@@ -725,7 +871,7 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
       }
 
       await _loadInstances(showLoader: false, preserveMessage: true);
-      widget.onConfigUpdated();
+      _notifyConfigUpdated();
       _showMessage(
         response.message.isEmpty
             ? 'Instancia eliminada correctamente.'

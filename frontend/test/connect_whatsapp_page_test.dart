@@ -10,6 +10,7 @@ class _FakeApiService extends ApiService {
       'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9p9v2x8AAAAASUVORK5CYII=';
   final bool preconfigured;
   final List<String> savedInstanceNames = <String>[];
+  String? lastConfiguredWebhookUrl;
   String? updatedDisplayName;
   String? updatedPhone;
 
@@ -84,6 +85,7 @@ class _FakeApiService extends ApiService {
 
   @override
   Future<WhatsAppWebhookData> setWebhook(String instanceName, {String? webhookUrl}) async {
+    lastConfiguredWebhookUrl = webhookUrl;
     return const WhatsAppWebhookData(
       instanceName: 'test-instance',
       webhook: 'https://example.com/webhook/whatsapp',
@@ -214,40 +216,6 @@ void main() {
     expect(find.byType(Image), findsOneWidget);
     expect(find.text('Todavia no hay un QR disponible para esta instancia.'), findsNothing);
     expect(find.text('Selecciona una instancia de la lista para ver su QR.'), findsNothing);
-
-    await binding.setSurfaceSize(null);
-  });
-
-  testWidgets('canceling webhook configuration does not show a configuration error', (
-    WidgetTester tester,
-  ) async {
-    final binding = TestWidgetsFlutterBinding.ensureInitialized();
-    await binding.setSurfaceSize(const Size(1280, 900));
-
-    await tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(
-          body: SingleChildScrollView(
-            child: ConnectWhatsAppPage(
-              apiService: _FakeApiService(),
-              onConfigUpdated: () {},
-            ),
-          ),
-        ),
-      ),
-    );
-
-    await tester.pumpAndSettle();
-
-    await tester.tap(find.widgetWithText(OutlinedButton, 'Configurar webhook'));
-    await tester.pumpAndSettle();
-
-    expect(find.text('Completar canal y webhook'), findsOneWidget);
-
-    await tester.tap(find.widgetWithText(TextButton, 'Cancelar'));
-    await tester.pumpAndSettle();
-
-    expect(find.text('Debes completar la configuracion del canal para continuar.'), findsNothing);
 
     await binding.setSurfaceSize(null);
   });

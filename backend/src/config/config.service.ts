@@ -298,12 +298,12 @@ export class ClientConfigService {
         allowAudioReplies: this.asBoolean(envBotEnableAudio, true),
       },
       whatsapp: {
-        apiBaseUrl: envEvolutionUrl || whatsapp['apiBaseUrl'],
-        apiKey: envEvolutionKey || whatsapp['apiKey'],
-        instanceName: envEvolutionInstanceName || whatsapp['instanceName'],
+        apiBaseUrl: this.asString(whatsapp['apiBaseUrl']) || envEvolutionUrl,
+        apiKey: this.asString(whatsapp['apiKey']) || envEvolutionKey,
+        instanceName: this.asString(whatsapp['instanceName']) || envEvolutionInstanceName,
         audioVoiceId: whatsapp['audioVoiceId'] || envElevenLabsVoiceId,
-        webhookUrl: envWebhookUrl || whatsapp['webhookUrl'],
-        webhookSecret: envWebhookSecret || whatsapp['webhookSecret'],
+        webhookUrl: this.asString(whatsapp['webhookUrl']) || envWebhookUrl,
+        webhookSecret: this.asString(whatsapp['webhookSecret']) || envWebhookSecret,
       },
       elevenlabs: {
         baseUrl: elevenlabs['baseUrl'] || envElevenLabsBaseUrl,
@@ -318,14 +318,14 @@ export class ClientConfigService {
       whatsappSettings: config.whatsappSettings
         ? {
             ...config.whatsappSettings,
-            apiBaseUrl: envEvolutionUrl || config.whatsappSettings.apiBaseUrl,
-            apiKey: envEvolutionKey || config.whatsappSettings.apiKey,
+            apiBaseUrl: config.whatsappSettings.apiBaseUrl || envEvolutionUrl,
+            apiKey: config.whatsappSettings.apiKey || envEvolutionKey,
             instanceName:
-              envEvolutionInstanceName || config.whatsappSettings.instanceName,
+              config.whatsappSettings.instanceName || envEvolutionInstanceName,
             audioVoiceId: config.whatsappSettings.audioVoiceId || envElevenLabsVoiceId,
             elevenLabsBaseUrl:
               config.whatsappSettings.elevenLabsBaseUrl || envElevenLabsBaseUrl,
-            webhookSecret: envWebhookSecret || config.whatsappSettings.webhookSecret,
+            webhookSecret: config.whatsappSettings.webhookSecret || envWebhookSecret,
           }
         : config.whatsappSettings,
       botSettings: config.botSettings
