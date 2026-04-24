@@ -1,9 +1,33 @@
 {
-  "name": "WhatsApp Bot Dashboard",
-  "short_name": "BotPanel",
-  "start_url": ".",
-  "display": "standalone",
-  "background_color": "#F8FAFC",
-  "theme_color": "#0F172A",
-  "description": "Panel SaaS para configurar bots de WhatsApp"
+    "name": "PhytoEmagry",
+    "short_name": "PhytoEmagry",
+    "start_url": ".",
+    "display": "standalone",
+    "background_color": "#ffffff",
+    "theme_color": "#0F172A",
+    "description": "Panel SaaS para configurar bots de WhatsApp",
+    "icons": [
+        {
+            "src": "icons/Icon-192.png",
+            "sizes": "192x192",
+            "type": "image/png"
+        },
+        {
+            "src": "icons/Icon-512.png",
+            "sizes": "512x512",
+            "type": "image/png"
+        },
+        {
+            "src": "icons/Icon-maskable-192.png",
+            "sizes": "192x192",
+            "type": "image/png",
+            "purpose": "maskable"
+        },
+        {
+            "src": "icons/Icon-maskable-512.png",
+            "sizes": "512x512",
+            "type": "image/png",
+            "purpose": "maskable"
+        }
+    ]
 }

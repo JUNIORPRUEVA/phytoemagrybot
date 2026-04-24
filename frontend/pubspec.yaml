@@ -20,6 +20,21 @@ dependencies:
 dev_dependencies:
   flutter_test:
     sdk: flutter
+  flutter_launcher_icons: ^0.13.1
+
+flutter_launcher_icons:
+  android: true
+  ios: true
+  web:
+    generate: true
+    image_path: assets/images/logoprincioak.png
+    background_color: "#ffffff"
+    theme_color: "#0F172A"
+  image_path: "assets/images/logoprincioak.png"
+  adaptive_icon_background: "#ffffff"
+  adaptive_icon_foreground: "assets/images/logoprincioak.png"
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/images/logoprincioak.png
