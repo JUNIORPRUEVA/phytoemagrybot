@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { AiService } from '../ai/ai.service';
 import {
@@ -9,8 +10,16 @@ import { BotConfigService } from '../bot-config/bot-config.service';
 import { CompanyContextService } from '../company-context/company-context.service';
 import { ClientConfigService } from '../config/config.service';
 import { MediaService } from '../media/media.service';
+import { StoredMessage } from '../memory/memory.types';
 import { MemoryService } from '../memory/memory.service';
+import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
+import {
+  BotDecisionAction,
+  BotDecisionIntent,
+  BotDecisionState,
+  ContactStage,
+} from './bot-decision.types';
 import {
   BotIntent,
   BotReplyResult,
@@ -30,6 +39,7 @@ export class BotService {
     private readonly mediaService: MediaService,
     private readonly memoryService: MemoryService,
     private readonly redisService: RedisService,
+    private readonly prisma: PrismaService,
   ) {}
 
   async processIncomingMessage(contactId: string, message: string): Promise<BotReplyResult> {
@@ -77,16 +87,23 @@ export class BotService {
       memoryContext.messages,
       normalizedMessage,
     );
-    const intent = this.detectIntent(normalizedMessage);
+    const decision = await this.runDecisionEngine({
+      contactId: normalizedContactId,
+      message: normalizedMessage,
+      history,
+      memoryContext,
+      config,
+    });
+    const intent = this.mapDecisionIntentToBotIntent(decision.intent, normalizedMessage);
     const hotLead = this.shouldTreatAsHotLead(
       normalizedMessage,
       intent,
       memoryContext.clientMemory.lastIntent,
-    );
+    ) || decision.stage === 'listo';
     const preferredReplyType = this.resolvePreferredReplyType(normalizedMessage);
-    const responseStyle = this.resolveResponseStyle(normalizedMessage, intent);
-    const leadStage = this.resolveLeadStage(normalizedMessage, intent, hotLead);
-    const replyObjective = this.resolveReplyObjective(normalizedMessage, intent, hotLead);
+    const responseStyle = this.resolveResponseStyleFromDecision(decision, normalizedMessage, intent);
+    const leadStage = this.mapDecisionStageToLeadStage(decision.stage, hotLead);
+    const replyObjective = this.mapDecisionActionToReplyObjective(decision.action);
     const usedMemory = this.hasUsefulMemory(memoryContext, history.length);
     const cacheKey = this.getReplyCacheKey(normalizedContactId, normalizedMessage);
     const cachedReply = await this.redisService.get<BotReplyResult>(cacheKey);
@@ -95,6 +112,12 @@ export class BotService {
     if (cachedReply) {
       const result: BotReplyResult = {
         ...cachedReply,
+        intent,
+        decisionIntent: decision.intent,
+        stage: decision.stage,
+        action: decision.action,
+        purchaseIntentScore: decision.purchaseIntentScore,
+        hotLead,
         cached: true,
         source: 'cache',
       };
@@ -117,6 +140,7 @@ export class BotService {
       mediaFiles: galleryMediaFiles,
       preferredReplyType,
       responseStyle,
+      decision,
       usedMemory,
     });
 
@@ -133,7 +157,9 @@ export class BotService {
       return fastLaneReply;
     }
 
-    const companyContext = await this.companyContextService.buildAgentContext();
+    const companyContext = await this.companyContextService.buildAgentContextForMessage(
+      normalizedMessage,
+    );
 
     const reply = await this.aiService.generateReply({
       config,
@@ -143,6 +169,9 @@ export class BotService {
       message: normalizedMessage,
       history,
       context: this.buildConversationContext(memoryContext),
+      classifiedIntent: decision.intent,
+      decisionAction: decision.action,
+      purchaseIntentScore: decision.purchaseIntentScore,
       responseStyle,
       leadStage,
       replyObjective,
@@ -163,6 +192,10 @@ export class BotService {
       replyType: preferredReplyType === 'audio' ? 'audio' : reply.type,
       mediaFiles,
       intent,
+      decisionIntent: decision.intent,
+      stage: decision.stage,
+      action: decision.action,
+      purchaseIntentScore: decision.purchaseIntentScore,
       hotLead,
       cached: false,
       usedGallery: mediaFiles.length > 0,
@@ -170,6 +203,7 @@ export class BotService {
       source: 'ai',
     };
 
+    await this.markBotResponseInDecisionState(normalizedContactId, reply.content, decision);
     await this.redisService.set(cacheKey, result, cacheTtlSeconds);
     console.log('RESPUESTA:', result.reply);
     this.logReply(normalizedContactId, result);
@@ -356,7 +390,7 @@ export class BotService {
       memoryContext.clientMemory.interest
         ? `Interes detectado: ${memoryContext.clientMemory.interest}`
         : null,
-      memoryContext.clientMemory.status
+      memoryContext.clientMemory.status && memoryContext.clientMemory.status !== 'nuevo'
         ? `Estado del cliente: ${memoryContext.clientMemory.status}`
         : null,
       (memoryContext.clientMemory.objections?.length ?? 0) > 0
@@ -366,6 +400,10 @@ export class BotService {
 
     if (memoryLines.length > 0) {
       sections.push(`Memoria persistente:\n${memoryLines.join('\n')}`);
+    }
+
+    if (sections.length === 0) {
+      return '';
     }
 
     sections.push(
@@ -390,6 +428,7 @@ export class BotService {
     mediaFiles: Awaited<ReturnType<BotService['getMediaByKeyword']>>;
     preferredReplyType: BotReplyResult['replyType'];
     responseStyle: AssistantResponseStyle;
+    decision: BotDecisionState;
     usedMemory: boolean;
   }): BotReplyResult | null {
     if (
@@ -408,6 +447,7 @@ export class BotService {
         galleryReply,
         'galeria',
         params.intent,
+        params.decision,
         false,
         params.mediaFiles,
         params.preferredReplyType,
@@ -422,6 +462,7 @@ export class BotService {
     reply: string,
     source: BotReplyResult['source'],
     intent: BotIntent,
+    decision: BotDecisionState,
     hotLead: boolean,
     mediaFiles: Awaited<ReturnType<BotService['getMediaByKeyword']>>,
     replyType: BotReplyResult['replyType'],
@@ -432,6 +473,10 @@ export class BotService {
       replyType,
       mediaFiles,
       intent,
+      decisionIntent: decision.intent,
+      stage: decision.stage,
+      action: decision.action,
+      purchaseIntentScore: decision.purchaseIntentScore,
       hotLead,
       cached: false,
       usedGallery: mediaFiles.length > 0,
@@ -463,13 +508,433 @@ export class BotService {
     return 'balanced';
   }
 
+  private resolveResponseStyleFromDecision(
+    decision: BotDecisionState,
+    message: string,
+    intent: BotIntent,
+  ): AssistantResponseStyle {
+    if (decision.action === 'responder_precio_con_valor') {
+      return 'brief';
+    }
+
+    if (decision.action === 'persuadir' || decision.action === 'hacer_seguimiento') {
+      return 'balanced';
+    }
+
+    if (decision.intent === 'info') {
+      return 'detailed';
+    }
+
+    return this.resolveResponseStyle(message, intent);
+  }
+
+  private mapDecisionStageToLeadStage(
+    stage: ContactStage,
+    hotLead: boolean,
+  ): AssistantLeadStage {
+    if (stage === 'listo' || hotLead) {
+      return 'listo_para_comprar';
+    }
+
+    if (stage === 'dudoso') {
+      return 'dudoso';
+    }
+
+    if (stage === 'interesado') {
+      return 'interesado';
+    }
+
+    return 'curioso';
+  }
+
+  private mapDecisionActionToReplyObjective(
+    action: BotDecisionAction,
+  ): AssistantReplyObjective {
+    if (action === 'cerrar') {
+      return 'cerrar_venta';
+    }
+
+    if (action === 'persuadir') {
+      return 'resolver_duda';
+    }
+
+    if (action === 'hacer_seguimiento') {
+      return 'generar_confianza';
+    }
+
+    return 'avanzar_conversacion';
+  }
+
+  private mapDecisionIntentToBotIntent(
+    intent: BotDecisionIntent,
+    message: string,
+  ): BotIntent {
+    if (['catalogo', 'catálogo', 'catalog'].some((keyword) => message.toLowerCase().includes(keyword))) {
+      return 'catalogo';
+    }
+
+    if (intent === 'compra') {
+      return this.detectHotLead(message) ? 'hot' : 'compra';
+    }
+
+    if (intent === 'duda') {
+      return 'duda';
+    }
+
+    if (intent === 'precio' || intent === 'info' || intent === 'interesado') {
+      return 'interes';
+    }
+
+    return this.detectIntent(message);
+  }
+
+  private async runDecisionEngine(params: {
+    contactId: string;
+    message: string;
+    history: StoredMessage[];
+    memoryContext: Awaited<ReturnType<MemoryService['getConversationContext']>>;
+    config: Awaited<ReturnType<ClientConfigService['getConfig']>>;
+  }): Promise<BotDecisionState> {
+    const normalizedMessage = params.message.trim();
+    const currentState = await this.prisma.contactState.findUnique({
+      where: { contactId: params.contactId },
+    });
+    const intentResult = await this.classifyIntent(
+      normalizedMessage,
+      params.history,
+      params.config,
+    );
+    const purchaseIntentScore = this.calculatePurchaseIntentScore(
+      currentState?.purchaseIntentScore ?? 0,
+      normalizedMessage,
+      intentResult.intent,
+    );
+    const stage = this.updateStage(
+      normalizedMessage,
+      intentResult.intent,
+      purchaseIntentScore,
+      params.history,
+      params.memoryContext,
+      currentState?.stage ?? null,
+    );
+    const action = this.decideAction(intentResult.intent, stage);
+    const lastMessageId = this.buildSyntheticMessageId(params.contactId, normalizedMessage);
+    const summaryText = this.buildDecisionSummaryText(
+      params.memoryContext,
+      normalizedMessage,
+      intentResult.intent,
+      stage,
+    );
+    const keyFacts = this.buildDecisionKeyFacts(
+      params.memoryContext,
+      intentResult.intent,
+      stage,
+      purchaseIntentScore,
+      action,
+    );
+
+    await this.prisma.contactState.upsert({
+      where: { contactId: params.contactId },
+      create: {
+        contactId: params.contactId,
+        name: params.memoryContext.clientMemory.name,
+        currentIntent: intentResult.intent,
+        stage,
+        lastInteractionAt: new Date(),
+        purchaseIntentScore,
+        notesJson: keyFacts as Prisma.InputJsonValue,
+      },
+      update: {
+        name: params.memoryContext.clientMemory.name,
+        currentIntent: intentResult.intent,
+        stage,
+        lastInteractionAt: new Date(),
+        purchaseIntentScore,
+        notesJson: keyFacts as Prisma.InputJsonValue,
+      },
+    });
+
+    await this.prisma.contactConversationSummary.upsert({
+      where: { contactId: params.contactId },
+      create: {
+        contactId: params.contactId,
+        summaryText,
+        keyFactsJson: keyFacts as Prisma.InputJsonValue,
+        lastMessageId,
+      },
+      update: {
+        summaryText,
+        keyFactsJson: keyFacts as Prisma.InputJsonValue,
+        lastMessageId,
+      },
+    });
+
+    return {
+      intent: intentResult.intent,
+      classificationSource: intentResult.source,
+      stage,
+      action,
+      purchaseIntentScore,
+      currentIntent: intentResult.intent,
+      summaryText,
+      keyFacts,
+      lastMessageId,
+    };
+  }
+
+  private async markBotResponseInDecisionState(
+    contactId: string,
+    reply: string,
+    decision: BotDecisionState,
+  ): Promise<void> {
+    const now = new Date();
+    await this.prisma.contactState.updateMany({
+      where: { contactId },
+      data: {
+        lastBotMessageAt: now,
+        notesJson: {
+          ...(decision.keyFacts as Record<string, unknown>),
+          lastBotReply: reply,
+          lastAction: decision.action,
+        },
+      },
+    });
+  }
+
+  private async classifyIntent(
+    message: string,
+    history: StoredMessage[],
+    config: Awaited<ReturnType<ClientConfigService['getConfig']>>,
+  ): Promise<{ intent: BotDecisionIntent; source: BotDecisionState['classificationSource'] }> {
+    const normalized = message.trim().toLowerCase();
+
+    if (!normalized) {
+      return { intent: 'otro', source: 'heuristic_fallback' };
+    }
+
+    if (['precio', 'cuánto', 'cuanto', 'vale'].some((keyword) => normalized.includes(keyword))) {
+      return { intent: 'precio', source: 'rules' };
+    }
+
+    if (this.requiresDetailedResponse(message)) {
+      return { intent: 'info', source: 'rules' };
+    }
+
+    if (['cómo compro', 'como compro', 'pago', 'cuenta', 'envio', 'envío'].some((keyword) => normalized.includes(keyword))) {
+      return { intent: 'compra', source: 'rules' };
+    }
+
+    if (['funciona', 'sirve', 'es verdad'].some((keyword) => normalized.includes(keyword))) {
+      return { intent: 'duda', source: 'rules' };
+    }
+
+    if (['info', 'qué es', 'que es'].some((keyword) => normalized.includes(keyword))) {
+      return { intent: 'info', source: 'rules' };
+    }
+
+    if (['no quiero', 'no me interesa', 'ya no'].some((keyword) => normalized.includes(keyword))) {
+      return { intent: 'no_interesado', source: 'rules' };
+    }
+
+    const aiIntent = await this.aiService.classifyIntent({
+      config,
+      message,
+      history,
+    });
+
+    if (aiIntent !== 'curioso') {
+      return { intent: aiIntent, source: 'ai_fallback' };
+    }
+
+    if (this.hasComparisonSignal(message)) {
+      return { intent: 'interesado', source: 'heuristic_fallback' };
+    }
+
+    if (this.hasSkepticalSignal(message)) {
+      return { intent: 'duda', source: 'heuristic_fallback' };
+    }
+
+    if (this.detectHotLead(message)) {
+      return { intent: 'compra', source: 'heuristic_fallback' };
+    }
+
+    if (this.requiresDetailedResponse(message)) {
+      return { intent: 'info', source: 'heuristic_fallback' };
+    }
+
+    return { intent: 'curioso', source: 'heuristic_fallback' };
+  }
+
+  private updateStage(
+    message: string,
+    intent: BotDecisionIntent,
+    purchaseIntentScore: number,
+    history: StoredMessage[],
+    memoryContext: Awaited<ReturnType<MemoryService['getConversationContext']>>,
+    currentStage: string | null,
+  ): ContactStage {
+    if (currentStage === 'cliente' || memoryContext.clientMemory.status === 'cliente') {
+      return 'cliente';
+    }
+
+    if (
+      intent === 'compra' ||
+      this.detectHotLead(message) ||
+      (history.length === 0 && this.isCloseSignal(message)) ||
+      purchaseIntentScore >= 80
+    ) {
+      return 'listo';
+    }
+
+    if (intent === 'duda' || this.hasSkepticalSignal(message)) {
+      return 'dudoso';
+    }
+
+    if (this.isDryAcknowledgement(message, history) || this.isVeryShortCustomerReply(message)) {
+      return 'curioso';
+    }
+
+    if (
+      intent === 'precio' ||
+      intent === 'info' ||
+      intent === 'interesado' ||
+      this.hasComparisonSignal(message) ||
+      purchaseIntentScore >= 20
+    ) {
+      return 'interesado';
+    }
+
+    return 'curioso';
+  }
+
+  private decideAction(intent: BotDecisionIntent, stage: ContactStage): BotDecisionAction {
+    if (stage === 'cliente') {
+      return 'hacer_seguimiento';
+    }
+
+    if (stage === 'listo') {
+      return 'cerrar';
+    }
+
+    if (intent === 'precio') {
+      return 'responder_precio_con_valor';
+    }
+
+    if (intent === 'duda') {
+      return 'persuadir';
+    }
+
+    if (intent === 'no_interesado') {
+      return 'hacer_seguimiento';
+    }
+
+    return 'guiar';
+  }
+
+  private calculatePurchaseIntentScore(
+    currentScore: number,
+    message: string,
+    intent: BotDecisionIntent,
+  ): number {
+    const normalized = message.trim().toLowerCase();
+    let nextScore = currentScore;
+
+    if (intent === 'precio' || ['precio', 'cuánto', 'cuanto', 'vale'].some((keyword) => normalized.includes(keyword))) {
+      nextScore += 20;
+    }
+
+    if (intent === 'compra' || ['cómo compro', 'como compro', 'pago', 'cuenta'].some((keyword) => normalized.includes(keyword))) {
+      nextScore += 30;
+    }
+
+    if (['envio', 'envío', 'delivery'].some((keyword) => normalized.includes(keyword))) {
+      nextScore += 40;
+    }
+
+    if (/(^|\s)no($|\s)|no quiero|no me interesa/.test(normalized)) {
+      nextScore -= 20;
+    }
+
+    return Math.max(0, Math.min(100, nextScore));
+  }
+
+  private buildDecisionSummaryText(
+    memoryContext: Awaited<ReturnType<MemoryService['getConversationContext']>>,
+    message: string,
+    intent: BotDecisionIntent,
+    stage: ContactStage,
+  ): string {
+    if (memoryContext.summary.summary?.trim()) {
+      return memoryContext.summary.summary.trim();
+    }
+
+    const lines = memoryContext.messages
+      .slice(-4)
+      .map((item) => `${item.role}: ${item.content}`)
+      .join(' | ');
+
+    return [
+      `Etapa: ${stage}`,
+      `Intencion: ${intent}`,
+      `Ultimo mensaje: ${message}`,
+      lines ? `Historial reciente: ${lines}` : null,
+    ]
+      .filter((value): value is string => Boolean(value))
+      .join('\n');
+  }
+
+  private buildDecisionKeyFacts(
+    memoryContext: Awaited<ReturnType<MemoryService['getConversationContext']>>,
+    intent: BotDecisionIntent,
+    stage: ContactStage,
+    purchaseIntentScore: number,
+    action: BotDecisionAction,
+  ): Record<string, unknown> {
+    return {
+      name: memoryContext.clientMemory.name,
+      objective: memoryContext.clientMemory.objective,
+      interest: memoryContext.clientMemory.interest,
+      objections: memoryContext.clientMemory.objections,
+      lastIntent: memoryContext.clientMemory.lastIntent,
+      stage,
+      currentIntent: intent,
+      purchaseIntentScore,
+      action,
+      summary: memoryContext.summary.summary,
+    };
+  }
+
+  private buildSyntheticMessageId(contactId: string, message: string): string {
+    const compact = message.trim().toLowerCase().replace(/\s+/g, '-').slice(0, 24);
+    return `${contactId}:${Date.now()}:${compact}`;
+  }
+
+  private isVeryShortCustomerReply(message: string): boolean {
+    const words = message.trim().split(/\s+/).filter((word) => word.length > 0);
+    return words.length > 0 && words.length <= 2 && message.trim().length <= 12;
+  }
+
+  private isCloseSignal(message: string): boolean {
+    const normalized = message.trim().toLowerCase();
+    return ['ok', 'perfecto', 'dale', 'esta bien', 'está bien'].includes(normalized);
+  }
+
   private resolveLeadStage(
     message: string,
     intent: BotIntent,
     hotLead: boolean,
+    history: Array<{ role: 'user' | 'assistant'; content: string }>,
   ): AssistantLeadStage {
+    if (this.hasComparisonSignal(message)) {
+      return 'interesado';
+    }
+
     if (this.hasSkepticalSignal(message)) {
       return 'dudoso';
+    }
+
+    if (this.isDryAcknowledgement(message, history)) {
+      return 'curioso';
     }
 
     if (this.requiresDetailedResponse(message)) {
@@ -495,9 +960,18 @@ export class BotService {
     message: string,
     intent: BotIntent,
     hotLead: boolean,
+    history: Array<{ role: 'user' | 'assistant'; content: string }>,
   ): AssistantReplyObjective {
+    if (this.hasComparisonSignal(message)) {
+      return 'generar_confianza';
+    }
+
     if (this.hasSkepticalSignal(message)) {
       return 'resolver_duda';
+    }
+
+    if (this.isDryAcknowledgement(message, history)) {
+      return 'generar_confianza';
     }
 
     if (this.requiresDetailedResponse(message)) {
@@ -606,6 +1080,56 @@ export class BotService {
       'es verdad',
       'sirve de verdad',
     ].some((keyword) => normalized.includes(keyword));
+  }
+
+  private hasComparisonSignal(message: string): boolean {
+    const normalized = message.trim().toLowerCase();
+    if (!normalized) {
+      return false;
+    }
+
+    return [
+      'mejor que',
+      'más que la otra',
+      'mas que la otra',
+      'igual que la otra',
+      'como la otra',
+      'que la otra',
+      'vs',
+      'versus',
+      'compar',
+      'otra que venden',
+      'otro producto',
+      'otra pastilla',
+    ].some((keyword) => normalized.includes(keyword));
+  }
+
+  private isDryAcknowledgement(
+    message: string,
+    history: Array<{ role: 'user' | 'assistant'; content: string }>,
+  ): boolean {
+    const normalized = message.trim().toLowerCase();
+    if (!normalized || history.length === 0 || this.detectHotLead(normalized)) {
+      return false;
+    }
+
+    return [
+      'ok',
+      'oka',
+      'okey',
+      'okeys',
+      'dale',
+      'aja',
+      'ajá',
+      'mmm',
+      'mm',
+      'hmm',
+      'si',
+      'sí',
+      'ta bien',
+      'está bien',
+      'esta bien',
+    ].includes(normalized);
   }
 
   private prefersVoiceReply(message: string): boolean {

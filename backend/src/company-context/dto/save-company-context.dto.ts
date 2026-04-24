@@ -52,6 +52,10 @@ export class SaveCompanyContextDto {
   @IsOptional()
   address?: string;
 
+  @IsString()
+  @IsOptional()
+  googleMapsLink?: string;
+
   @Type(() => Number)
   @IsNumber()
   @IsOptional()

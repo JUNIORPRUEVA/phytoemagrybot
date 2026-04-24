@@ -44,6 +44,12 @@ class ClientConfigData {
     required this.responseCacheTtlSeconds,
     required this.spamGroupWindowMs,
     required this.allowAudioReplies,
+    required this.followupEnabled,
+    required this.followup1DelayMinutes,
+    required this.followup2DelayMinutes,
+    required this.followup3DelayHours,
+    required this.maxFollowups,
+    required this.stopIfUserReply,
     required this.companyName,
     required this.companyDetails,
     required this.companyLogoUrl,
@@ -77,6 +83,12 @@ class ClientConfigData {
   final int responseCacheTtlSeconds;
   final int spamGroupWindowMs;
   final bool allowAudioReplies;
+  final bool followupEnabled;
+  final int followup1DelayMinutes;
+  final int followup2DelayMinutes;
+  final int followup3DelayHours;
+  final int maxFollowups;
+  final bool stopIfUserReply;
   final String companyName;
   final String companyDetails;
   final String companyLogoUrl;
@@ -165,6 +177,12 @@ class ClientConfigData {
       responseCacheTtlSeconds: 60,
       spamGroupWindowMs: 2000,
       allowAudioReplies: true,
+      followupEnabled: false,
+      followup1DelayMinutes: 10,
+      followup2DelayMinutes: 30,
+      followup3DelayHours: 24,
+      maxFollowups: 3,
+      stopIfUserReply: true,
       companyName: '',
       companyDetails: '',
       companyLogoUrl: '',
@@ -225,6 +243,12 @@ class ClientConfigData {
       responseCacheTtlSeconds: (bot['responseCacheTtlSeconds'] as int?) ?? 60,
       spamGroupWindowMs: (bot['spamGroupWindowMs'] as int?) ?? 2000,
       allowAudioReplies: (bot['allowAudioReplies'] as bool?) ?? true,
+      followupEnabled: (bot['followupEnabled'] as bool?) ?? false,
+      followup1DelayMinutes: (bot['followup1DelayMinutes'] as int?) ?? 10,
+      followup2DelayMinutes: (bot['followup2DelayMinutes'] as int?) ?? 30,
+      followup3DelayHours: (bot['followup3DelayHours'] as int?) ?? 24,
+      maxFollowups: (bot['maxFollowups'] as int?) ?? 3,
+      stopIfUserReply: (bot['stopIfUserReply'] as bool?) ?? true,
       companyName: (branding['companyName'] as String?) ?? '',
       companyDetails: (branding['companyDetails'] as String?) ?? '',
       companyLogoUrl: (branding['companyLogoUrl'] as String?) ?? '',
@@ -261,6 +285,115 @@ class BotPromptConfigData {
       promptShort: (json['promptShort'] as String?) ?? '',
       promptHuman: (json['promptHuman'] as String?) ?? '',
       promptSales: (json['promptSales'] as String?) ?? '',
+    );
+  }
+}
+
+class CompanyBankAccountData {
+  const CompanyBankAccountData({
+    required this.bank,
+    required this.accountType,
+    required this.number,
+    required this.holder,
+    required this.image,
+  });
+
+  final String bank;
+  final String accountType;
+  final String number;
+  final String holder;
+  final String image;
+
+  factory CompanyBankAccountData.fromJson(Map<String, dynamic> json) {
+    return CompanyBankAccountData(
+      bank: (json['bank'] as String?) ?? '',
+      accountType: (json['accountType'] as String?) ?? '',
+      number: (json['number'] as String?) ?? '',
+      holder: (json['holder'] as String?) ?? '',
+      image: (json['image'] as String?) ?? '',
+    );
+  }
+}
+
+class CompanyImageData {
+  const CompanyImageData({required this.url});
+
+  final String url;
+
+  factory CompanyImageData.fromJson(Map<String, dynamic> json) {
+    return CompanyImageData(url: (json['url'] as String?) ?? '');
+  }
+}
+
+class CompanyContextData {
+  const CompanyContextData({
+    required this.id,
+    required this.companyName,
+    required this.description,
+    required this.phone,
+    required this.whatsapp,
+    required this.address,
+    required this.latitude,
+    required this.longitude,
+    required this.googleMapsLink,
+    required this.workingHoursJson,
+    required this.bankAccountsJson,
+    required this.imagesJson,
+    required this.usageRulesJson,
+  });
+
+  final int id;
+  final String companyName;
+  final String description;
+  final String phone;
+  final String whatsapp;
+  final String address;
+  final double? latitude;
+  final double? longitude;
+  final String googleMapsLink;
+  final Map<String, dynamic> workingHoursJson;
+  final List<CompanyBankAccountData> bankAccountsJson;
+  final List<CompanyImageData> imagesJson;
+  final Map<String, dynamic> usageRulesJson;
+
+  factory CompanyContextData.empty() {
+    return const CompanyContextData(
+      id: 1,
+      companyName: '',
+      description: '',
+      phone: '',
+      whatsapp: '',
+      address: '',
+      latitude: null,
+      longitude: null,
+      googleMapsLink: '',
+      workingHoursJson: <String, dynamic>{},
+      bankAccountsJson: <CompanyBankAccountData>[],
+      imagesJson: <CompanyImageData>[],
+      usageRulesJson: <String, dynamic>{},
+    );
+  }
+
+  factory CompanyContextData.fromJson(Map<String, dynamic> json) {
+    final bankAccounts = _asJsonList(json['bankAccountsJson']);
+    final images = _asJsonList(json['imagesJson']);
+
+    return CompanyContextData(
+      id: (json['id'] as num?)?.toInt() ?? 1,
+      companyName: (json['companyName'] as String?) ?? '',
+      description: (json['description'] as String?) ?? '',
+      phone: (json['phone'] as String?) ?? '',
+      whatsapp: (json['whatsapp'] as String?) ?? '',
+      address: (json['address'] as String?) ?? '',
+      latitude: (json['latitude'] as num?)?.toDouble(),
+      longitude: (json['longitude'] as num?)?.toDouble(),
+      googleMapsLink: (json['googleMapsLink'] as String?) ?? '',
+      workingHoursJson: _asJsonMap(json['workingHoursJson']),
+      bankAccountsJson: bankAccounts
+          .map(CompanyBankAccountData.fromJson)
+          .toList(),
+      imagesJson: images.map(CompanyImageData.fromJson).toList(),
+      usageRulesJson: _asJsonMap(json['usageRulesJson']),
     );
   }
 }
@@ -598,7 +731,7 @@ class ApiService {
   static const String defaultBaseUrl = String.fromEnvironment(
     'API_BASE_URL',
     defaultValue:
-      'https://ai-business-platform-phytoemagrybot-backend.onqyr1.easypanel.host',
+        'https://ai-business-platform-phytoemagrybot-backend.onqyr1.easypanel.host',
   );
 
   final String baseUrl;
@@ -644,6 +777,51 @@ class ApiService {
     return BotPromptConfigData.fromJson(_decodeResponse(response));
   }
 
+  Future<CompanyContextData> getCompanyContext() async {
+    final response = await _client.get(
+      _buildUri('/company-context'),
+      headers: _headers,
+    );
+
+    return CompanyContextData.fromJson(_decodeResponse(response));
+  }
+
+  Future<CompanyContextData> saveCompanyContext({
+    required String companyName,
+    required String description,
+    required String phone,
+    required String whatsapp,
+    required String address,
+    required String googleMapsLink,
+    required double? latitude,
+    required double? longitude,
+    required Map<String, dynamic> workingHoursJson,
+    required List<Map<String, dynamic>> bankAccountsJson,
+    required List<Map<String, dynamic>> imagesJson,
+    required Map<String, dynamic> usageRulesJson,
+  }) async {
+    final response = await _client.post(
+      _buildUri('/company-context'),
+      headers: _headers,
+      body: jsonEncode(<String, dynamic>{
+        'companyName': companyName,
+        'description': description,
+        'phone': phone,
+        'whatsapp': whatsapp,
+        'address': address,
+        'googleMapsLink': googleMapsLink,
+        'latitude': latitude,
+        'longitude': longitude,
+        'workingHoursJson': workingHoursJson,
+        'bankAccountsJson': bankAccountsJson,
+        'imagesJson': imagesJson,
+        'usageRulesJson': usageRulesJson,
+      }),
+    );
+
+    return CompanyContextData.fromJson(_decodeResponse(response));
+  }
+
   Future<ClientConfigData> saveConfig({
     String? openaiKey,
     String? elevenLabsKey,
@@ -662,6 +840,12 @@ class ApiService {
     required int responseCacheTtlSeconds,
     required int spamGroupWindowMs,
     required bool allowAudioReplies,
+    required bool followupEnabled,
+    required int followup1DelayMinutes,
+    required int followup2DelayMinutes,
+    required int followup3DelayHours,
+    required int maxFollowups,
+    required bool stopIfUserReply,
     String? companyName,
     String? companyDetails,
     String? companyLogoUrl,
@@ -688,6 +872,12 @@ class ApiService {
           'responseCacheTtlSeconds': responseCacheTtlSeconds,
           'spamGroupWindowMs': spamGroupWindowMs,
           'allowAudioReplies': allowAudioReplies,
+          'followupEnabled': followupEnabled,
+          'followup1DelayMinutes': followup1DelayMinutes,
+          'followup2DelayMinutes': followup2DelayMinutes,
+          'followup3DelayHours': followup3DelayHours,
+          'maxFollowups': maxFollowups,
+          'stopIfUserReply': stopIfUserReply,
         },
         if (companyName != null ||
             companyDetails != null ||
@@ -740,6 +930,12 @@ class ApiService {
       responseCacheTtlSeconds: current.responseCacheTtlSeconds,
       spamGroupWindowMs: current.spamGroupWindowMs,
       allowAudioReplies: current.allowAudioReplies,
+      followupEnabled: current.followupEnabled,
+      followup1DelayMinutes: current.followup1DelayMinutes,
+      followup2DelayMinutes: current.followup2DelayMinutes,
+      followup3DelayHours: current.followup3DelayHours,
+      maxFollowups: current.maxFollowups,
+      stopIfUserReply: current.stopIfUserReply,
       companyName: companyName,
       companyDetails: companyDetails,
       companyLogoUrl: companyLogoUrl,
@@ -819,6 +1015,12 @@ class ApiService {
       responseCacheTtlSeconds: current.responseCacheTtlSeconds,
       spamGroupWindowMs: current.spamGroupWindowMs,
       allowAudioReplies: current.allowAudioReplies,
+      followupEnabled: current.followupEnabled,
+      followup1DelayMinutes: current.followup1DelayMinutes,
+      followup2DelayMinutes: current.followup2DelayMinutes,
+      followup3DelayHours: current.followup3DelayHours,
+      maxFollowups: current.maxFollowups,
+      stopIfUserReply: current.stopIfUserReply,
     );
   }
 
@@ -828,6 +1030,12 @@ class ApiService {
     required String elevenLabsBaseUrl,
     required String audioVoiceId,
     required bool allowAudioReplies,
+    required bool followupEnabled,
+    required int followup1DelayMinutes,
+    required int followup2DelayMinutes,
+    required int followup3DelayHours,
+    required int maxFollowups,
+    required bool stopIfUserReply,
   }) async {
     final current = await getConfig();
     return saveConfig(
@@ -848,6 +1056,12 @@ class ApiService {
       responseCacheTtlSeconds: current.responseCacheTtlSeconds,
       spamGroupWindowMs: current.spamGroupWindowMs,
       allowAudioReplies: allowAudioReplies,
+      followupEnabled: followupEnabled,
+      followup1DelayMinutes: followup1DelayMinutes,
+      followup2DelayMinutes: followup2DelayMinutes,
+      followup3DelayHours: followup3DelayHours,
+      maxFollowups: maxFollowups,
+      stopIfUserReply: stopIfUserReply,
     );
   }
 
@@ -871,6 +1085,12 @@ class ApiService {
       responseCacheTtlSeconds: current.responseCacheTtlSeconds,
       spamGroupWindowMs: current.spamGroupWindowMs,
       allowAudioReplies: current.allowAudioReplies,
+      followupEnabled: current.followupEnabled,
+      followup1DelayMinutes: current.followup1DelayMinutes,
+      followup2DelayMinutes: current.followup2DelayMinutes,
+      followup3DelayHours: current.followup3DelayHours,
+      maxFollowups: current.maxFollowups,
+      stopIfUserReply: current.stopIfUserReply,
     );
   }
 
@@ -1147,4 +1367,16 @@ DateTime? _parseDateTime(Object? value) {
   }
 
   return DateTime.tryParse(value);
+}
+
+Map<String, dynamic> _asJsonMap(Object? value) {
+  return value is Map<String, dynamic> ? value : <String, dynamic>{};
+}
+
+List<Map<String, dynamic>> _asJsonList(Object? value) {
+  if (value is! List<dynamic>) {
+    return const <Map<String, dynamic>>[];
+  }
+
+  return value.whereType<Map<String, dynamic>>().toList();
 }

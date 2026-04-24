@@ -20,6 +20,12 @@ export class ClientConfigService {
   private static readonly DEFAULT_MEMORY_WINDOW = 6;
   private static readonly DEFAULT_RESPONSE_CACHE_TTL_SECONDS = 60;
   private static readonly DEFAULT_SPAM_GROUP_WINDOW_MS = 2000;
+  private static readonly DEFAULT_FOLLOWUP_ENABLED = false;
+  private static readonly DEFAULT_FOLLOWUP_1_DELAY_MINUTES = 10;
+  private static readonly DEFAULT_FOLLOWUP_2_DELAY_MINUTES = 30;
+  private static readonly DEFAULT_FOLLOWUP_3_DELAY_HOURS = 24;
+  private static readonly DEFAULT_MAX_FOLLOWUPS = 3;
+  private static readonly DEFAULT_STOP_IF_USER_REPLY = true;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -171,6 +177,30 @@ export class ClientConfigService {
             ClientConfigService.DEFAULT_SPAM_GROUP_WINDOW_MS,
           ),
           allowAudioReplies: this.asBoolean(botConfig.allowAudioReplies, true),
+          followupEnabled: this.asBoolean(
+            botConfig.followupEnabled,
+            ClientConfigService.DEFAULT_FOLLOWUP_ENABLED,
+          ),
+          followup1DelayMinutes: this.asInteger(
+            botConfig.followup1DelayMinutes,
+            ClientConfigService.DEFAULT_FOLLOWUP_1_DELAY_MINUTES,
+          ),
+          followup2DelayMinutes: this.asInteger(
+            botConfig.followup2DelayMinutes,
+            ClientConfigService.DEFAULT_FOLLOWUP_2_DELAY_MINUTES,
+          ),
+          followup3DelayHours: this.asInteger(
+            botConfig.followup3DelayHours,
+            ClientConfigService.DEFAULT_FOLLOWUP_3_DELAY_HOURS,
+          ),
+          maxFollowups: this.asInteger(
+            botConfig.maxFollowups,
+            ClientConfigService.DEFAULT_MAX_FOLLOWUPS,
+          ),
+          stopIfUserReply: this.asBoolean(
+            botConfig.stopIfUserReply,
+            ClientConfigService.DEFAULT_STOP_IF_USER_REPLY,
+          ),
         },
         update: {
           responseCacheTtlSeconds: this.asInteger(
@@ -182,6 +212,30 @@ export class ClientConfigService {
             ClientConfigService.DEFAULT_SPAM_GROUP_WINDOW_MS,
           ),
           allowAudioReplies: this.asBoolean(botConfig.allowAudioReplies, true),
+          followupEnabled: this.asBoolean(
+            botConfig.followupEnabled,
+            ClientConfigService.DEFAULT_FOLLOWUP_ENABLED,
+          ),
+          followup1DelayMinutes: this.asInteger(
+            botConfig.followup1DelayMinutes,
+            ClientConfigService.DEFAULT_FOLLOWUP_1_DELAY_MINUTES,
+          ),
+          followup2DelayMinutes: this.asInteger(
+            botConfig.followup2DelayMinutes,
+            ClientConfigService.DEFAULT_FOLLOWUP_2_DELAY_MINUTES,
+          ),
+          followup3DelayHours: this.asInteger(
+            botConfig.followup3DelayHours,
+            ClientConfigService.DEFAULT_FOLLOWUP_3_DELAY_HOURS,
+          ),
+          maxFollowups: this.asInteger(
+            botConfig.maxFollowups,
+            ClientConfigService.DEFAULT_MAX_FOLLOWUPS,
+          ),
+          stopIfUserReply: this.asBoolean(
+            botConfig.stopIfUserReply,
+            ClientConfigService.DEFAULT_STOP_IF_USER_REPLY,
+          ),
         },
       }),
       this.prisma.whatsAppSettings.upsert({
@@ -253,6 +307,12 @@ export class ClientConfigService {
       bot.responseCacheTtlSeconds = botSettings.responseCacheTtlSeconds;
       bot.spamGroupWindowMs = botSettings.spamGroupWindowMs;
       bot.allowAudioReplies = botSettings.allowAudioReplies;
+      bot.followupEnabled = botSettings.followupEnabled;
+      bot.followup1DelayMinutes = botSettings.followup1DelayMinutes;
+      bot.followup2DelayMinutes = botSettings.followup2DelayMinutes;
+      bot.followup3DelayHours = botSettings.followup3DelayHours;
+      bot.maxFollowups = botSettings.maxFollowups;
+      bot.stopIfUserReply = botSettings.stopIfUserReply;
     }
 
     if (whatsappSettings) {

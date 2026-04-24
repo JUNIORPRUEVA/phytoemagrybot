@@ -52,6 +52,12 @@ model BotSettings {
   responseCacheTtlSeconds Int      @default(60) @map("response_cache_ttl_seconds")
   spamGroupWindowMs       Int      @default(2000) @map("spam_group_window_ms")
   allowAudioReplies       Boolean  @default(true) @map("allow_audio_replies")
+  followupEnabled         Boolean  @default(false) @map("followup_enabled")
+  followup1DelayMinutes   Int      @default(10) @map("followup_1_delay_minutes")
+  followup2DelayMinutes   Int      @default(30) @map("followup_2_delay_minutes")
+  followup3DelayHours     Int      @default(24) @map("followup_3_delay_hours")
+  maxFollowups            Int      @default(3) @map("max_followups")
+  stopIfUserReply         Boolean  @default(true) @map("stop_if_user_reply")
   createdAt               DateTime @default(now()) @map("created_at")
   updatedAt               DateTime @updatedAt @map("updated_at")
   config                  Config   @relation(fields: [configId], references: [id], onDelete: Cascade)
@@ -155,6 +161,55 @@ model ConversationSummary {
 
   @@index([expiresAt])
   @@map("conversation_summaries")
+}
+
+model ContactState {
+  id                  Int      @id @default(autoincrement())
+  contactId           String   @unique @map("contact_id")
+  name                String?
+  currentIntent       String?  @map("current_intent")
+  stage               String   @default("curioso")
+  lastInteractionAt   DateTime? @map("last_interaction_at")
+  lastBotMessageAt    DateTime? @map("last_bot_message_at")
+  purchaseIntentScore Int      @default(0) @map("purchase_intent_score")
+  notesJson           Json     @default("{}") @map("notes_json")
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+
+  @@index([stage])
+  @@index([lastInteractionAt])
+  @@map("contact_state")
+}
+
+model ContactConversationSummary {
+  id           Int      @id @default(autoincrement())
+  contactId    String   @unique @map("contact_id")
+  summaryText  String   @map("summary_text")
+  keyFactsJson Json     @default("{}") @map("key_facts_json")
+  lastMessageId String? @map("last_message_id")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@index([updatedAt])
+  @@map("conversation_summary")
+}
+
+model ConversationFollowup {
+  id                Int      @id @default(autoincrement())
+  contactId         String   @map("contact_id")
+  outboundAddress   String?  @map("outbound_address")
+  lastMessageFrom   String   @map("last_message_from")
+  lastMessageAt     DateTime @map("last_message_at")
+  followupStep      Int      @default(0) @map("followup_step")
+  isActive          Boolean  @default(true) @map("is_active")
+  nextFollowupAt    DateTime? @map("next_followup_at")
+  lastFollowupMessage String? @map("last_followup_message")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  @@unique([contactId])
+  @@index([isActive, nextFollowupAt])
+  @@index([contactId, lastMessageAt])
+  @@map("conversation_followup")
 }
 
 model WhatsAppInstance {

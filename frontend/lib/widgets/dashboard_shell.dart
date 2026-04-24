@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../pages/bot_prompt_config_page.dart';
+import '../pages/company_context_page.dart';
 import '../pages/connect_whatsapp_page.dart';
 import '../pages/config_page.dart';
 import '../pages/gallery_page.dart';
@@ -20,15 +21,32 @@ class DashboardShell extends StatefulWidget {
 }
 
 class _DashboardShellState extends State<DashboardShell> {
+  static const int _channelsPageIndex = 0;
+  static const int _memoryPageIndex = 1;
+  static const int _promptPageIndex = 2;
+  static const int _companyContextPageIndex = 3;
+  static const int _galleryPageIndex = 4;
+  static const int _toolsPageIndex = 5;
+  static const int _configPageIndex = 6;
+
   int _selectedIndex = 0;
   int _mobileLastPrimaryPageIndex = 0;
   final GlobalKey<State<BotPromptConfigPage>> _promptPageKey = GlobalKey<State<BotPromptConfigPage>>();
+  final GlobalKey<State<CompanyContextPage>> _companyContextPageKey = GlobalKey<State<CompanyContextPage>>();
   late final ApiService _apiService;
   late Future<ClientConfigData> _overviewFuture;
 
-  static const List<int> _mobileBottomNavIndices = <int>[3, 2, 0];
-  static const List<int> _mobileDrawerIndices = <int>[1, 4];
-  static const int _mobileMainPageIndex = 0;
+  static const List<int> _mobileBottomNavIndices = <int>[
+    _galleryPageIndex,
+    _promptPageIndex,
+    _channelsPageIndex,
+  ];
+  static const List<int> _mobileDrawerIndices = <int>[
+    _memoryPageIndex,
+    _companyContextPageIndex,
+    _toolsPageIndex,
+  ];
+  static const int _mobileMainPageIndex = _channelsPageIndex;
 
   @override
   void initState() {
@@ -54,6 +72,12 @@ class _DashboardShellState extends State<DashboardShell> {
         onConfigUpdated: _refreshOverview,
         onRequestBack: () => _selectPage(_mobileMainPageIndex),
       ),
+      CompanyContextPage(
+        key: _companyContextPageKey,
+        apiService: _apiService,
+        onConfigUpdated: _refreshOverview,
+        onRequestBack: () => _selectPage(_mobileMainPageIndex),
+      ),
       GalleryPage(
         apiService: _apiService,
         onConfigUpdated: _refreshOverview,
@@ -67,6 +91,7 @@ class _DashboardShellState extends State<DashboardShell> {
       'Canales',
       'Memoria',
       'Prompts',
+      'Empresa',
       'Galeria',
       'Herramientas',
       'Configuracion',
@@ -76,6 +101,7 @@ class _DashboardShellState extends State<DashboardShell> {
       Icons.hub_rounded,
       Icons.psychology_alt_rounded,
       Icons.auto_awesome_rounded,
+      Icons.business_center_rounded,
       Icons.photo_library,
       Icons.extension_rounded,
       Icons.settings_rounded,
@@ -83,7 +109,8 @@ class _DashboardShellState extends State<DashboardShell> {
 
     final bool isMobile = MediaQuery.sizeOf(context).width < 900;
     final bool isMobileMainPage = isMobile && _selectedIndex == _mobileMainPageIndex;
-    final bool hideMobileAppBar = isMobile && (_selectedIndex == 2 || _selectedIndex == 3);
+    final bool hideMobileAppBar =
+        isMobile && (_selectedIndex == _promptPageIndex || _selectedIndex == _galleryPageIndex);
     final int mobileNavIndex = _mobileBottomNavIndices.indexOf(_mobileLastPrimaryPageIndex);
 
     return Scaffold(
@@ -150,7 +177,7 @@ class _DashboardShellState extends State<DashboardShell> {
             Padding(
               padding: const EdgeInsets.only(right: 10),
               child: IconButton(
-                onPressed: () => _selectPage(5),
+                onPressed: () => _selectPage(_configPageIndex),
                 tooltip: 'Configuracion',
                 icon: const Icon(Icons.settings_rounded),
               ),
@@ -191,16 +218,26 @@ class _DashboardShellState extends State<DashboardShell> {
                   .toList(),
             )
           : _AppFooter(overviewFuture: _overviewFuture),
-      floatingActionButton: isMobile && _selectedIndex == 2
+      floatingActionButton: _selectedIndex == _companyContextPageIndex
           ? FloatingActionButton.extended(
               onPressed: () {
-                final state = _promptPageKey.currentState as BotPromptConfigPageStateAccess?;
-                state?.triggerSave();
+                final state =
+                    _companyContextPageKey.currentState as CompanyContextPageStateAccess?;
+                state?.openUsageRulesEditor();
               },
-              icon: const Icon(Icons.save_rounded),
-              label: const Text('Guardar'),
+              icon: const Icon(Icons.tune_rounded),
+              label: const Text('Reglas de uso del bot'),
             )
-          : null,
+          : isMobile && _selectedIndex == _promptPageIndex
+              ? FloatingActionButton.extended(
+                  onPressed: () {
+                    final state = _promptPageKey.currentState as BotPromptConfigPageStateAccess?;
+                    state?.triggerSave();
+                  },
+                  icon: const Icon(Icons.save_rounded),
+                  label: const Text('Guardar'),
+                )
+              : null,
       floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
       body: SafeArea(
         child: Row(

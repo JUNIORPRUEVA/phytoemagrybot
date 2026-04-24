@@ -10,6 +10,7 @@ dependencies:
   flutter:
     sdk: flutter
   file_picker: ^8.1.7
+  geolocator: ^13.0.2
   google_fonts: ^6.2.1
   http: ^1.2.2
   http_parser: ^4.1.2

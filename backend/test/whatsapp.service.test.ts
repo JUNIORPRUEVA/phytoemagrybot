@@ -4,10 +4,16 @@ import test from 'node:test';
 import { WhatsAppService } from '../src/whatsapp/whatsapp.service';
 
 function createService() {
+  const followupService = {
+    registerUserReply: async () => undefined,
+    registerBotReply: async () => undefined,
+  };
+
   return new WhatsAppService(
     {} as any,
     {} as any,
     {} as any,
+    followupService as any,
     {} as any,
     {} as any,
     {} as any,
@@ -21,6 +27,10 @@ function createAudioFlowService() {
       replyType: 'text',
       mediaFiles: [],
       intent: 'otro',
+      decisionIntent: 'curioso',
+      stage: 'curioso',
+      action: 'guiar',
+      purchaseIntentScore: 0,
       hotLead: false,
       cached: false,
       usedGallery: false,
@@ -47,10 +57,16 @@ function createAudioFlowService() {
     }),
   };
 
+  const followupService = {
+    registerUserReply: async () => undefined,
+    registerBotReply: async () => undefined,
+  };
+
   const service = new WhatsAppService(
     botService as any,
     {} as any,
     {} as any,
+    followupService as any,
     {} as any,
     redisService as any,
     voiceService as any,
@@ -1968,6 +1984,10 @@ test('processAndDeliverMessage can send media and then a voice reply', async () 
       createdAt: new Date(),
     }],
     intent: 'catalogo',
+    decisionIntent: 'info',
+    stage: 'interesado',
+    action: 'guiar',
+    purchaseIntentScore: 40,
     hotLead: false,
     cached: false,
     usedGallery: true,
@@ -2169,6 +2189,10 @@ test('acceptWebhook ignores group reaction payloads without triggering bot repli
           replyType: 'text',
           mediaFiles: [],
           intent: 'otro',
+          decisionIntent: 'curioso',
+          stage: 'curioso',
+          action: 'guiar',
+          purchaseIntentScore: 0,
           hotLead: false,
           cached: false,
           usedGallery: false,
@@ -2179,6 +2203,10 @@ test('acceptWebhook ignores group reaction payloads without triggering bot repli
     } as any,
     {} as any,
     {} as any,
+    {
+      registerUserReply: async () => undefined,
+      registerBotReply: async () => undefined,
+    } as any,
     {} as any,
     {
       get: async () => null,

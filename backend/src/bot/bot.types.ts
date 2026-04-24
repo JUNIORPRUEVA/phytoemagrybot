@@ -1,5 +1,6 @@
 import { MediaFile } from '@prisma/client';
 import { AssistantReply } from '../ai/ai.types';
+import { BotDecisionAction, BotDecisionIntent, ContactStage } from './bot-decision.types';
 
 export type BotIntent =
   | 'interes'
@@ -17,6 +18,10 @@ export interface BotReplyResult {
   replyType: AssistantReply['type'];
   mediaFiles: MediaFile[];
   intent: BotIntent;
+  decisionIntent: BotDecisionIntent;
+  stage: ContactStage;
+  action: BotDecisionAction;
+  purchaseIntentScore: number;
   hotLead: boolean;
   cached: boolean;
   usedGallery: boolean;

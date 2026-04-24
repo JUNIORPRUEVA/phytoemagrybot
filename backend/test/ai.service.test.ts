@@ -10,6 +10,9 @@ test('system prompt enforces internal sales analysis and dominican human tone', 
     fullPrompt: '',
     contactId: '18095551234',
     config: { configurations: {} },
+    classifiedIntent: 'info',
+    decisionAction: 'guiar',
+    purchaseIntentScore: 20,
     responseStyle: 'balanced',
     leadStage: 'curioso',
     replyObjective: 'avanzar_conversacion',
@@ -23,6 +26,8 @@ test('system prompt enforces internal sales analysis and dominican human tone', 
   assert.match(prompt, /No hables como sistema, IA, servicio automatico/i);
   assert.match(prompt, /Etapa detectada del cliente: curioso/i);
   assert.match(prompt, /Objetivo principal de esta respuesta: avanzar_conversacion/i);
+  assert.match(prompt, /Intencion clasificada: info/i);
+  assert.match(prompt, /Estrategia elegida: guiar/i);
   assert.match(prompt, /No repitas literalmente frases, cierres ni ideas/i);
   assert.match(prompt, /2 o 3 lineas maximo/i);
   assert.match(prompt, /Si no cumple, reescribela antes de devolverla/i);
@@ -35,6 +40,9 @@ test('system prompt keeps brief mode focused on direct answers', () => {
     fullPrompt: '',
     contactId: '18095551234',
     config: { configurations: {} },
+    classifiedIntent: 'precio',
+    decisionAction: 'responder_precio_con_valor',
+    purchaseIntentScore: 40,
     responseStyle: 'brief',
     leadStage: 'interesado',
     replyObjective: 'avanzar_conversacion',

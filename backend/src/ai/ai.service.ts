@@ -4,7 +4,9 @@ import {
   InternalServerErrorException,
 } from '@nestjs/common';
 import OpenAI from 'openai';
+import { BotDecisionAction, BotDecisionIntent } from '../bot/bot-decision.types';
 import { AppConfigRecord } from '../config/config.types';
+import { StoredMessage } from '../memory/memory.types';
 import {
   AssistantReply,
   AssistantLeadStage,
@@ -24,6 +26,9 @@ export class AiService {
       history,
       message,
       context,
+      classifiedIntent,
+      decisionAction,
+      purchaseIntentScore,
       responseStyle,
       leadStage,
       replyObjective,
@@ -52,6 +57,9 @@ export class AiService {
               fullPrompt,
               contactId,
               config,
+              classifiedIntent,
+              decisionAction,
+              purchaseIntentScore,
               responseStyle,
               leadStage,
               replyObjective,
@@ -106,6 +114,9 @@ export class AiService {
     fullPrompt: string;
     contactId: string;
     config?: AppConfigRecord;
+    classifiedIntent: BotDecisionIntent;
+    decisionAction: BotDecisionAction;
+    purchaseIntentScore: number;
     responseStyle: AssistantResponseStyle;
     leadStage: AssistantLeadStage;
     replyObjective: AssistantReplyObjective;
@@ -119,6 +130,11 @@ export class AiService {
       `Contacto actual: ${params.contactId}`,
       this.buildThinkingFrameworkInstruction(),
       this.buildHumanSalesInstruction(),
+      this.buildDecisionInstruction(
+        params.classifiedIntent,
+        params.decisionAction,
+        params.purchaseIntentScore,
+      ),
       this.buildStageInstruction(params.leadStage, params.replyObjective),
       'Responde breve, útil y alineado al negocio del cliente.',
       'Si el cliente pide que le expliques, le cuentes o le hables de un producto, responde de forma conversacional y orientativa, no con un cierre de venta automatico.',
@@ -166,6 +182,85 @@ export class AiService {
       `Objetivo principal de esta respuesta: ${replyObjective}.`,
       'Adapta el lenguaje a esa etapa: curioso = orienta y despierta interes; interesado = aclara y mueve al siguiente paso; dudoso = responde con seguridad y confianza; listo_para_comprar = facilita el cierre suave.',
     ].join('\n');
+  }
+
+  private buildDecisionInstruction(
+    classifiedIntent: BotDecisionIntent,
+    decisionAction: BotDecisionAction,
+    purchaseIntentScore: number,
+  ): string {
+    return [
+      `Intencion clasificada: ${classifiedIntent}.`,
+      `Estrategia elegida: ${decisionAction}.`,
+      `Purchase intent score actual: ${purchaseIntentScore}/100.`,
+      'Sigue la estrategia sin romper el tono humano: cerrar = cierra suave; responder_precio_con_valor = da precio con valor; persuadir = responde con confianza y prueba social; guiar = orienta con una pregunta util; hacer_seguimiento = deja la puerta abierta sin presionar.',
+    ].join('\n');
+  }
+
+  async classifyIntent(params: {
+    config: AppConfigRecord;
+    message: string;
+    history?: StoredMessage[];
+  }): Promise<BotDecisionIntent> {
+    const { config, message, history = [] } = params;
+    const text = message.trim();
+
+    if (!text || !config.openaiKey.trim()) {
+      return 'curioso';
+    }
+
+    try {
+      const openai = new OpenAI({ apiKey: config.openaiKey });
+      const modelName = process.env.OPENAI_MODEL?.trim() || config.aiSettings?.modelName || 'gpt-4o-mini';
+      const completion = await openai.chat.completions.create({
+        model: modelName,
+        temperature: 0,
+        max_completion_tokens: 80,
+        messages: [
+          {
+            role: 'system',
+            content: [
+              'Clasifica el ultimo mensaje de un cliente de WhatsApp en una sola intencion.',
+              'Responde JSON valido con la clave "intent".',
+              'Etiquetas permitidas: curioso, interesado, duda, compra, no_interesado.',
+              'No expliques nada.',
+            ].join('\n'),
+          },
+          ...(history.length > 0
+            ? [{
+                role: 'system' as const,
+                content: `Historial breve:\n${history.slice(-4).map((item) => `${item.role}: ${item.content}`).join('\n')}`,
+              }]
+            : []),
+          {
+            role: 'user',
+            content: text.slice(0, 500),
+          },
+        ],
+        response_format: {
+          type: 'json_object',
+        },
+      });
+
+      const raw = completion.choices[0]?.message?.content?.trim();
+      if (!raw) {
+        return 'curioso';
+      }
+
+      const parsed = JSON.parse(raw) as { intent?: string };
+      switch (parsed.intent) {
+        case 'curioso':
+        case 'interesado':
+        case 'duda':
+        case 'compra':
+        case 'no_interesado':
+          return parsed.intent;
+        default:
+          return 'curioso';
+      }
+    } catch {
+      return 'curioso';
+    }
   }
 
   private buildAntiRepetitionInstruction(): string {

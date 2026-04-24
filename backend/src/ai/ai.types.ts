@@ -1,5 +1,6 @@
 import { AppConfigRecord } from '../config/config.types';
 import { StoredMessage } from '../memory/memory.types';
+import { BotDecisionAction, BotDecisionIntent } from '../bot/bot-decision.types';
 
 export type AssistantReplyType = 'text' | 'audio';
 export type AssistantResponseStyle = 'brief' | 'balanced' | 'detailed';
@@ -23,6 +24,9 @@ export interface GenerateReplyParams {
   message: string;
   history: StoredMessage[];
   context: string;
+  classifiedIntent: BotDecisionIntent;
+  decisionAction: BotDecisionAction;
+  purchaseIntentScore: number;
   responseStyle: AssistantResponseStyle;
   leadStage: AssistantLeadStage;
   replyObjective: AssistantReplyObjective;

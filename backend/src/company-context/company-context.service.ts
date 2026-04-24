@@ -1,4 +1,5 @@
 import { Injectable, OnModuleInit } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { SaveCompanyContextDto } from './dto/save-company-context.dto';
 import {
@@ -7,6 +8,8 @@ import {
   CompanyImageItem,
   DEFAULT_COMPANY_CONTEXT,
 } from './company-context.types';
+
+type CompanyContextTopic = 'location' | 'payment' | 'schedule' | 'contact';
 
 @Injectable()
 export class CompanyContextService implements OnModuleInit {
@@ -27,9 +30,12 @@ export class CompanyContextService implements OnModuleInit {
     const current = await this.getContext();
     const latitude = this.normalizeCoordinate(data.latitude, current.latitude);
     const longitude = this.normalizeCoordinate(data.longitude, current.longitude);
-    const googleMapsLink = this.buildGoogleMapsLink(
+    const coordinatesWereProvided = data.latitude !== undefined || data.longitude !== undefined;
+    const googleMapsLink = this.resolveGoogleMapsLink(
       latitude,
       longitude,
+      coordinatesWereProvided,
+      data.googleMapsLink,
       current.googleMapsLink,
     );
 
@@ -45,13 +51,18 @@ export class CompanyContextService implements OnModuleInit {
         latitude,
         longitude,
         googleMapsLink,
-        workingHoursJson: this.normalizeObject(data.workingHoursJson, current.workingHoursJson),
-        bankAccountsJson: this.normalizeBankAccounts(
-          data.bankAccountsJson,
-          current.bankAccountsJson,
+        workingHoursJson: this.asJsonValue(
+          this.normalizeObject(data.workingHoursJson, current.workingHoursJson),
         ),
-        imagesJson: this.normalizeImages(data.imagesJson, current.imagesJson),
-        usageRulesJson: this.normalizeObject(data.usageRulesJson, current.usageRulesJson),
+        bankAccountsJson: this.asJsonValue(
+          this.normalizeBankAccounts(data.bankAccountsJson, current.bankAccountsJson),
+        ),
+        imagesJson: this.asJsonValue(
+          this.normalizeImages(data.imagesJson, current.imagesJson),
+        ),
+        usageRulesJson: this.asJsonValue(
+          this.normalizeObject(data.usageRulesJson, current.usageRulesJson),
+        ),
       },
       update: {
         companyName: this.normalizeText(data.companyName, current.companyName),
@@ -62,13 +73,18 @@ export class CompanyContextService implements OnModuleInit {
         latitude,
         longitude,
         googleMapsLink,
-        workingHoursJson: this.normalizeObject(data.workingHoursJson, current.workingHoursJson),
-        bankAccountsJson: this.normalizeBankAccounts(
-          data.bankAccountsJson,
-          current.bankAccountsJson,
+        workingHoursJson: this.asJsonValue(
+          this.normalizeObject(data.workingHoursJson, current.workingHoursJson),
         ),
-        imagesJson: this.normalizeImages(data.imagesJson, current.imagesJson),
-        usageRulesJson: this.normalizeObject(data.usageRulesJson, current.usageRulesJson),
+        bankAccountsJson: this.asJsonValue(
+          this.normalizeBankAccounts(data.bankAccountsJson, current.bankAccountsJson),
+        ),
+        imagesJson: this.asJsonValue(
+          this.normalizeImages(data.imagesJson, current.imagesJson),
+        ),
+        usageRulesJson: this.asJsonValue(
+          this.normalizeObject(data.usageRulesJson, current.usageRulesJson),
+        ),
       },
     });
 
@@ -77,22 +93,105 @@ export class CompanyContextService implements OnModuleInit {
 
   async buildAgentContext(): Promise<string> {
     const context = await this.getContext();
+    const topics = this.getTopicsWithAvailableData(context);
+
+    return this.buildContextMessage(context, topics);
+  }
+
+  async buildAgentContextForMessage(message: string): Promise<string> {
+    const context = await this.getContext();
+    const requestedTopics = this.detectRequestedTopics(message);
+
+    if (requestedTopics.length === 0) {
+      return '';
+    }
+
+    const allowedTopics = requestedTopics.filter((topic) =>
+      this.isTopicAllowed(topic, context.usageRulesJson),
+    );
+
+    if (allowedTopics.length === 0) {
+      return '';
+    }
+
+    return this.buildContextMessage(context, allowedTopics);
+  }
+
+  private buildContextMessage(
+    context: CompanyContextRecord,
+    topics: CompanyContextTopic[],
+  ): string {
     const payload = {
       company_name: context.companyName,
-      description: context.description,
-      phone: context.phone,
-      whatsapp: context.whatsapp,
-      address: context.address,
-      latitude: context.latitude,
-      longitude: context.longitude,
-      google_maps_link: context.googleMapsLink,
-      working_hours_json: context.workingHoursJson,
-      bank_accounts_json: context.bankAccountsJson,
-      images_json: context.imagesJson,
-      usage_rules_json: context.usageRulesJson,
+      ...(topics.includes('contact')
+        ? {
+            phone: context.phone,
+            whatsapp: context.whatsapp,
+          }
+        : {}),
+      ...(topics.includes('location')
+        ? {
+            address: context.address,
+            latitude: context.latitude,
+            longitude: context.longitude,
+            google_maps_link: context.googleMapsLink,
+          }
+        : {}),
+      ...(topics.includes('schedule')
+        ? {
+            working_hours_json: context.workingHoursJson,
+          }
+        : {}),
+      ...(topics.includes('payment')
+        ? {
+            bank_accounts_json: context.bankAccountsJson,
+          }
+        : {}),
+      usage_rules_json: this.pickUsageRules(context.usageRulesJson, topics),
     };
 
-    const hasContent = Object.values(payload).some((value) => {
+    if (!this.hasUsefulScopedPayload(payload)) {
+      return '';
+    }
+
+    return [
+      'CONTEXTO_EMPRESA',
+      'Este bloque es contexto dinamico complementario. No reemplaza el prompt principal del bot.',
+      'Antes de usar cualquier dato, lee usage_rules_json, detecta la intencion del cliente y decide si corresponde usar la informacion.',
+      'No uses informacion de la empresa si no hace falta. No repitas datos innecesarios.',
+      this.buildScopedUsageHint(topics),
+      JSON.stringify(payload, null, 2),
+    ].join('\n\n');
+  }
+
+  private buildScopedUsageHint(topics: CompanyContextTopic[]): string {
+    const hints: string[] = [];
+
+    if (topics.includes('location')) {
+      hints.push('Si el cliente pide ubicacion, prioriza google_maps_link y la direccion.');
+    }
+
+    if (topics.includes('schedule')) {
+      hints.push('Si el cliente pregunta horario, usa working_hours_json.');
+    }
+
+    if (topics.includes('payment')) {
+      hints.push('Si el cliente quiere pagar o pregunta como pagar, usa bank_accounts_json.');
+    }
+
+    if (topics.includes('contact')) {
+      hints.push('Si el cliente pide contacto directo, usa phone y whatsapp.');
+    }
+
+    return hints.join(' ');
+  }
+
+  private hasUsefulScopedPayload(payload: Record<string, unknown>): boolean {
+    return Object.entries(payload).some(([key, value]) => {
+      if (key === 'company_name' || key === 'usage_rules_json') {
+        return false;
+      }
+
       if (typeof value === 'string') {
         return value.trim().length > 0;
       }
@@ -107,19 +206,154 @@ export class CompanyContextService implements OnModuleInit {
 
       return value !== null && value !== undefined;
     });
+  }
 
-    if (!hasContent) {
-      return '';
+  private detectRequestedTopics(message: string): CompanyContextTopic[] {
+    const normalized = message.trim().toLowerCase();
+    if (!normalized) {
+      return [];
     }
 
-    return [
-      'CONTEXTO_EMPRESA',
-      'Este bloque es contexto dinamico complementario. No reemplaza el prompt principal del bot.',
-      'Antes de usar cualquier dato, lee usage_rules_json, detecta la intencion del cliente y decide si corresponde usar la informacion.',
-      'No uses informacion de la empresa si no hace falta. No repitas datos innecesarios.',
-      'Cuando el cliente pida ubicacion, prioriza google_maps_link. Cuando pregunte horario, usa working_hours_json. Cuando quiera pagar o pregunte como pagar, usa bank_accounts_json.',
-      JSON.stringify(payload, null, 2),
-    ].join('\n\n');
+    const topics = new Set<CompanyContextTopic>();
+
+    if (
+      [
+        'donde estan',
+        'dónde están',
+        'ubicacion',
+        'ubicación',
+        'ubicados',
+        'direccion',
+        'dirección',
+        'mapa',
+        'local',
+        'sucursal',
+      ].some((keyword) => normalized.includes(keyword))
+    ) {
+      topics.add('location');
+    }
+
+    if (
+      [
+        'como pago',
+        'cómo pago',
+        'pagar',
+        'pago',
+        'transferencia',
+        'deposito',
+        'depósito',
+        'cuenta bancaria',
+        'cuentas bancarias',
+        'banco',
+      ].some((keyword) => normalized.includes(keyword))
+    ) {
+      topics.add('payment');
+    }
+
+    if (
+      [
+        'horario',
+        'hora trabajan',
+        'horas trabajan',
+        'a que hora',
+        'a qué hora',
+        'abren',
+        'cierran',
+        'atienden',
+      ].some((keyword) => normalized.includes(keyword))
+    ) {
+      topics.add('schedule');
+    }
+
+    if (
+      ['telefono', 'teléfono', 'whatsapp', 'contacto', 'llamar', 'numero', 'número'].some(
+        (keyword) => normalized.includes(keyword),
+      )
+    ) {
+      topics.add('contact');
+    }
+
+    return Array.from(topics);
+  }
+
+  private isTopicAllowed(
+    topic: CompanyContextTopic,
+    usageRules: Record<string, unknown>,
+  ): boolean {
+    const ruleKey = this.getRuleKey(topic);
+    const ruleValue = usageRules[ruleKey];
+
+    if (typeof ruleValue !== 'string') {
+      return true;
+    }
+
+    const normalizedRule = ruleValue.trim().toLowerCase();
+    if (!normalizedRule) {
+      return true;
+    }
+
+    return ![
+      'nunca',
+      'never',
+      'disabled',
+      'desactivado',
+      'false',
+      'no_enviar',
+      'prohibido',
+    ].some((keyword) => normalizedRule.includes(keyword));
+  }
+
+  private getRuleKey(topic: CompanyContextTopic): string {
+    switch (topic) {
+      case 'location':
+        return 'send_location';
+      case 'payment':
+        return 'send_bank_accounts';
+      case 'schedule':
+        return 'send_schedule';
+      case 'contact':
+        return 'send_contact';
+    }
+  }
+
+  private pickUsageRules(
+    usageRules: Record<string, unknown>,
+    topics: CompanyContextTopic[],
+  ): Record<string, unknown> {
+    const next: Record<string, unknown> = {};
+
+    for (const topic of topics) {
+      const key = this.getRuleKey(topic);
+      if (usageRules[key] !== undefined) {
+        next[key] = usageRules[key];
+      }
+    }
+
+    return next;
+  }
+
+  private getTopicsWithAvailableData(context: CompanyContextRecord): CompanyContextTopic[] {
+    const topics: CompanyContextTopic[] = [];
+
+    if (context.phone.trim() || context.whatsapp.trim()) {
+      topics.push('contact');
+    }
+    if (
+      context.address.trim() ||
+      context.googleMapsLink.trim() ||
+      context.latitude !== null ||
+      context.longitude !== null
+    ) {
+      topics.push('location');
+    }
+    if (Object.keys(context.workingHoursJson).length > 0) {
+      topics.push('schedule');
+    }
+    if (context.bankAccountsJson.length > 0) {
+      topics.push('payment');
+    }
+
+    return topics;
   }
 
   private ensureContext() {
@@ -127,10 +361,25 @@ export class CompanyContextService implements OnModuleInit {
       where: { id: CompanyContextService.CONTEXT_ID },
       create: {
         id: CompanyContextService.CONTEXT_ID,
-        ...DEFAULT_COMPANY_CONTEXT,
+        companyName: DEFAULT_COMPANY_CONTEXT.companyName,
+        description: DEFAULT_COMPANY_CONTEXT.description,
+        phone: DEFAULT_COMPANY_CONTEXT.phone,
+        whatsapp: DEFAULT_COMPANY_CONTEXT.whatsapp,
+        address: DEFAULT_COMPANY_CONTEXT.address,
+        latitude: DEFAULT_COMPANY_CONTEXT.latitude,
+        longitude: DEFAULT_COMPANY_CONTEXT.longitude,
+        googleMapsLink: DEFAULT_COMPANY_CONTEXT.googleMapsLink,
+        workingHoursJson: this.asJsonValue(DEFAULT_COMPANY_CONTEXT.workingHoursJson),
+        bankAccountsJson: this.asJsonValue(DEFAULT_COMPANY_CONTEXT.bankAccountsJson),
+        imagesJson: this.asJsonValue(DEFAULT_COMPANY_CONTEXT.imagesJson),
+        usageRulesJson: this.asJsonValue(DEFAULT_COMPANY_CONTEXT.usageRulesJson),
       },
       update: {},
     });
+  }
+
+  private asJsonValue(value: object | unknown[]): Prisma.InputJsonValue {
+    return value as Prisma.InputJsonValue;
   }
 
   private mapRecord(record: {
@@ -192,13 +441,20 @@ export class CompanyContextService implements OnModuleInit {
     return value;
   }
 
-  private buildGoogleMapsLink(
+  private resolveGoogleMapsLink(
     latitude: number | null,
     longitude: number | null,
+    coordinatesWereProvided: boolean,
+    explicitValue: string | undefined,
     fallback: string,
   ): string {
+    const manualLink = this.normalizeText(explicitValue, '').trim();
+    if (manualLink) {
+      return manualLink;
+    }
+
     if (latitude === null || longitude === null) {
-      return fallback;
+      return coordinatesWereProvided ? '' : fallback;
     }
 
     return `https://www.google.com/maps?q=${latitude},${longitude}`;

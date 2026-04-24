@@ -12,6 +12,7 @@ import { MediaFile, WhatsAppInstance } from '@prisma/client';
 import axios, { AxiosInstance } from 'axios';
 import { BotService } from '../bot/bot.service';
 import { ClientConfigService } from '../config/config.service';
+import { FollowupService } from '../followup/followup.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
 import { VoiceService } from './voice.service';
@@ -93,6 +94,7 @@ export class WhatsAppService implements OnModuleInit {
     private readonly botService: BotService,
     private readonly clientConfigService: ClientConfigService,
     private readonly configService: ConfigService,
+    private readonly followupService: FollowupService,
     private readonly prisma: PrismaService,
     private readonly redisService: RedisService,
     private readonly voiceService: VoiceService,
@@ -706,6 +708,8 @@ export class WhatsAppService implements OnModuleInit {
       return;
     }
 
+    await this.followupService.registerUserReply(incoming.number);
+
     const spamGroupWindowMs = resolved.config.botSettings?.spamGroupWindowMs ?? 2000;
 
     if (incoming.type === 'text') {
@@ -819,6 +823,11 @@ export class WhatsAppService implements OnModuleInit {
       );
 
       await this.sendText(resolved, outboundAddress, fallbackMessage, diagnostic);
+      await this.followupService.registerBotReply({
+        contactId,
+        outboundAddress,
+        reply: fallbackMessage,
+      });
       return;
     }
 
@@ -871,6 +880,11 @@ export class WhatsAppService implements OnModuleInit {
             replyType: 'media',
           }),
         );
+        await this.followupService.registerBotReply({
+          contactId,
+          outboundAddress,
+          reply: botReply.reply,
+        });
         return;
       }
     }
@@ -911,6 +925,11 @@ export class WhatsAppService implements OnModuleInit {
             replyType: 'audio',
           }),
         );
+        await this.followupService.registerBotReply({
+          contactId,
+          outboundAddress,
+          reply: botReply.reply,
+        });
         return;
       } catch (error) {
         this.logDeliveryFailure('voice_generation_or_send', error, diagnostic, {
@@ -952,6 +971,11 @@ export class WhatsAppService implements OnModuleInit {
         replyType: 'text',
       }),
     );
+    await this.followupService.registerBotReply({
+      contactId,
+      outboundAddress,
+      reply: botReply.reply,
+    });
   }
 
   private async deliverMatchedMedia(
