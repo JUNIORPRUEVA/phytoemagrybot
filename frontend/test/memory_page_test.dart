@@ -84,7 +84,7 @@ class _FakeApiService extends ApiService {
 }
 
 void main() {
-  testWidgets('memory page loads contact memory and shows editor', (WidgetTester tester) async {
+  testWidgets('memory page opens as a menu and shows the contact memory editor', (WidgetTester tester) async {
     final binding = TestWidgetsFlutterBinding.ensureInitialized();
     await binding.setSurfaceSize(const Size(1400, 900));
 
@@ -103,8 +103,13 @@ void main() {
 
     await tester.pumpAndSettle();
 
-    expect(find.text('Memoria'), findsOneWidget);
-    expect(find.text('Maria'), findsWidgets);
+  expect(find.text('Ventana de memoria'), findsOneWidget);
+  expect(find.text('Memoria por contacto'), findsOneWidget);
+
+  await tester.tap(find.text('Memoria por contacto'));
+  await tester.pumpAndSettle();
+
+  expect(find.text('Maria'), findsWidgets);
     expect(find.text('Guardar memoria'), findsOneWidget);
     expect(find.text('Prefiere entrega en la tarde'), findsOneWidget);
     expect(find.text('Cliente interesada en te detox; espera seguimiento.'), findsOneWidget);

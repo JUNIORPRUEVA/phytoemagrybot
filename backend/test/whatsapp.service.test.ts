@@ -1946,7 +1946,7 @@ test('processIncomingAudioMessage sends text when bot replyType is text', async 
   assert.equal(sentAudios.length, 0);
 });
 
-test('processIncomingAudioMessage answers long audios as voice notes', async () => {
+test('processIncomingAudioMessage answers long audios as text replies', async () => {
   const { service, sentTexts, sentAudios, botService } = createAudioFlowService();
 
   botService.processIncomingMessage = async () => ({
@@ -1979,9 +1979,9 @@ test('processIncomingAudioMessage answers long audios as voice notes', async () 
     rawPayload: {},
   });
 
-  assert.equal(sentTexts.length, 0);
-  assert.equal(sentAudios.length, 1);
-  assert.equal(sentAudios[0]?.options?.ptt, true);
+  assert.equal(sentTexts.length, 1);
+  assert.equal(sentTexts[0]?.text, 'Te respondo por audio.');
+  assert.equal(sentAudios.length, 0);
 });
 
 test('processAndDeliverMessage keeps text delivery even when preferAudioReply is true', async () => {
@@ -2003,7 +2003,7 @@ test('processAndDeliverMessage keeps text delivery even when preferAudioReply is
   assert.equal(sentAudios.length, 0);
 });
 
-test('processAndDeliverMessage can send media and then a voice reply', async () => {
+test('processAndDeliverMessage can send media and then a text reply', async () => {
   const { service, sentTexts, sentAudios, botService } = createAudioFlowService();
   const deliveredMedia: string[] = [];
 
@@ -2049,8 +2049,9 @@ test('processAndDeliverMessage can send media and then a voice reply', async () 
   );
 
   assert.equal(deliveredMedia.length, 1);
-  assert.equal(sentAudios.length, 1);
-  assert.equal(sentTexts.length, 0);
+  assert.equal(sentTexts.length, 1);
+  assert.equal(sentTexts[0]?.text, 'Te mando las fotos y te explico por audio.');
+  assert.equal(sentAudios.length, 0);
 });
 
 test('processAndDeliverMessage falls back to text when media delivery fails', async () => {
@@ -2143,7 +2144,7 @@ test('processAndDeliverMessage rewrites the text before generating voice', async
     },
   );
 
-  assert.match(preparedText, /te ayudo ahora mismo|claro|perfecto/i);
+  assert.equal(preparedText, '');
 });
 
 test('processAndDeliverMessage retries text delivery after a transient send failure', async () => {

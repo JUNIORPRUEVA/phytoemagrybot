@@ -835,17 +835,14 @@ export class WhatsAppService implements OnModuleInit {
     }
 
     this.logDeliveryStage('ai_processing_completed', diagnostic, {
-      replyType: botReply.replyType,
+      replyType: 'text',
       mediaCount: botReply.mediaFiles.length,
       intent: botReply.intent,
       hotLead: botReply.hotLead,
     });
 
-    const replyType = botReply.replyType === 'audio' ? 'audio' : 'text';
-    const sendAs =
-      (resolved.config.botSettings?.allowAudioReplies ?? true) && replyType === 'audio'
-        ? 'audio'
-        : 'text';
+    const replyType = 'text';
+    const sendAs = 'text';
     let usedGallery = false;
     let mediaDelivered = false;
 
@@ -885,96 +882,15 @@ export class WhatsAppService implements OnModuleInit {
         });
       }
 
-      if (usedGallery && sendAs !== 'audio') {
-        this.logger.log(
-          JSON.stringify({
-            event: 'whatsapp_reply_sent',
-            traceId: diagnostic.traceId ?? null,
-            contactId,
-            intent: botReply.intent,
-            hotLead: botReply.hotLead,
-            usedGallery: true,
-            replyType: 'media',
-          }),
-        );
-        await this.followupService.registerBotReply({
-          contactId,
-          outboundAddress,
-          reply: botReply.reply,
-        });
-        return;
-      }
     }
-
-    if (sendAs === 'audio') {
-      try {
-        const spokenReply = await this.voiceService.prepareSpokenReply({
-          text: this.prepareReplyForVoice(botReply.reply),
-          openAiKey: resolved.config.openaiKey,
-        });
-        const audio = await this.voiceService.generateVoice({
-          text: spokenReply,
-          openAiKey: resolved.config.openaiKey,
-          elevenLabsKey: resolved.config.elevenlabsKey ?? undefined,
-          voiceId: resolved.whatsapp.audioVoiceId,
-          baseUrl: resolved.whatsapp.elevenLabsBaseUrl,
-        });
-
-        console.log({
-          replyType,
-          sendAs: 'audio',
-          message: botReply.reply,
-        });
-        this.logDeliveryStage('evolution_send_attempt', diagnostic, {
-          sendAs: 'audio',
-        });
-        await this.sendAudioWithRetry(resolved, outboundAddress, audio.buffer, {
-          fileName: audio.fileName,
-          mimetype: audio.mimetype,
-          ptt: true,
-        }, diagnostic);
-        this.logDeliveryStage('evolution_send_completed', diagnostic, {
-          sendAs: 'audio',
-        });
-        this.logger.log(
-          JSON.stringify({
-            event: 'whatsapp_reply_sent',
-            traceId: diagnostic.traceId ?? null,
-            contactId,
-            intent: botReply.intent,
-            hotLead: botReply.hotLead,
-            usedGallery,
-            replyType,
-          }),
-        );
-        await this.followupService.registerBotReply({
-          contactId,
-          outboundAddress,
-          reply: botReply.reply,
-        });
-        return;
-      } catch (error) {
-        this.logDeliveryFailure('voice_generation_or_send', error, diagnostic, {
-          sendAs: 'audio',
-        });
-        this.logger.error(
-          JSON.stringify({
-            event: 'voice_generation_failed',
-            traceId: diagnostic.traceId ?? null,
-            contactId,
-          }),
-          error instanceof Error ? error.stack : undefined,
-        );
-      }
-    }
-
+    console.log('SEND MODE:', sendAs);
     console.log({
       replyType,
-      sendAs: 'text',
+      sendAs,
       message: botReply.reply,
     });
     this.logDeliveryStage('evolution_send_attempt', diagnostic, {
-      sendAs: 'text',
+      sendAs,
     });
     try {
       await this.sendTextReliably(resolved, outboundAddress, botReply.reply, diagnostic, {
@@ -985,12 +901,12 @@ export class WhatsAppService implements OnModuleInit {
       });
     } catch (error) {
       this.logDeliveryFailure('evolution_send', error, diagnostic, {
-        sendAs: 'text',
+        sendAs,
       });
       throw error;
     }
     this.logDeliveryStage('evolution_send_completed', diagnostic, {
-      sendAs: 'text',
+      sendAs,
     });
     this.logger.log(
       JSON.stringify({
@@ -1108,11 +1024,9 @@ export class WhatsAppService implements OnModuleInit {
       );
 
       await this.processAndDeliverMessage(resolved, incoming.number, transcript, 'audio', {
-        preferAudioReply: this.shouldReplyWithVoiceForAudio(incoming),
         outboundAddress,
         diagnostic: mergedDiagnostic,
       });
-      await this.rememberVoiceReplyPreference(incoming.number);
     } catch (error) {
       this.logDeliveryFailure('audio_processing', error, mergedDiagnostic);
       this.logger.error(
