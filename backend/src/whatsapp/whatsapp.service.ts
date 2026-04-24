@@ -822,7 +822,10 @@ export class WhatsAppService implements OnModuleInit {
         error instanceof Error ? error.stack : undefined,
       );
 
-      await this.sendText(resolved, outboundAddress, fallbackMessage, diagnostic);
+      await this.sendTextReliably(resolved, outboundAddress, fallbackMessage, diagnostic, {
+        contactId,
+        reason: 'ai_processing_fallback',
+      });
       await this.followupService.registerBotReply({
         contactId,
         outboundAddress,
@@ -842,6 +845,7 @@ export class WhatsAppService implements OnModuleInit {
       (resolved.config.botSettings?.allowAudioReplies ?? true) &&
       (botReply.replyType === 'audio' || preferAudioReply);
     let usedGallery = false;
+    let mediaDelivered = false;
 
     if (botReply.mediaFiles.length > 0) {
       this.logDeliveryStage('evolution_send_attempt', diagnostic, {
@@ -856,19 +860,30 @@ export class WhatsAppService implements OnModuleInit {
           botReply.reply,
           diagnostic,
         );
+        mediaDelivered = true;
       } catch (error) {
         this.logDeliveryFailure('evolution_send', error, diagnostic, {
           sendAs: 'media',
         });
-        throw error;
+        this.logger.warn(
+          JSON.stringify({
+            event: 'whatsapp_media_delivery_fallback_to_text',
+            traceId: diagnostic.traceId ?? null,
+            contactId,
+            mediaCount: botReply.mediaFiles.length,
+            error: error instanceof Error ? error.message : 'Unknown error',
+          }),
+        );
       }
-      usedGallery = true;
-      this.logDeliveryStage('evolution_send_completed', diagnostic, {
-        sendAs: 'media',
-        mediaCount: botReply.mediaFiles.length,
-      });
+      if (mediaDelivered) {
+        usedGallery = true;
+        this.logDeliveryStage('evolution_send_completed', diagnostic, {
+          sendAs: 'media',
+          mediaCount: botReply.mediaFiles.length,
+        });
+      }
 
-      if (!shouldSendAudioReply) {
+      if (usedGallery && !shouldSendAudioReply) {
         this.logger.log(
           JSON.stringify({
             event: 'whatsapp_reply_sent',
@@ -950,7 +965,12 @@ export class WhatsAppService implements OnModuleInit {
       sendAs: 'text',
     });
     try {
-      await this.sendText(resolved, outboundAddress, botReply.reply, diagnostic);
+      await this.sendTextReliably(resolved, outboundAddress, botReply.reply, diagnostic, {
+        contactId,
+        reason: 'primary_text_reply',
+        fallbackText:
+          botReply.reply.trim() === fallbackMessage.trim() ? undefined : fallbackMessage,
+      });
     } catch (error) {
       this.logDeliveryFailure('evolution_send', error, diagnostic, {
         sendAs: 'text',
@@ -1036,22 +1056,30 @@ export class WhatsAppService implements OnModuleInit {
         typeof durationSeconds === 'number' &&
         durationSeconds > WhatsAppService.MAX_AUDIO_DURATION_SECONDS
       ) {
-        await this.sendText(
+        await this.sendTextReliably(
           resolved,
           outboundAddress,
           'Tu nota de voz supera los 60 segundos. Enviamela mas corta, por favor.',
           mergedDiagnostic,
+          {
+            contactId: incoming.number,
+            reason: 'audio_too_long',
+          },
         );
         return;
       }
 
       const transcript = await this.getOrCreateAudioTranscript(resolved, incoming);
       if (!transcript) {
-        await this.sendText(
+        await this.sendTextReliably(
           resolved,
           outboundAddress,
           'No pude entender tu nota de voz. Si puedes, mandamela otra vez o escribeme.',
           mergedDiagnostic,
+          {
+            contactId: incoming.number,
+            reason: 'audio_transcript_empty',
+          },
         );
         return;
       }
@@ -1085,11 +1113,15 @@ export class WhatsAppService implements OnModuleInit {
         error instanceof Error ? error.stack : undefined,
       );
 
-      await this.sendText(
+      await this.sendTextReliably(
         resolved,
         outboundAddress,
         'No pude procesar tu audio ahora mismo. Si quieres, escribeme el mensaje.',
         mergedDiagnostic,
+        {
+          contactId: incoming.number,
+          reason: 'audio_processing_failed',
+        },
       );
     }
   }
@@ -1339,6 +1371,68 @@ export class WhatsAppService implements OnModuleInit {
         }),
       );
       await this.sendAudio(resolved, to, audio, options, diagnostic);
+    }
+  }
+
+  private async sendTextReliably(
+    resolved: ResolvedWhatsAppClient,
+    to: string,
+    text: string,
+    diagnostic?: DeliveryDiagnosticContext,
+    options?: {
+      contactId?: string;
+      reason?: string;
+      fallbackText?: string;
+    },
+  ): Promise<void> {
+    try {
+      await this.sendText(resolved, to, text, diagnostic);
+      return;
+    } catch (error) {
+      this.logger.warn(
+        JSON.stringify({
+          event: 'whatsapp_text_retry',
+          traceId: diagnostic?.traceId ?? null,
+          contactId: options?.contactId ?? null,
+          reason: options?.reason ?? null,
+          error: error instanceof Error ? error.message : 'Unknown error',
+        }),
+      );
+    }
+
+    try {
+      await this.sendText(resolved, to, text, diagnostic);
+      return;
+    } catch (retryError) {
+      this.logger.warn(
+        JSON.stringify({
+          event: 'whatsapp_text_retry_failed',
+          traceId: diagnostic?.traceId ?? null,
+          contactId: options?.contactId ?? null,
+          reason: options?.reason ?? null,
+          error: retryError instanceof Error ? retryError.message : 'Unknown error',
+        }),
+      );
+    }
+
+    if (!options?.fallbackText || options.fallbackText.trim() === text.trim()) {
+      throw new HttpException('WhatsApp text delivery failed', HttpStatus.BAD_GATEWAY);
+    }
+
+    try {
+      await this.sendText(resolved, to, options.fallbackText, diagnostic);
+    } catch (fallbackError) {
+      this.logger.error(
+        JSON.stringify({
+          event: 'whatsapp_text_fallback_failed',
+          traceId: diagnostic?.traceId ?? null,
+          contactId: options?.contactId ?? null,
+          reason: options?.reason ?? null,
+          error: fallbackError instanceof Error ? fallbackError.message : 'Unknown error',
+        }),
+        fallbackError instanceof Error ? fallbackError.stack : undefined,
+      );
+      throw fallbackError;
     }
   }
 

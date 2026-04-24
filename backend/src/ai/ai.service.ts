@@ -377,21 +377,12 @@ export class AiService {
 
   private normalizeReplyContent(
     content: string,
-    replyType: AssistantReply['type'],
+    _replyType: AssistantReply['type'],
   ): string {
-    const compact = content
+    return content
       .split('\n')
       .map((line) => line.trim())
       .filter((line) => line.length > 0)
-      .slice(0, replyType === 'audio' ? 3 : 2)
       .join('\n');
-
-    const words = compact.split(/\s+/).filter((word) => word.length > 0);
-    const maxWords = replyType === 'audio' ? 45 : 28;
-    if (words.length <= maxWords) {
-      return compact;
-    }
-
-    return words.slice(0, maxWords).join(' ');
   }
 }

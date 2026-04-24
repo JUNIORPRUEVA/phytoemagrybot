@@ -363,6 +363,7 @@ class _DashboardShellState extends State<DashboardShell> {
                             isMobile ? 96 : 12,
                           ),
                           child: SingleChildScrollView(
+                            key: ValueKey<int>(_selectedIndex),
                             child: pages[_selectedIndex],
                           ),
                         ),

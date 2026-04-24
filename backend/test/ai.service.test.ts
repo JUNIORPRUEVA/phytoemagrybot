@@ -52,3 +52,18 @@ test('system prompt keeps brief mode focused on direct answers', () => {
   assert.match(prompt, /precio, disponibilidad, envio o una duda puntual/i);
   assert.match(prompt, /no dejes frases a medias/i);
 });
+
+test('parseAssistantReply keeps full text content without truncating lines or words', () => {
+  const service = new AiService() as any;
+  const content =
+    'Hola, claro. Te explico completo como funciona el producto, cuales beneficios tiene, como se toma, que resultados puedes esperar, el precio, el envio y como comprar hoy mismo sin dejarte nada importante fuera.';
+  const longReply = JSON.stringify({
+    type: 'text',
+    content,
+  });
+
+  const parsed = service.parseAssistantReply(longReply);
+
+  assert.equal(parsed.type, 'text');
+  assert.equal(parsed.content, content);
+});

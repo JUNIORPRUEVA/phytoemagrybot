@@ -2018,6 +2018,50 @@ test('processAndDeliverMessage can send media and then a voice reply', async () 
   assert.equal(sentTexts.length, 0);
 });
 
+test('processAndDeliverMessage falls back to text when media delivery fails', async () => {
+  const { service, sentTexts, sentAudios, botService } = createAudioFlowService();
+
+  botService.processIncomingMessage = async () => ({
+    reply: 'Te explico por aqui mientras te consigo las imagenes.',
+    replyType: 'text',
+    mediaFiles: [{
+      id: 1,
+      title: 'producto-1',
+      description: null,
+      fileUrl: 'https://example.com/producto-1.jpg',
+      fileType: 'image',
+      createdAt: new Date(),
+    }],
+    intent: 'catalogo',
+    decisionIntent: 'info',
+    stage: 'interesado',
+    action: 'guiar',
+    purchaseIntentScore: 40,
+    hotLead: false,
+    cached: false,
+    usedGallery: true,
+    usedMemory: false,
+    source: 'ai',
+  });
+  service.deliverMatchedMedia = async () => {
+    throw new Error('media send failed');
+  };
+
+  await service.processAndDeliverMessage(
+    createResolvedConfig(),
+    '18095551234',
+    'mandame fotos',
+    'text',
+    {
+      outboundAddress: '18095551234@s.whatsapp.net',
+    },
+  );
+
+  assert.equal(sentTexts.length, 1);
+  assert.equal(sentTexts[0]?.text, 'Te explico por aqui mientras te consigo las imagenes.');
+  assert.equal(sentAudios.length, 0);
+});
+
 test('prepareReplyForVoice removes emojis and leaves spoken punctuation', () => {
   const service = createService();
 
@@ -2049,6 +2093,35 @@ test('processAndDeliverMessage rewrites the text before generating voice', async
   );
 
   assert.match(preparedText, /te ayudo ahora mismo|claro|perfecto/i);
+});
+
+test('processAndDeliverMessage retries text delivery after a transient send failure', async () => {
+  const { service, sentTexts } = createAudioFlowService();
+  let attempts = 0;
+
+  service.sendText = async (_resolved: unknown, to: string, text: string) => {
+    attempts += 1;
+
+    if (attempts === 1) {
+      throw new Error('temporary failure');
+    }
+
+    sentTexts.push({ to, text });
+  };
+
+  await service.processAndDeliverMessage(
+    createResolvedConfig(),
+    '18095551234',
+    'hola',
+    'text',
+    {
+      outboundAddress: '18095551234@s.whatsapp.net',
+    },
+  );
+
+  assert.equal(attempts, 2);
+  assert.equal(sentTexts.length, 1);
+  assert.equal(sentTexts[0]?.text, 'Te ayudo ahora mismo');
 });
 
 test('processIncomingAudioMessage rejects audios longer than 60 seconds', async () => {

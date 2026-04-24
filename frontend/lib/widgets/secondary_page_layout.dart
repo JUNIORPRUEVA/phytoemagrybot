@@ -16,16 +16,17 @@ class SecondaryPageLayout extends StatelessWidget {
       builder: (context, constraints) {
         final compact = constraints.maxWidth < 760;
 
-        return Center(
+        return Align(
+          alignment: Alignment.topCenter,
           child: ConstrainedBox(
             constraints: BoxConstraints(maxWidth: compact ? 460 : 760),
             child: Column(
-              crossAxisAlignment: compact ? CrossAxisAlignment.start : CrossAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: <Widget>[
                 if (caption != null) ...<Widget>[
                   Text(
                     caption!,
-                    textAlign: compact ? TextAlign.start : TextAlign.center,
+                    textAlign: TextAlign.start,
                     style: TextStyle(
                       color: const Color(0xFF64748B),
                       fontSize: compact ? 12 : 13,
