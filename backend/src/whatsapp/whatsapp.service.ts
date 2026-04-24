@@ -53,7 +53,7 @@ type DeliveryDiagnosticContext = {
 @Injectable()
 export class WhatsAppService implements OnModuleInit {
   private static readonly AUTO_WEBHOOK_URL =
-    'https://n8n-n8n.gcdndd.easypanel.host/webhook/7e488a8b-fc78-4702-bbf4-8159f7ca094e';
+    'https://ai-business-platform-phytoemagrybot-backend.onqyr1.easypanel.host/webhook/whatsapp';
   private static readonly AUTO_WEBHOOK_EVENTS = ['messages.upsert'];
   private static readonly SHORT_AUDIO_MAX_SECONDS = 12;
   private static readonly MAX_AUDIO_DURATION_SECONDS = 60;

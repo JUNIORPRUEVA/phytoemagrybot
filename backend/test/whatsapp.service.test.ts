@@ -366,7 +366,7 @@ test('executeEvolutionRequest requires a configured instance name', async () => 
   );
 });
 
-test('setWebhook posts the n8n webhook for messages.upsert and validates the instance', async () => {
+test('setWebhook posts the backend webhook for messages.upsert and validates the instance', async () => {
   const service = createService();
   const calls: Array<{ path: string; body: Record<string, unknown> }> = [];
 
@@ -384,7 +384,7 @@ test('setWebhook posts the n8n webhook for messages.upsert and validates the ins
   });
   service.getEvolutionWebhookMetadata = async () => ({
     enabled: true,
-    url: 'https://n8n-n8n.gcdndd.easypanel.host/webhook/7e488a8b-fc78-4702-bbf4-8159f7ca094e',
+    url: 'https://ai-business-platform-phytoemagrybot-backend.onqyr1.easypanel.host/webhook/whatsapp',
     events: ['MESSAGES_UPSERT'],
   });
 
@@ -395,7 +395,7 @@ test('setWebhook posts the n8n webhook for messages.upsert and validates the ins
   assert.deepEqual(calls[0]?.body, {
     webhook: {
       enabled: true,
-      url: 'https://n8n-n8n.gcdndd.easypanel.host/webhook/7e488a8b-fc78-4702-bbf4-8159f7ca094e',
+      url: 'https://ai-business-platform-phytoemagrybot-backend.onqyr1.easypanel.host/webhook/whatsapp',
       events: ['MESSAGES_UPSERT'],
       byEvents: false,
       base64: true,
@@ -404,7 +404,7 @@ test('setWebhook posts the n8n webhook for messages.upsert and validates the ins
   assert.equal(result.instanceName, 'demo');
   assert.equal(
     result.webhook,
-    'https://n8n-n8n.gcdndd.easypanel.host/webhook/7e488a8b-fc78-4702-bbf4-8159f7ca094e',
+    'https://ai-business-platform-phytoemagrybot-backend.onqyr1.easypanel.host/webhook/whatsapp',
   );
 });
 
@@ -433,7 +433,7 @@ test('createInstance configures the webhook after creating the instance', async 
     webhookCalls.push(name);
     return {
       instanceName: name,
-      webhook: 'https://n8n-n8n.gcdndd.easypanel.host/webhook/7e488a8b-fc78-4702-bbf4-8159f7ca094e',
+      webhook: 'https://ai-business-platform-phytoemagrybot-backend.onqyr1.easypanel.host/webhook/whatsapp',
       events: ['MESSAGES_UPSERT'],
       message: 'ok',
     };
@@ -527,7 +527,7 @@ test('connectInstance configures the webhook after requesting the QR', async () 
     webhookCalls.push(name);
     return {
       instanceName: name,
-      webhook: 'https://n8n-n8n.gcdndd.easypanel.host/webhook/7e488a8b-fc78-4702-bbf4-8159f7ca094e',
+      webhook: 'https://ai-business-platform-phytoemagrybot-backend.onqyr1.easypanel.host/webhook/whatsapp',
       events: ['MESSAGES_UPSERT'],
       message: 'ok',
     };
@@ -1765,7 +1765,7 @@ test('createInstance syncs Evolution state before validating local connected ins
     webhookCalls.push(name);
     return {
       instanceName: name,
-      webhook: 'https://n8n-n8n.gcdndd.easypanel.host/webhook/7e488a8b-fc78-4702-bbf4-8159f7ca094e',
+      webhook: 'https://ai-business-platform-phytoemagrybot-backend.onqyr1.easypanel.host/webhook/whatsapp',
       events: ['messages.upsert'],
       message: 'ok',
     };

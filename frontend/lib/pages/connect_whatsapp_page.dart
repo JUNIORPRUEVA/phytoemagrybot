@@ -163,6 +163,7 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
       final nextSelectedName = selected?.name;
       String? nextQrCode = _qrCode;
       String? nextQrCodeBase64 = _qrCodeBase64;
+      String? nextErrorMessage = preserveMessage ? _errorMessage : null;
 
       if (selected == null) {
         nextQrCode = null;
@@ -173,9 +174,15 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
       } else if (nextSelectedName != _selectedInstanceName ||
           ((nextQrCodeBase64 == null || nextQrCodeBase64.isEmpty) &&
               (nextQrCode == null || nextQrCode.isEmpty))) {
-        final qr = await widget.apiService.getQr(selected.name);
-        nextQrCode = qr.qrCode;
-        nextQrCodeBase64 = qr.qrCodeBase64;
+        try {
+          final qr = await widget.apiService.getQr(selected.name);
+          nextQrCode = qr.qrCode;
+          nextQrCodeBase64 = qr.qrCodeBase64;
+        } catch (error) {
+          nextQrCode = null;
+          nextQrCodeBase64 = null;
+          nextErrorMessage = _formatQrError(error);
+        }
       }
 
       if (!mounted) {
@@ -189,9 +196,7 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
         _qrCodeBase64 = nextQrCodeBase64;
         _displayNameController.text = selected?.displayName ?? '';
         _phoneController.text = selected?.phone ?? '';
-        if (!preserveMessage) {
-          _errorMessage = null;
-        }
+        _errorMessage = nextErrorMessage;
       });
     } catch (error) {
       if (!mounted) {
@@ -266,11 +271,15 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
         instanceName,
         phone: phone,
       );
-      final webhook = await widget.apiService.setWebhook(
-        created.name,
-        webhookUrl: preparedConfig.webhookUrl,
-      );
-      final qr = await widget.apiService.getQr(created.name);
+      final webhook = await widget.apiService.setWebhook(created.name);
+      WhatsAppQrData? qr;
+      String? qrErrorMessage;
+
+      try {
+        qr = await widget.apiService.getQr(created.name);
+      } catch (error) {
+        qrErrorMessage = _formatQrError(error);
+      }
 
       if (!mounted) {
         return;
@@ -279,15 +288,18 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
       _newInstanceNameController.clear();
       _newInstancePhoneController.clear();
       _selectedInstanceName = created.name;
-      _qrCode = qr.qrCode;
-      _qrCodeBase64 = qr.qrCodeBase64;
+      _qrCode = qr?.qrCode;
+      _qrCodeBase64 = qr?.qrCodeBase64;
       _webhookMessage = webhook.message;
+      _errorMessage = qrErrorMessage;
 
       await _persistInstanceNameIfNeeded(created.name);
       await _loadInstances(showLoader: false, preserveMessage: true);
       _notifyConfigUpdated();
       _showMessage(
-        qr.message.isEmpty ? 'Instancia creada correctamente.' : qr.message,
+        qr == null
+            ? 'Instancia creada correctamente. Aun no hay un QR disponible para esta instancia.'
+            : (qr.message.isEmpty ? 'Instancia creada correctamente.' : qr.message),
       );
     } catch (error) {
       if (!mounted) {
@@ -332,21 +344,7 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
       if (preparedConfig == null) {
         return;
       }
-      final webhookUrl = await _promptWebhookUrl(
-        initialValue: preparedConfig.webhookUrl,
-      );
-      if (webhookUrl == null) {
-        return;
-      }
-      final updatedConfig = await _saveWebhookUrl(
-        instanceName,
-        webhookUrl,
-        preparedConfig,
-      );
-      final response = await widget.apiService.setWebhook(
-        instanceName,
-        webhookUrl: updatedConfig.webhookUrl,
-      );
+      final response = await widget.apiService.setWebhook(instanceName);
 
       if (!mounted) {
         return;
@@ -445,7 +443,7 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
   }
 
   Future<ClientConfigData?> _ensureChannelConfig(String instanceName) async {
-    return _ensureChannelBaseConfig(instanceName, requireWebhookUrl: true);
+    return _ensureChannelBaseConfig(instanceName, requireWebhookUrl: false);
   }
 
   Future<ClientConfigData?> _ensureChannelBaseConfig(
@@ -589,96 +587,6 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
     return updatedConfig;
   }
 
-  Future<String?> _promptWebhookUrl({required String initialValue}) async {
-    var webhookUrl = initialValue;
-
-    _isDialogOpen = true;
-    final result = await showDialog<String>(
-      context: context,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          title: const Text('Configurar URL del webhook'),
-          content: SizedBox(
-            width: 520,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
-                const Text(
-                  'Escribe la URL del webhook que Evolution debe usar, por ejemplo la de tu flujo de n8n.',
-                  style: TextStyle(color: Color(0xFF475569), height: 1.4),
-                ),
-                const SizedBox(height: 16),
-                TextFormField(
-                  initialValue: webhookUrl,
-                  onChanged: (value) => webhookUrl = value,
-                  decoration: const InputDecoration(
-                    labelText: 'Webhook URL',
-                    hintText: 'https://tu-n8n.com/webhook/...',
-                  ),
-                ),
-              ],
-            ),
-          ),
-          actions: <Widget>[
-            TextButton(
-              onPressed: () {
-                FocusScope.of(context).unfocus();
-                Navigator.of(context).pop();
-              },
-              child: const Text('Cancelar'),
-            ),
-            FilledButton(
-              onPressed: () {
-                FocusScope.of(context).unfocus();
-                Navigator.of(context).pop(
-                  webhookUrl.trim(),
-                );
-              },
-              child: const Text('Guardar y configurar'),
-            ),
-          ],
-        );
-      },
-    );
-    _isDialogOpen = false;
-
-    if (result == null) {
-      return null;
-    }
-
-    if (result.isEmpty) {
-      throw ApiException('La URL del webhook es obligatoria.');
-    }
-
-    return result;
-  }
-
-  Future<ClientConfigData> _saveWebhookUrl(
-    String instanceName,
-    String webhookUrl,
-    ClientConfigData sourceConfig,
-  ) async {
-    final updatedConfig = await widget.apiService.saveChannelSettings(
-      evolutionApiUrl: sourceConfig.evolutionApiUrl,
-      evolutionApiKey: sourceConfig.evolutionApiKey,
-      instanceName: instanceName,
-      webhookSecret: sourceConfig.webhookSecret,
-      webhookUrl: webhookUrl,
-    );
-
-    if (!mounted) {
-      return updatedConfig;
-    }
-
-    setState(() {
-      _applyConfig(updatedConfig);
-    });
-    _notifyConfigUpdated();
-
-    return updatedConfig;
-  }
-
   void _notifyConfigUpdated() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) {
@@ -687,6 +595,15 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
 
       widget.onConfigUpdated();
     });
+  }
+
+  String _formatQrError(Object error) {
+    final message = error.toString().replaceFirst('Exception: ', '').trim();
+    if (message.toLowerCase() == 'not found') {
+      return 'La instancia existe, pero Evolution todavia no devuelve un QR para ella.';
+    }
+
+    return message;
   }
 
   Future<ClientConfigData> _persistInstanceNameIfNeeded(
@@ -740,9 +657,16 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
 
     try {
       final status = await widget.apiService.getStatus(instanceName);
-      final qr = status.connected
-          ? null
-          : await widget.apiService.getQr(instanceName);
+      WhatsAppQrData? qr;
+      String? qrErrorMessage;
+
+      if (!status.connected) {
+        try {
+          qr = await widget.apiService.getQr(instanceName);
+        } catch (error) {
+          qrErrorMessage = _formatQrError(error);
+        }
+      }
 
       if (!mounted) {
         return;
@@ -754,7 +678,12 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
         _phoneController.text = status.phone ?? '';
         _qrCode = status.connected ? null : qr?.qrCode;
         _qrCodeBase64 = status.connected ? null : qr?.qrCodeBase64;
+        _errorMessage = qrErrorMessage;
       });
+
+      if (qrErrorMessage != null) {
+        _showMessage(qrErrorMessage, isError: true);
+      }
     } catch (error) {
       if (!mounted) {
         return;
