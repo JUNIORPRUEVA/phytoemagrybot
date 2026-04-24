@@ -841,9 +841,11 @@ export class WhatsAppService implements OnModuleInit {
       hotLead: botReply.hotLead,
     });
 
-    const shouldSendAudioReply =
-      (resolved.config.botSettings?.allowAudioReplies ?? true) &&
-      (botReply.replyType === 'audio' || preferAudioReply);
+    const replyType = botReply.replyType === 'audio' ? 'audio' : 'text';
+    const sendAs =
+      (resolved.config.botSettings?.allowAudioReplies ?? true) && replyType === 'audio'
+        ? 'audio'
+        : 'text';
     let usedGallery = false;
     let mediaDelivered = false;
 
@@ -883,7 +885,7 @@ export class WhatsAppService implements OnModuleInit {
         });
       }
 
-      if (usedGallery && !shouldSendAudioReply) {
+      if (usedGallery && sendAs !== 'audio') {
         this.logger.log(
           JSON.stringify({
             event: 'whatsapp_reply_sent',
@@ -904,7 +906,7 @@ export class WhatsAppService implements OnModuleInit {
       }
     }
 
-    if (shouldSendAudioReply) {
+    if (sendAs === 'audio') {
       try {
         const spokenReply = await this.voiceService.prepareSpokenReply({
           text: this.prepareReplyForVoice(botReply.reply),
@@ -918,6 +920,11 @@ export class WhatsAppService implements OnModuleInit {
           baseUrl: resolved.whatsapp.elevenLabsBaseUrl,
         });
 
+        console.log({
+          replyType,
+          sendAs: 'audio',
+          message: botReply.reply,
+        });
         this.logDeliveryStage('evolution_send_attempt', diagnostic, {
           sendAs: 'audio',
         });
@@ -937,7 +944,7 @@ export class WhatsAppService implements OnModuleInit {
             intent: botReply.intent,
             hotLead: botReply.hotLead,
             usedGallery,
-            replyType: 'audio',
+            replyType,
           }),
         );
         await this.followupService.registerBotReply({
@@ -961,6 +968,11 @@ export class WhatsAppService implements OnModuleInit {
       }
     }
 
+    console.log({
+      replyType,
+      sendAs: 'text',
+      message: botReply.reply,
+    });
     this.logDeliveryStage('evolution_send_attempt', diagnostic, {
       sendAs: 'text',
     });

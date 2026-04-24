@@ -4,16 +4,75 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 class _FakeApiService extends ApiService {
-  _FakeApiService() : super(baseUrl: 'https://example.com');
+  _FakeApiService({this.initialUsageRules = const <String, dynamic>{
+    'send_location': 'solo_si_cliente_la_pide',
+  }}) : super(baseUrl: 'https://example.com');
 
   String? savedCompanyName;
   String? savedGoogleMapsLink;
   Map<String, dynamic>? savedWorkingHours;
   Map<String, dynamic>? savedUsageRules;
+  String? savedCompanyLogoUrl;
+  final Map<String, dynamic> initialUsageRules;
+  ClientConfigData _config = ClientConfigData.empty();
+
+  @override
+  Future<ClientConfigData> getConfig() async {
+    return _config;
+  }
+
+  @override
+  Future<ClientConfigData> saveBrandingSettings({
+    required String companyName,
+    required String companyDetails,
+    required String companyLogoUrl,
+  }) async {
+    savedCompanyLogoUrl = companyLogoUrl;
+    _config = ClientConfigData(
+      id: _config.id,
+      backendOnline: _config.backendOnline,
+      backendStatus: _config.backendStatus,
+      openaiConfigured: _config.openaiConfigured,
+      elevenLabsConfigured: _config.elevenLabsConfigured,
+      evolutionApiUrl: _config.evolutionApiUrl,
+      evolutionApiKey: _config.evolutionApiKey,
+      instanceName: _config.instanceName,
+      webhookSecret: _config.webhookSecret,
+      webhookUrl: _config.webhookUrl,
+      fallbackMessage: _config.fallbackMessage,
+      audioVoiceId: _config.audioVoiceId,
+      elevenLabsBaseUrl: _config.elevenLabsBaseUrl,
+      promptBase: _config.promptBase,
+      greetingPrompt: _config.greetingPrompt,
+      companyInfoPrompt: _config.companyInfoPrompt,
+      productInfoPrompt: _config.productInfoPrompt,
+      salesGuidelinesPrompt: _config.salesGuidelinesPrompt,
+      objectionHandlingPrompt: _config.objectionHandlingPrompt,
+      closingPrompt: _config.closingPrompt,
+      supportPrompt: _config.supportPrompt,
+      aiModelName: _config.aiModelName,
+      aiTemperature: _config.aiTemperature,
+      aiMemoryWindow: _config.aiMemoryWindow,
+      aiMaxCompletionTokens: _config.aiMaxCompletionTokens,
+      responseCacheTtlSeconds: _config.responseCacheTtlSeconds,
+      spamGroupWindowMs: _config.spamGroupWindowMs,
+      allowAudioReplies: _config.allowAudioReplies,
+      followupEnabled: _config.followupEnabled,
+      followup1DelayMinutes: _config.followup1DelayMinutes,
+      followup2DelayMinutes: _config.followup2DelayMinutes,
+      followup3DelayHours: _config.followup3DelayHours,
+      maxFollowups: _config.maxFollowups,
+      stopIfUserReply: _config.stopIfUserReply,
+      companyName: companyName,
+      companyDetails: companyDetails,
+      companyLogoUrl: companyLogoUrl,
+    );
+    return _config;
+  }
 
   @override
   Future<CompanyContextData> getCompanyContext() async {
-    return const CompanyContextData(
+    return CompanyContextData(
       id: 1,
       companyName: 'Phyto Emagry',
       description: 'Suplementos y orientacion comercial.',
@@ -38,9 +97,7 @@ class _FakeApiService extends ApiService {
       imagesJson: <CompanyImageData>[
         CompanyImageData(url: 'https://example.com/company.jpg'),
       ],
-      usageRulesJson: <String, dynamic>{
-        'send_location': 'solo_si_cliente_la_pide',
-      },
+      usageRulesJson: initialUsageRules,
     );
   }
 
@@ -85,7 +142,7 @@ class _FakeApiService extends ApiService {
 }
 
 void main() {
-  testWidgets('company context page loads and saves structured business data', (
+  testWidgets('company context page opens as a menu and saves from a detail section', (
     WidgetTester tester,
   ) async {
     final binding = TestWidgetsFlutterBinding.ensureInitialized();
@@ -110,26 +167,67 @@ void main() {
 
     await tester.pumpAndSettle();
 
-    expect(find.text('Informacion de la Empresa'), findsOneWidget);
-    expect(find.text('Phyto Emagry'), findsWidgets);
-    expect(find.text('Banreservas'), findsOneWidget);
-    expect(find.textContaining('Ejemplo:'), findsWidgets);
+    expect(find.text('Datos basicos'), findsOneWidget);
+    expect(find.text('Contacto'), findsOneWidget);
+    expect(find.text('Ubicacion'), findsOneWidget);
+    expect(find.text('Cuentas bancarias'), findsOneWidget);
 
+    await tester.tap(find.text('Datos basicos'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Logo'), findsOneWidget);
     await tester.enterText(find.byType(TextField).first, 'Phyto Emagry RD');
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Volver a empresa'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Ubicacion'));
+    await tester.pumpAndSettle();
+
     await tester.enterText(
       find.widgetWithText(TextField, 'https://www.google.com/maps?q=18.486058,-69.931212'),
       'https://maps.app.goo.gl/demo123',
     );
-    await tester.ensureVisible(find.widgetWithText(ElevatedButton, 'Guardar'));
-    await tester.tap(find.widgetWithText(ElevatedButton, 'Guardar'));
+    await tester.ensureVisible(find.widgetWithText(ElevatedButton, 'Guardar cambios'));
+    await tester.tap(find.widgetWithText(ElevatedButton, 'Guardar cambios'));
     await tester.pumpAndSettle();
 
     expect(apiService.savedCompanyName, 'Phyto Emagry RD');
     expect(apiService.savedGoogleMapsLink, 'https://maps.app.goo.gl/demo123');
     expect(apiService.savedWorkingHours?['lunes_viernes'], '8:00 AM - 6:00 PM');
     expect(apiService.savedUsageRules?['send_location'], 'solo_si_cliente_la_pide');
+    expect(apiService.savedCompanyLogoUrl, isNotNull);
     expect(refreshCount, 1);
 
     await binding.setSurfaceSize(null);
+  });
+
+  testWidgets('usage rules editor shows the default guide when rules are empty', (
+    WidgetTester tester,
+  ) async {
+    final apiService = _FakeApiService(initialUsageRules: const <String, dynamic>{});
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: CompanyContextPage(
+              apiService: apiService,
+              onConfigUpdated: () {},
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    final state = tester.state(find.byType(CompanyContextPage))
+        as CompanyContextPageStateAccess;
+    state.openUsageRulesEditor();
+    await tester.pumpAndSettle();
+
+    expect(find.text('Usar guia por defecto'), findsOneWidget);
+    expect(find.textContaining('send_location'), findsOneWidget);
+    expect(find.textContaining('send_bank_accounts'), findsOneWidget);
   });
 }

@@ -240,6 +240,21 @@ class _ToolsPageState extends State<ToolsPage> {
     );
   }
 
+  void _scrollToTop() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+
+      final position = Scrollable.maybeOf(context)?.position;
+      if (position == null) {
+        return;
+      }
+
+      position.jumpTo(0);
+    });
+  }
+
   String _sectionTitle(_ToolSection section) {
     switch (section) {
       case _ToolSection.access:
@@ -339,6 +354,7 @@ class _ToolsPageState extends State<ToolsPage> {
             setState(() {
               _selectedSection = section;
             });
+            _scrollToTop();
           },
         ),
       ],
@@ -356,6 +372,7 @@ class _ToolsPageState extends State<ToolsPage> {
             setState(() {
               _selectedSection = null;
             });
+            _scrollToTop();
           },
           onReload: isBusy ? null : _loadConfig,
         ),
@@ -388,6 +405,7 @@ class _ToolsPageState extends State<ToolsPage> {
                       setState(() {
                         _selectedSection = null;
                       });
+                      _scrollToTop();
                     },
               child: const Text('Volver a herramientas'),
             ),

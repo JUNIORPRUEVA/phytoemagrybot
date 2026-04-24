@@ -33,6 +33,7 @@ class _DashboardShellState extends State<DashboardShell> {
 
   int _selectedIndex = 0;
   int _mobileLastPrimaryPageIndex = 0;
+  bool _isCompanyContextMainView = true;
   final GlobalKey<State<BotPromptConfigPage>> _promptPageKey =
       GlobalKey<State<BotPromptConfigPage>>();
   final GlobalKey<State<CompanyContextPage>> _companyContextPageKey =
@@ -84,6 +85,15 @@ class _DashboardShellState extends State<DashboardShell> {
         apiService: _apiService,
         onConfigUpdated: _refreshOverview,
         onRequestBack: () => _selectPage(_mobileMainPageIndex),
+        onMainViewChanged: (isMainView) {
+          if (_isCompanyContextMainView == isMainView) {
+            return;
+          }
+
+          setState(() {
+            _isCompanyContextMainView = isMainView;
+          });
+        },
       ),
       GalleryPage(
         apiService: _apiService,
@@ -231,7 +241,8 @@ class _DashboardShellState extends State<DashboardShell> {
                   .toList(),
             )
           : _AppFooter(overviewFuture: _overviewFuture),
-      floatingActionButton: _selectedIndex == _companyContextPageIndex
+      floatingActionButton: _selectedIndex == _companyContextPageIndex &&
+              _isCompanyContextMainView
           ? FloatingActionButton.extended(
               onPressed: () {
                 final state =

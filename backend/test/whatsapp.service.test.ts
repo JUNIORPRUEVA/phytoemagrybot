@@ -1923,7 +1923,7 @@ test('extractPhone accepts Evolution wuid and ownerJid variants', () => {
   );
 });
 
-test('processIncomingAudioMessage answers voice notes as audio replies', async () => {
+test('processIncomingAudioMessage sends text when bot replyType is text', async () => {
   const { service, sentTexts, sentAudios } = createAudioFlowService();
 
   await service.processIncomingAudioMessage(createResolvedConfig(), {
@@ -1940,14 +1940,30 @@ test('processIncomingAudioMessage answers voice notes as audio replies', async (
     rawPayload: {},
   });
 
-  assert.equal(sentTexts.length, 0);
-  assert.equal(sentAudios.length, 1);
-  assert.equal(sentAudios[0]?.to, '18095551234@s.whatsapp.net');
-  assert.equal(sentAudios[0]?.options?.ptt, true);
+  assert.equal(sentTexts.length, 1);
+  assert.equal(sentTexts[0]?.to, '18095551234@s.whatsapp.net');
+  assert.equal(sentTexts[0]?.text, 'Te ayudo ahora mismo');
+  assert.equal(sentAudios.length, 0);
 });
 
 test('processIncomingAudioMessage answers long audios as voice notes', async () => {
-  const { service, sentTexts, sentAudios } = createAudioFlowService();
+  const { service, sentTexts, sentAudios, botService } = createAudioFlowService();
+
+  botService.processIncomingMessage = async () => ({
+    reply: 'Te respondo por audio.',
+    replyType: 'audio',
+    mediaFiles: [],
+    intent: 'otro',
+    decisionIntent: 'curioso',
+    stage: 'curioso',
+    action: 'guiar',
+    purchaseIntentScore: 0,
+    hotLead: false,
+    cached: false,
+    usedGallery: false,
+    usedMemory: false,
+    source: 'ai',
+  });
 
   await service.processIncomingAudioMessage(createResolvedConfig(), {
     number: '18095551234',
@@ -1966,6 +1982,25 @@ test('processIncomingAudioMessage answers long audios as voice notes', async () 
   assert.equal(sentTexts.length, 0);
   assert.equal(sentAudios.length, 1);
   assert.equal(sentAudios[0]?.options?.ptt, true);
+});
+
+test('processAndDeliverMessage keeps text delivery even when preferAudioReply is true', async () => {
+  const { service, sentTexts, sentAudios } = createAudioFlowService();
+
+  await service.processAndDeliverMessage(
+    createResolvedConfig(),
+    '18095551234',
+    'Hola me interesa comprar',
+    'text',
+    {
+      preferAudioReply: true,
+      outboundAddress: '18095551234@s.whatsapp.net',
+    },
+  );
+
+  assert.equal(sentTexts.length, 1);
+  assert.equal(sentTexts[0]?.text, 'Te ayudo ahora mismo');
+  assert.equal(sentAudios.length, 0);
 });
 
 test('processAndDeliverMessage can send media and then a voice reply', async () => {
@@ -2073,8 +2108,24 @@ test('prepareReplyForVoice removes emojis and leaves spoken punctuation', () => 
 });
 
 test('processAndDeliverMessage rewrites the text before generating voice', async () => {
-  const { service, voiceService } = createAudioFlowService();
+  const { service, voiceService, botService } = createAudioFlowService();
   let preparedText = '';
+
+  botService.processIncomingMessage = async () => ({
+    reply: 'Te ayudo ahora mismo',
+    replyType: 'audio',
+    mediaFiles: [],
+    intent: 'otro',
+    decisionIntent: 'curioso',
+    stage: 'curioso',
+    action: 'guiar',
+    purchaseIntentScore: 0,
+    hotLead: false,
+    cached: false,
+    usedGallery: false,
+    usedMemory: false,
+    source: 'ai',
+  });
 
   voiceService.prepareSpokenReply = async ({ text }: { text: string }) => {
     preparedText = text;
