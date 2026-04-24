@@ -169,3 +169,24 @@ test('catalog request returns multiple media when available', async () => {
   assert.equal(result.usedGallery, true);
   assert.equal(result.mediaFiles.length, 5);
 });
+
+test('voice request prefers audio replies', async () => {
+  const service = createService();
+  const result = await service.processIncomingMessage(
+    '18095551234',
+    'explicame por voz como funciona',
+  );
+
+  assert.equal(result.replyType, 'audio');
+});
+
+test('visual request requests more gallery media', async () => {
+  const service = createService({ mediaCount: 5 });
+  const result = await service.processIncomingMessage(
+    '18095551234',
+    'mandame fotos y resultados por favor',
+  );
+
+  assert.equal(result.usedGallery, true);
+  assert.equal(result.mediaFiles.length, 5);
+});

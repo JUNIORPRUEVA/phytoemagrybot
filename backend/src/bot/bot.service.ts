@@ -73,6 +73,7 @@ export class BotService {
     const intent = this.detectIntent(normalizedMessage);
     const hotLead = this.detectHotLead(normalizedMessage) || memoryContext.clientMemory.lastIntent === 'HOT';
     const mediaFiles = await this.selectMedia(normalizedMessage, intent);
+    const preferredReplyType = this.resolvePreferredReplyType(normalizedMessage);
     const usedMemory = this.hasUsefulMemory(memoryContext, history.length);
     const cacheKey = this.getReplyCacheKey(normalizedContactId, normalizedMessage);
     const cachedReply = await this.redisService.get<BotReplyResult>(cacheKey);
@@ -100,6 +101,7 @@ export class BotService {
       intent,
       hotLead,
       mediaFiles,
+      preferredReplyType,
       usedMemory,
     });
 
@@ -133,7 +135,7 @@ export class BotService {
 
     const result: BotReplyResult = {
       reply: reply.content,
-      replyType: reply.type,
+      replyType: preferredReplyType === 'audio' ? 'audio' : reply.type,
       mediaFiles,
       intent,
       hotLead,
@@ -342,7 +344,7 @@ export class BotService {
   }
 
   private async selectMedia(message: string, intent: BotIntent) {
-    const take = intent === 'catalogo' ? 5 : 3;
+    const take = intent === 'catalogo' || this.isVisualRequest(message) ? 5 : 3;
     return this.mediaService.getMediaByKeyword(message, take);
   }
 
@@ -351,6 +353,7 @@ export class BotService {
     intent: BotIntent;
     hotLead: boolean;
     mediaFiles: Awaited<ReturnType<BotService['getMediaByKeyword']>>;
+    preferredReplyType: BotReplyResult['replyType'];
     usedMemory: boolean;
   }): BotReplyResult | null {
     if (params.hotLead || params.intent === 'hot') {
@@ -360,6 +363,7 @@ export class BotService {
         params.intent,
         true,
         params.mediaFiles,
+        params.preferredReplyType,
         params.usedMemory,
       );
     }
@@ -371,6 +375,7 @@ export class BotService {
         params.intent,
         false,
         params.mediaFiles,
+        params.preferredReplyType,
         params.usedMemory,
       );
     }
@@ -382,6 +387,7 @@ export class BotService {
         params.intent,
         false,
         params.mediaFiles,
+        params.preferredReplyType,
         params.usedMemory,
       );
     }
@@ -397,6 +403,7 @@ export class BotService {
         params.intent,
         false,
         params.mediaFiles,
+        params.preferredReplyType,
         params.usedMemory,
       );
     }
@@ -410,11 +417,12 @@ export class BotService {
     intent: BotIntent,
     hotLead: boolean,
     mediaFiles: Awaited<ReturnType<BotService['getMediaByKeyword']>>,
+    replyType: BotReplyResult['replyType'],
     usedMemory: boolean,
   ): BotReplyResult {
     return {
       reply,
-      replyType: 'text',
+      replyType,
       mediaFiles,
       intent,
       hotLead,
@@ -423,6 +431,60 @@ export class BotService {
       usedMemory,
       source,
     };
+  }
+
+  private resolvePreferredReplyType(message: string): BotReplyResult['replyType'] {
+    return this.prefersVoiceReply(message) ? 'audio' : 'text';
+  }
+
+  private prefersVoiceReply(message: string): boolean {
+    const normalized = message.trim().toLowerCase();
+    if (!normalized) {
+      return false;
+    }
+
+    return [
+      'nota de voz',
+      'audio',
+      'voz',
+      'hablame',
+      'háblame',
+      'explicame por voz',
+      'explícame por voz',
+      'mandame un audio',
+      'mándame un audio',
+      'responde por audio',
+      'respondeme por audio',
+      'respóndeme por audio',
+    ].some((keyword) => normalized.includes(keyword));
+  }
+
+  private isVisualRequest(message: string): boolean {
+    const normalized = message.trim().toLowerCase();
+    if (!normalized) {
+      return false;
+    }
+
+    return [
+      'foto',
+      'fotos',
+      'imagen',
+      'imagenes',
+      'imágenes',
+      'catalogo',
+      'catálogo',
+      'muestrame',
+      'muéstrame',
+      'ensename',
+      'enséñame',
+      'ver',
+      'referencia',
+      'referencias',
+      'antes y despues',
+      'antes y después',
+      'resultado',
+      'resultados',
+    ].some((keyword) => normalized.includes(keyword));
   }
 
   private hasUsefulMemory(

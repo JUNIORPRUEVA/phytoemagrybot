@@ -15,7 +15,7 @@ function createService() {
 }
 
 function createAudioFlowService() {
-  const botService = {
+  const botService: any = {
     processIncomingMessage: async () => ({
       reply: 'Te ayudo ahora mismo',
       replyType: 'text',
@@ -1906,7 +1906,7 @@ test('extractPhone accepts Evolution wuid and ownerJid variants', () => {
   );
 });
 
-test('processIncomingAudioMessage answers short audios as text', async () => {
+test('processIncomingAudioMessage answers voice notes as audio replies', async () => {
   const { service, sentTexts, sentAudios } = createAudioFlowService();
 
   await service.processIncomingAudioMessage(createResolvedConfig(), {
@@ -1923,10 +1923,10 @@ test('processIncomingAudioMessage answers short audios as text', async () => {
     rawPayload: {},
   });
 
-  assert.equal(sentTexts.length, 1);
-  assert.equal(sentTexts[0]?.to, '18095551234@s.whatsapp.net');
-  assert.equal(sentTexts[0]?.text, 'Te ayudo ahora mismo');
-  assert.equal(sentAudios.length, 0);
+  assert.equal(sentTexts.length, 0);
+  assert.equal(sentAudios.length, 1);
+  assert.equal(sentAudios[0]?.to, '18095551234@s.whatsapp.net');
+  assert.equal(sentAudios[0]?.options?.ptt, true);
 });
 
 test('processIncomingAudioMessage answers long audios as voice notes', async () => {
@@ -1949,6 +1949,52 @@ test('processIncomingAudioMessage answers long audios as voice notes', async () 
   assert.equal(sentTexts.length, 0);
   assert.equal(sentAudios.length, 1);
   assert.equal(sentAudios[0]?.options?.ptt, true);
+});
+
+test('processAndDeliverMessage can send media and then a voice reply', async () => {
+  const { service, sentTexts, sentAudios, botService } = createAudioFlowService();
+  const deliveredMedia: string[] = [];
+
+  botService.processIncomingMessage = async () => ({
+    reply: 'Te mando las fotos y te explico por audio.',
+    replyType: 'audio',
+    mediaFiles: [{
+      id: 1,
+      title: 'producto-1',
+      description: null,
+      fileUrl: 'https://example.com/producto-1.jpg',
+      fileType: 'image',
+      createdAt: new Date(),
+    }],
+    intent: 'catalogo',
+    hotLead: false,
+    cached: false,
+    usedGallery: true,
+    usedMemory: false,
+    source: 'ai',
+  });
+  service.deliverMatchedMedia = async (
+    _resolved: unknown,
+    to: string,
+    mediaFiles: Array<{ fileUrl: string }>,
+  ) => {
+    deliveredMedia.push(`${to}:${mediaFiles[0]?.fileUrl ?? ''}`);
+  };
+
+  await service.processAndDeliverMessage(
+    createResolvedConfig(),
+    '18095551234',
+    'mandame fotos y explicamelo por audio',
+    'audio',
+    {
+      preferAudioReply: true,
+      outboundAddress: '18095551234@s.whatsapp.net',
+    },
+  );
+
+  assert.equal(deliveredMedia.length, 1);
+  assert.equal(sentAudios.length, 1);
+  assert.equal(sentTexts.length, 0);
 });
 
 test('processIncomingAudioMessage rejects audios longer than 60 seconds', async () => {

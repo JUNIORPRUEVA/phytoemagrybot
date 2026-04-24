@@ -829,6 +829,11 @@ export class WhatsAppService implements OnModuleInit {
       hotLead: botReply.hotLead,
     });
 
+    const shouldSendAudioReply =
+      (resolved.config.botSettings?.allowAudioReplies ?? true) &&
+      (botReply.replyType === 'audio' || preferAudioReply);
+    let usedGallery = false;
+
     if (botReply.mediaFiles.length > 0) {
       this.logDeliveryStage('evolution_send_attempt', diagnostic, {
         sendAs: 'media',
@@ -848,28 +853,29 @@ export class WhatsAppService implements OnModuleInit {
         });
         throw error;
       }
+      usedGallery = true;
       this.logDeliveryStage('evolution_send_completed', diagnostic, {
         sendAs: 'media',
         mediaCount: botReply.mediaFiles.length,
       });
-      this.logger.log(
-        JSON.stringify({
-          event: 'whatsapp_reply_sent',
-          traceId: diagnostic.traceId ?? null,
-          contactId,
-          intent: botReply.intent,
-          hotLead: botReply.hotLead,
-          usedGallery: true,
-          replyType: 'media',
-        }),
-      );
-      return;
+
+      if (!shouldSendAudioReply) {
+        this.logger.log(
+          JSON.stringify({
+            event: 'whatsapp_reply_sent',
+            traceId: diagnostic.traceId ?? null,
+            contactId,
+            intent: botReply.intent,
+            hotLead: botReply.hotLead,
+            usedGallery: true,
+            replyType: 'media',
+          }),
+        );
+        return;
+      }
     }
 
-    if (
-      (resolved.config.botSettings?.allowAudioReplies ?? true) &&
-      (botReply.replyType === 'audio' || preferAudioReply)
-    ) {
+    if (shouldSendAudioReply) {
       try {
         const audio = await this.voiceService.generateVoice({
           text: botReply.reply,
@@ -897,7 +903,7 @@ export class WhatsAppService implements OnModuleInit {
             contactId,
             intent: botReply.intent,
             hotLead: botReply.hotLead,
-            usedGallery: false,
+            usedGallery,
             replyType: 'audio',
           }),
         );
@@ -938,7 +944,7 @@ export class WhatsAppService implements OnModuleInit {
         contactId,
         intent: botReply.intent,
         hotLead: botReply.hotLead,
-        usedGallery: false,
+        usedGallery,
         replyType: 'text',
       }),
     );
@@ -1244,6 +1250,10 @@ export class WhatsAppService implements OnModuleInit {
     incoming: NormalizedIncomingWhatsAppMessage,
   ): boolean {
     const durationSeconds = incoming.audio?.seconds;
+
+    if (incoming.audio?.ptt) {
+      return true;
+    }
 
     if (typeof durationSeconds === 'number') {
       return durationSeconds > WhatsAppService.SHORT_AUDIO_MAX_SECONDS;
