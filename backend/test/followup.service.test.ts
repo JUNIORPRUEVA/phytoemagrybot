@@ -5,6 +5,7 @@ import { FollowupService } from '../src/followup/followup.service';
 
 function createFollowupHarness(options?: {
   aiReply?: string;
+  aiResponses?: Array<{ text: string; type?: 'text' | 'audio' }>;
   clientMemory?: Record<string, unknown>;
   initialMessages?: Array<{ contactId: string; role: string; content: string }>;
   summary?: string;
@@ -80,6 +81,20 @@ function createFollowupHarness(options?: {
               options?.aiReply ??
               'Hola 👋 solo paso por aquí por si todavía te interesa.',
         };
+      },
+      async generateResponses(params: any) {
+        aiCalls.push(params);
+
+        if (options?.aiResponses) {
+          return options.aiResponses;
+        }
+
+        return [{
+          text:
+            options?.aiReply ??
+            'Hola 👋 solo paso por aquí por si todavía te interesa.',
+          type: 'text',
+        }];
       },
     } as any,
     {
@@ -302,4 +317,29 @@ test('uses name and memory context for AI followups and avoids literal repetitio
   assert.match(aiCalls[0].context, /Objetivo del cliente: info/i);
   assert.notEqual(sentMessages[0]?.text, repeatedMessage);
   assert.equal(sentMessages.length, 1);
+});
+
+test('followup orchestrator picks a second candidate when the first one repeats the previous followup', async () => {
+  const repeatedMessage = 'Te escribo para ver si todavía te interesa 👍';
+  const { service, followups, sentMessages } = createFollowupHarness({
+    aiResponses: [
+      { text: repeatedMessage, type: 'text' },
+      { text: 'Ana, sigo por aquí por si quieres que te lo explique más claro.', type: 'text' },
+    ],
+  });
+
+  await service.registerBotReply({
+    contactId: '18095559911',
+    outboundAddress: '18095559911@s.whatsapp.net',
+    reply: repeatedMessage,
+  });
+
+  const current = followups.get('18095559911');
+  current.nextFollowupAt = new Date(Date.now() - 60 * 1000);
+  followups.set('18095559911', current);
+
+  await service.processDueFollowups();
+
+  assert.equal(sentMessages.length, 1);
+  assert.equal(sentMessages[0]?.text, 'Ana, sigo por aquí por si quieres que te lo explique más claro.');
 });

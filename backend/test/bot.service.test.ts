@@ -1581,3 +1581,39 @@ test('uses a dynamic human fallback instead of a fixed bot configuration error',
   assert.doesNotMatch(result.reply, /Configuracion incompleta del bot/i);
   assert.match(result.reply, /momentico|cargando/i);
 });
+
+test('hello thanks k tal conversation stays varied and does not repeat media', async () => {
+  const replies: string[] = [];
+  const service = createService({
+    generateResponses: async (params) => {
+      const message = String(params.message ?? '').toLowerCase();
+
+      if (message.includes('hola')) {
+        return [
+          { text: 'Hola, dime con qué te ayudo.', type: 'text' },
+          { text: 'Hey, cuéntame qué quieres saber.', type: 'text' },
+        ];
+      }
+
+      if (message.includes('gracias')) {
+        return [
+          { text: 'Con gusto, aquí sigo por si te ayudo con algo más.', type: 'text' },
+          { text: 'A la orden, si quieres te aclaro cualquier otra duda.', type: 'text' },
+        ];
+      }
+
+      return [
+        { text: 'Todo bien por aquí, dime qué quieres resolver ahora.', type: 'text' },
+        { text: 'Aquí tranquilo, si quieres seguimos y te ayudo rápido.', type: 'text' },
+      ];
+    },
+  });
+
+  replies.push((await service.processIncomingMessage('18095559998', 'Hola')).reply);
+  replies.push((await service.processIncomingMessage('18095559998', 'Gracias')).reply);
+  const third = await service.processIncomingMessage('18095559998', 'K tal');
+  replies.push(third.reply);
+
+  assert.equal(new Set(replies).size, 3);
+  assert.equal(third.mediaFiles.length, 0);
+});

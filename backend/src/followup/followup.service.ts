@@ -6,6 +6,7 @@ import { AiService } from '../ai/ai.service';
 import {
   AssistantLeadStage,
   AssistantReplyObjective,
+  AssistantResponseCandidate,
   AssistantResponseStyle,
 } from '../ai/ai.types';
 import { BotDecisionAction, BotDecisionIntent } from '../bot/bot-decision.types';
@@ -27,6 +28,7 @@ type FollowupConfig = {
 
 @Injectable()
 export class FollowupService {
+  private static readonly MAX_FOLLOWUP_REGENERATION_ATTEMPTS = 2;
   private readonly logger = new Logger(FollowupService.name);
 
   constructor(
@@ -290,40 +292,74 @@ export class FollowupService {
     const purchaseIntentScore = this.resolvePurchaseIntentScore(leadStage, step);
     const responseStyle: AssistantResponseStyle = step >= 2 ? 'brief' : 'balanced';
     const instruction = this.buildFollowupInstruction(step, followup, memoryContext);
+    let regenerationInstruction: string | undefined;
 
-    try {
-      const reply = await this.aiService.generateReply({
-        config,
-        fullPrompt: `${this.botConfigService.getFullPrompt(botConfig)}\n\n${instruction}`,
-        companyContext,
-        contactId: followup.contactId,
-        message: instruction,
-        history,
-        context: this.buildMemoryContext(memoryContext, followup),
-        classifiedIntent,
-        decisionAction,
-        purchaseIntentScore,
-        responseStyle,
-        leadStage,
-        replyObjective,
-      });
-
-      const candidate = reply.content.trim();
-      if (candidate && !this.wasRecentlyRepeated(candidate, followup, history)) {
-        return candidate;
-      }
-    } catch (error) {
-      this.logger.warn(
-        JSON.stringify({
-          event: 'followup_ai_generation_failed',
+    for (let attempt = 0; attempt <= FollowupService.MAX_FOLLOWUP_REGENERATION_ATTEMPTS; attempt += 1) {
+      try {
+        const candidates = await this.aiService.generateResponses({
+          config,
+          fullPrompt: `${this.botConfigService.getFullPrompt(botConfig)}\n\n${instruction}`,
+          companyContext,
           contactId: followup.contactId,
-          followupStep: step,
-          error: error instanceof Error ? error.message : 'Unknown error',
-        }),
-      );
+          message: instruction,
+          history,
+          context: this.buildMemoryContext(memoryContext, followup),
+          classifiedIntent,
+          decisionAction,
+          purchaseIntentScore,
+          responseStyle,
+          leadStage,
+          replyObjective,
+          candidateCount: 2,
+          regenerationInstruction,
+        });
+
+        console.log('RESPUESTAS GENERADAS:', candidates);
+        const selected = this.decideFollowupResponse(candidates, followup, history);
+        if (selected) {
+          console.log('RESPUESTA FINAL:', selected);
+          return selected;
+        }
+
+        regenerationInstruction =
+          'No repitas el ultimo follow-up ni reformules casi igual. Responde diferente, corto y natural.';
+      } catch (error) {
+        this.logger.warn(
+          JSON.stringify({
+            event: 'followup_ai_generation_failed',
+            contactId: followup.contactId,
+            followupStep: step,
+            error: error instanceof Error ? error.message : 'Unknown error',
+          }),
+        );
+        break;
+      }
     }
 
     return this.pickFallbackMessage(step, memoryContext, followup);
+  }
+
+  private decideFollowupResponse(
+    candidates: AssistantResponseCandidate[],
+    followup: ConversationFollowup,
+    history: StoredMessage[],
+  ): string | null {
+    for (const candidate of candidates) {
+      const text = candidate.text.trim();
+      if (!text) {
+        console.log('RESPUESTA RECHAZADA:', 'empty_text');
+        continue;
+      }
+
+      if (this.wasRecentlyRepeated(text, followup, history)) {
+        console.log('RESPUESTA RECHAZADA:', 'duplicate_text');
+        continue;
+      }
+
+      return text;
+    }
+
+    return null;
   }
 
   private buildFollowupInstruction(
