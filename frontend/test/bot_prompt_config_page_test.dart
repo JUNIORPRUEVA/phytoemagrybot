@@ -9,6 +9,8 @@ class _FakeInstructionApiService extends ApiService {
   ClientConfigData _config = ClientConfigData.empty();
   int savePromptsCalls = 0;
   int saveBotPromptConfigCalls = 0;
+  String lastPromptBase = '';
+  String lastBotPromptBase = '';
 
   @override
   Future<ClientConfigData> getConfig() async {
@@ -42,6 +44,7 @@ class _FakeInstructionApiService extends ApiService {
     List<ProductCatalogItemData>? products,
   }) async {
     savePromptsCalls += 1;
+    lastPromptBase = promptBase;
     _config = ClientConfigData(
       id: 1,
       backendOnline: true,
@@ -96,6 +99,7 @@ class _FakeInstructionApiService extends ApiService {
     required String promptSales,
   }) async {
     saveBotPromptConfigCalls += 1;
+    lastBotPromptBase = promptBase;
     return BotPromptConfigData(
       id: 1,
       promptBase: promptBase,
@@ -107,7 +111,7 @@ class _FakeInstructionApiService extends ApiService {
 }
 
 void main() {
-  testWidgets('instruction center renders structured sections', (WidgetTester tester) async {
+  testWidgets('instruction center saves a combined prompt from four cards', (WidgetTester tester) async {
     final _FakeInstructionApiService apiService = _FakeInstructionApiService();
     final TestWidgetsFlutterBinding binding = TestWidgetsFlutterBinding.ensureInitialized();
     await binding.setSurfaceSize(const Size(1400, 900));
@@ -127,10 +131,46 @@ void main() {
 
     await tester.pumpAndSettle();
 
-    expect(find.text('INSTRUCCIONES'), findsOneWidget);
     expect(find.text('IDENTIDAD Y COMPORTAMIENTO'), findsOneWidget);
-    expect(find.text('REGLAS DEL BOT'), findsOneWidget);
-    expect(find.text('PROMPTS DE VENTAS'), findsOneWidget);
+    expect(find.text('OBJETIVO Y FLUJO'), findsOneWidget);
+    expect(find.text('REGLAS Y LIMITES'), findsOneWidget);
+    expect(find.text('INSTRUCCION DE VENTAS'), findsOneWidget);
+
+    expect(find.byType(TextField), findsNothing);
+
+    await tester.ensureVisible(find.text('IDENTIDAD Y COMPORTAMIENTO'));
+    await tester.tap(find.text('IDENTIDAD Y COMPORTAMIENTO'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('OBJETIVO Y FLUJO'));
+    await tester.tap(find.text('OBJETIVO Y FLUJO'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('REGLAS Y LIMITES'));
+    await tester.tap(find.text('REGLAS Y LIMITES'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('INSTRUCCION DE VENTAS'));
+    await tester.tap(find.text('INSTRUCCION DE VENTAS'));
+    await tester.pumpAndSettle();
+
+    final fields = find.byType(TextField);
+    expect(fields, findsNWidgets(4));
+
+    await tester.enterText(fields.at(0), 'Identidad demo');
+    await tester.enterText(fields.at(1), 'Objetivo demo');
+    await tester.enterText(fields.at(2), 'Regla uno\nRegla dos');
+    await tester.enterText(fields.at(3), 'Venta demo');
+
+    final pageState = tester.state(find.byType(BotPromptConfigPage))
+      as BotPromptConfigPageStateAccess;
+    pageState.triggerSave();
+    await tester.pumpAndSettle();
+
+    expect(apiService.savePromptsCalls, 1);
+    expect(apiService.saveBotPromptConfigCalls, 1);
+    expect(
+      apiService.lastPromptBase,
+      '[IDENTIDAD]\nIdentidad demo\n\n[OBJETIVO]\nObjetivo demo\n\n[REGLAS]\nRegla uno\nRegla dos\n\n[VENTAS]\nVenta demo',
+    );
+    expect(apiService.lastBotPromptBase, apiService.lastPromptBase);
 
     await binding.setSurfaceSize(null);
   });

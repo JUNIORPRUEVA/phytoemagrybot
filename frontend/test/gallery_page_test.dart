@@ -163,10 +163,8 @@ void main() {
 
     await tester.pumpAndSettle();
 
-    expect(find.text('PRODUCTOS'), findsWidgets);
     expect(find.text('1 registrados'), findsOneWidget);
     expect(find.text('Te Detox Premium'), findsOneWidget);
-    expect(find.byIcon(Icons.add_rounded), findsWidgets);
 
     await tester.tap(find.text('Te Detox Premium'));
     await tester.pumpAndSettle();

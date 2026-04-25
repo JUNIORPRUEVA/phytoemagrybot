@@ -1,6 +1,7 @@
 import { Injectable, OnModuleInit } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { RedisService } from '../redis/redis.service';
 import { SaveCompanyContextDto } from './dto/save-company-context.dto';
 import {
   CompanyBankAccount,
@@ -14,8 +15,12 @@ type CompanyContextTopic = 'location' | 'payment' | 'schedule' | 'contact';
 @Injectable()
 export class CompanyContextService implements OnModuleInit {
   private static readonly CONTEXT_ID = 1;
+  private static readonly KNOWLEDGE_CONTEXT_CACHE_KEY = 'bot:knowledge-context:v1';
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly redisService: RedisService,
+  ) {}
 
   async onModuleInit(): Promise<void> {
     await this.ensureContext();
@@ -23,7 +28,9 @@ export class CompanyContextService implements OnModuleInit {
 
   async getContext(): Promise<CompanyContextRecord> {
     const record = await this.ensureContext();
-    return this.mapRecord(record);
+    const mapped = this.mapRecord(record);
+    await this.redisService.del(CompanyContextService.KNOWLEDGE_CONTEXT_CACHE_KEY);
+    return mapped;
   }
 
   async saveContext(data: SaveCompanyContextDto): Promise<CompanyContextRecord> {

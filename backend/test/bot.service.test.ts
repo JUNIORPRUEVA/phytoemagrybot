@@ -11,6 +11,13 @@ function createService(options?: {
   classifiedIntent?: string;
   companyContextText?: string;
   companyContextResolver?: (message: string) => string;
+  configConfigurations?: Record<string, unknown>;
+  botConfig?: {
+    promptBase?: string;
+    promptShort?: string;
+    promptHuman?: string;
+    promptSales?: string;
+  };
   memoryContext?: {
     messages?: Array<{ role: 'user' | 'assistant'; content: string }>;
     clientMemory?: {
@@ -71,10 +78,10 @@ function createService(options?: {
     {
       async getConfig() {
         return {
-          promptBase: '',
-          promptShort: '',
-          promptHuman: '',
-          promptSales: '',
+          promptBase: options?.botConfig?.promptBase ?? 'Habla claro y vende con naturalidad.',
+          promptShort: options?.botConfig?.promptShort ?? 'Responde con foco comercial.',
+          promptHuman: options?.botConfig?.promptHuman ?? 'Tono humano y cercano.',
+          promptSales: options?.botConfig?.promptSales ?? 'Cierra suave cuando convenga.',
         };
       },
       getFullPrompt() {
@@ -83,7 +90,7 @@ function createService(options?: {
     } as any,
     {
       async buildAgentContext() {
-        return options?.companyContextText ?? '';
+        return options?.companyContextText ?? options?.companyContextResolver?.('') ?? 'CONTEXTO_EMPRESA\n\n{"company_name":"Phyto Emagry","phone":"809-555-1234","address":"Santo Domingo"}';
       },
       async buildAgentContextForMessage(message: string) {
         return options?.companyContextResolver?.(message) ?? options?.companyContextText ?? '';
@@ -105,7 +112,29 @@ function createService(options?: {
             spamGroupWindowMs: 2000,
             allowAudioReplies: true,
           },
-          configurations: {},
+          configurations: options?.configConfigurations ?? {
+            instructions: {
+              identity: {
+                assistantName: 'Aura',
+                role: 'Asesora comercial',
+                objective: 'Convertir conversaciones en pedidos',
+                tone: 'Cercana',
+              },
+              rules: ['Siempre responde con datos reales'],
+              salesPrompts: {
+                opening: 'Abre con cercania.',
+                offer: 'Presenta valor y precio.',
+              },
+              products: [
+                {
+                  name: 'Te Detox Premium',
+                  category: 'Infusion',
+                  summary: 'Ayuda a digestion y bienestar.',
+                  price: 'RD$1,500',
+                },
+              ],
+            },
+          },
         };
       },
     } as any,
@@ -249,10 +278,11 @@ test('injects company context as a separate AI input without replacing prompts',
   assert.equal(typeof (capturedParams as { fullPrompt?: string } | null)?.fullPrompt, 'string');
 });
 
-test('does not inject company context for unrelated messages', async () => {
+test('always injects the mandatory combined knowledge context before replying', async () => {
   let capturedParams: Record<string, unknown> | null = null;
   const service = createService({
-    companyContextResolver: () => '',
+    companyContextText:
+      'CONTEXTO_EMPRESA\n\n{"company_name":"Phyto Emagry","phone":"809-555-1234","address":"Santo Domingo"}',
     onGenerateReply: (params) => {
       capturedParams = params;
     },
@@ -260,7 +290,33 @@ test('does not inject company context for unrelated messages', async () => {
 
   await service.processIncomingMessage('18095551234', 'hola');
 
-  assert.equal((capturedParams as { companyContext?: string } | null)?.companyContext ?? '', '');
+  const companyContext = String(
+    (capturedParams as { companyContext?: string } | null)?.companyContext ?? '',
+  );
+  assert.match(companyContext, /\[INSTRUCCIONES\]/);
+  assert.match(companyContext, /\[PRODUCTOS\]/);
+  assert.match(companyContext, /\[EMPRESA\]/);
+  assert.match(companyContext, /Te Detox Premium/);
+  assert.match(companyContext, /Phyto Emagry/);
+});
+
+test('throws configuration error when mandatory knowledge sources are incomplete', async () => {
+  const service = createService({
+    configConfigurations: {
+      instructions: {
+        identity: {
+          assistantName: 'Aura',
+        },
+        products: [],
+      },
+    },
+    companyContextText: '',
+  });
+
+  await assert.rejects(
+    () => service.processIncomingMessage('18095551234', 'hola'),
+    /Configuracion incompleta del bot/i,
+  );
 });
 
 test('location question injects only location business context', async () => {
@@ -378,14 +434,14 @@ test('doubt message uses direct convincing response', async () => {
   assert.equal((capturedParams as { replyObjective?: string } | null)?.replyObjective, 'resolver_duda');
 });
 
-test('repeated message uses cache on second request', async () => {
+test('repeated message still goes through AI and does not use reply cache shortcuts', async () => {
   const service = createService({ mediaCount: 1 });
   const first = await service.processIncomingMessage('18095551234', 'precio');
   const second = await service.processIncomingMessage('18095551234', 'precio');
 
   assert.equal(first.cached, false);
-  assert.equal(second.cached, true);
-  assert.equal(second.source, 'cache');
+  assert.equal(second.cached, false);
+  assert.equal(second.source, 'ai');
 });
 
 test('catalog request returns multiple media when available', async () => {
@@ -648,7 +704,13 @@ test('new customer does not inject unnecessary memory context into AI', async ()
 
   await service.processIncomingMessage('18095559991', 'hola, quiero informacion');
 
-  assert.equal((capturedParams as { context?: string } | null)?.context, '');
+  const context = String((capturedParams as { context?: string } | null)?.context ?? '');
+
+  assert.match(context, /\[INSTRUCCIONES\]/);
+  assert.match(context, /\[PRODUCTOS\]/);
+  assert.match(context, /\[EMPRESA\]/);
+  assert.doesNotMatch(context, /Resumen de la conversacion/i);
+  assert.doesNotMatch(context, /Memoria persistente/i);
 });
 
 test('interested customer sends profile memory to AI before answering', async () => {

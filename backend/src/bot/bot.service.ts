@@ -29,6 +29,8 @@ import {
 
 @Injectable()
 export class BotService {
+  private static readonly KNOWLEDGE_CONTEXT_CACHE_KEY = 'bot:knowledge-context:v1';
+
   private readonly logger = new Logger(BotService.name);
 
   constructor(
@@ -61,7 +63,11 @@ export class BotService {
     const config = await this.clientConfigService.getConfig();
     const botConfig = await this.botConfigService.getConfig();
     const memoryWindow = config.aiSettings?.memoryWindow ?? 6;
-    const cacheTtlSeconds = config.botSettings?.responseCacheTtlSeconds ?? 60;
+    const knowledgeContext = await this.getRequiredKnowledgeContext(
+      config,
+      botConfig,
+      normalizedMessage,
+    );
 
     this.logger.log(
       JSON.stringify({
@@ -105,70 +111,16 @@ export class BotService {
     const leadStage = this.mapDecisionStageToLeadStage(decision.stage, hotLead);
     const replyObjective = this.mapDecisionActionToReplyObjective(decision.action);
     const usedMemory = this.hasUsefulMemory(memoryContext, history.length);
-    const cacheKey = this.getReplyCacheKey(normalizedContactId, normalizedMessage);
-    const cachedReply = await this.redisService.get<BotReplyResult>(cacheKey);
     const galleryMediaFiles = await this.selectMedia(normalizedMessage, intent);
-
-    if (cachedReply) {
-      const result: BotReplyResult = {
-        ...cachedReply,
-        intent,
-        decisionIntent: decision.intent,
-        stage: decision.stage,
-        action: decision.action,
-        purchaseIntentScore: decision.purchaseIntentScore,
-        hotLead,
-        cached: true,
-        source: 'cache',
-      };
-
-      await this.memoryService.saveMessage({
-        contactId: normalizedContactId,
-        role: 'assistant',
-        content: result.reply,
-      });
-
-      console.log('RESPUESTA:', result.reply);
-      this.logReply(normalizedContactId, result);
-      return result;
-    }
-
-    const fastLaneReply = this.buildFastLaneReply({
-      message: normalizedMessage,
-      intent,
-      hotLead,
-      mediaFiles: galleryMediaFiles,
-      preferredReplyType,
-      responseStyle,
-      decision,
-      usedMemory,
-    });
-
-    if (fastLaneReply) {
-      await this.memoryService.saveMessage({
-        contactId: normalizedContactId,
-        role: 'assistant',
-        content: fastLaneReply.reply,
-      });
-
-      await this.redisService.set(cacheKey, fastLaneReply, cacheTtlSeconds);
-      console.log('RESPUESTA:', fastLaneReply.reply);
-      this.logReply(normalizedContactId, fastLaneReply);
-      return fastLaneReply;
-    }
-
-    const companyContext = await this.companyContextService.buildAgentContextForMessage(
-      normalizedMessage,
-    );
 
     const reply = await this.aiService.generateReply({
       config,
       fullPrompt: this.botConfigService.getFullPrompt(botConfig),
-      companyContext,
+      companyContext: knowledgeContext,
       contactId: normalizedContactId,
       message: normalizedMessage,
       history,
-      context: this.buildConversationContext(memoryContext),
+      context: this.buildCombinedConversationContext(knowledgeContext, memoryContext),
       classifiedIntent: decision.intent,
       decisionAction: decision.action,
       purchaseIntentScore: decision.purchaseIntentScore,
@@ -204,7 +156,6 @@ export class BotService {
     };
 
     await this.markBotResponseInDecisionState(normalizedContactId, reply.content, decision);
-    await this.redisService.set(cacheKey, result, cacheTtlSeconds);
     console.log('RESPUESTA:', result.reply);
     this.logReply(normalizedContactId, result);
     return result;
@@ -414,6 +365,245 @@ export class BotService {
     );
 
     return sections.join('\n\n');
+  }
+
+  private buildCombinedConversationContext(
+    knowledgeContext: string,
+    memoryContext: Awaited<ReturnType<MemoryService['getConversationContext']>>,
+  ): string {
+    const conversationContext = this.buildConversationContext(memoryContext);
+
+    return [knowledgeContext.trim(), conversationContext.trim()]
+      .filter((section) => section.length > 0)
+      .join('\n\n');
+  }
+
+  private async getRequiredKnowledgeContext(
+    config: Awaited<ReturnType<ClientConfigService['getConfig']>>,
+    botConfig: Awaited<ReturnType<BotConfigService['getConfig']>>,
+    message: string,
+  ): Promise<string> {
+    const cached = await this.redisService.get<string>(BotService.KNOWLEDGE_CONTEXT_CACHE_KEY);
+    const baseContext = cached?.trim() || (await this.buildAndCacheBaseKnowledgeContext(config, botConfig));
+    const filteredProductsBlock = this.buildProductsKnowledgeBlock(config, message);
+
+    if (!filteredProductsBlock) {
+      throw new BadRequestException(
+        'Configuracion incompleta del bot. Debes completar Instrucciones, Productos y Empresa antes de responder.',
+      );
+    }
+
+    return this.replaceProductsSection(baseContext, filteredProductsBlock);
+  }
+
+  private async buildAndCacheBaseKnowledgeContext(
+    config: Awaited<ReturnType<ClientConfigService['getConfig']>>,
+    botConfig: Awaited<ReturnType<BotConfigService['getConfig']>>,
+  ): Promise<string> {
+    const cached = await this.redisService.get<string>(BotService.KNOWLEDGE_CONTEXT_CACHE_KEY);
+    if (cached?.trim()) {
+      return cached.trim();
+    }
+
+    const instructionsBlock = this.buildInstructionsKnowledgeBlock(config, botConfig);
+    const productsBlock = this.buildProductsKnowledgeBlock(config, '');
+    const companyBlock = (await this.companyContextService.buildAgentContext()).trim();
+
+    if (!instructionsBlock || !productsBlock || !companyBlock) {
+      throw new BadRequestException(
+        'Configuracion incompleta del bot. Debes completar Instrucciones, Productos y Empresa antes de responder.',
+      );
+    }
+
+    const knowledgeContext = [
+      '[INSTRUCCIONES]',
+      instructionsBlock,
+      '[PRODUCTOS]',
+      productsBlock,
+      '[EMPRESA]',
+      companyBlock,
+      'Usa siempre estas tres fuentes como base obligatoria. No inventes datos fuera de este contexto y no contradigas las instrucciones.',
+    ].join('\n\n');
+
+    await this.redisService.set(BotService.KNOWLEDGE_CONTEXT_CACHE_KEY, knowledgeContext);
+    return knowledgeContext;
+  }
+
+  private buildInstructionsKnowledgeBlock(
+    config: Awaited<ReturnType<ClientConfigService['getConfig']>>,
+    botConfig: Awaited<ReturnType<BotConfigService['getConfig']>>,
+  ): string {
+    const configurations = this.asRecord(config.configurations);
+    const structuredInstructions = this.asRecord(configurations.instructions);
+    const identity = this.asRecord(structuredInstructions.identity);
+    const rules = this.asStringList(structuredInstructions.rules);
+    const salesPrompts = this.asRecord(structuredInstructions.salesPrompts);
+    const prompts = this.asRecord(configurations.prompts);
+    const sections: string[] = [];
+
+    this.appendLabeledValue(sections, 'Prompt base del sistema', config.promptBase);
+    this.appendLabeledValue(
+      sections,
+      'Prompt maestro comercial',
+      this.botConfigService.getFullPrompt(botConfig),
+    );
+    this.appendLabeledValue(sections, 'Nombre interno del bot', identity.assistantName);
+    this.appendLabeledValue(sections, 'Rol comercial', identity.role);
+    this.appendLabeledValue(sections, 'Objetivo principal', identity.objective);
+    this.appendLabeledValue(sections, 'Tono de voz', identity.tone);
+    this.appendLabeledValue(sections, 'Personalidad', identity.personality);
+    this.appendLabeledValue(sections, 'Estilo de respuesta', identity.responseStyle);
+    this.appendLabeledValue(sections, 'Firma sugerida', identity.signature);
+    this.appendLabeledValue(sections, 'Guardrails', identity.guardrails);
+
+    if (rules.length > 0) {
+      sections.push(`Reglas:\n${rules.map((rule) => `- ${rule}`).join('\n')}`);
+    }
+
+    this.appendLabeledValue(sections, 'Apertura', salesPrompts.opening);
+    this.appendLabeledValue(sections, 'Calificacion', salesPrompts.qualification);
+    this.appendLabeledValue(sections, 'Oferta', salesPrompts.offer);
+    this.appendLabeledValue(sections, 'Objeciones', salesPrompts.objectionHandling);
+    this.appendLabeledValue(sections, 'Cierre', salesPrompts.closing);
+    this.appendLabeledValue(sections, 'Seguimiento', salesPrompts.followUp);
+    this.appendLabeledValue(sections, 'Informacion de empresa legacy', prompts.companyInfo);
+    this.appendLabeledValue(sections, 'Guia comercial legacy', prompts.salesGuidelines);
+    this.appendLabeledValue(sections, 'Objeciones legacy', prompts.objectionHandling);
+    this.appendLabeledValue(sections, 'Cierre legacy', prompts.closingPrompt);
+
+    return sections.join('\n\n').trim();
+  }
+
+  private buildProductsKnowledgeBlock(
+    config: Awaited<ReturnType<ClientConfigService['getConfig']>>,
+    message: string,
+  ): string {
+    const configurations = this.asRecord(config.configurations);
+    const structuredInstructions = this.asRecord(configurations.instructions);
+    const rawProducts = Array.isArray(structuredInstructions.products)
+      ? structuredInstructions.products
+      : [];
+
+    const filteredRawProducts = this.filterRelevantProducts(rawProducts, message);
+    const sourceProducts = filteredRawProducts.length > 0 ? filteredRawProducts : rawProducts;
+
+    const products = sourceProducts
+      .map((item) => this.formatProductKnowledgeBlock(item))
+      .filter((item): item is string => item.length > 0);
+
+    return products.join('\n\n').trim();
+  }
+
+  private filterRelevantProducts(values: unknown[], message: string): unknown[] {
+    const normalizedMessage = this.normalizeTextForMatch(message);
+    if (!normalizedMessage) {
+      return [];
+    }
+
+    const terms = normalizedMessage
+      .split(/\s+/)
+      .map((term) => term.trim())
+      .filter((term) => term.length >= 3);
+
+    if (terms.length === 0) {
+      return [];
+    }
+
+    return values.filter((value) => {
+      const product = this.asRecord(value);
+      const haystack = this.normalizeTextForMatch(
+        [
+          product.name,
+          product.category,
+          product.summary,
+          product.price,
+          product.cta,
+          product.benefits,
+          product.usage,
+          product.notes,
+          ...this.asStringList(product.keywords),
+        ]
+          .map((item) => this.asString(item))
+          .join(' '),
+      );
+
+      return terms.some((term) => haystack.includes(term));
+    });
+  }
+
+  private replaceProductsSection(baseContext: string, productsBlock: string): string {
+    return baseContext.replace(
+      /\[PRODUCTOS\][\s\S]*?\n\n\[EMPRESA\]/,
+      `[PRODUCTOS]\n\n${productsBlock}\n\n[EMPRESA]`,
+    );
+  }
+
+  private normalizeTextForMatch(value: string): string {
+    return value
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .trim();
+  }
+
+  private formatProductKnowledgeBlock(value: unknown): string {
+    const product = this.asRecord(value);
+    const name = this.asString(product.name);
+
+    if (!name) {
+      return '';
+    }
+
+    const lines = [
+      name,
+      this.formatKnowledgeField('Categoria', product.category),
+      this.formatKnowledgeField('Resumen', product.summary),
+      this.formatKnowledgeField('Precio', product.price),
+      this.formatKnowledgeField('CTA', product.cta),
+      this.formatKnowledgeField('Beneficios', product.benefits),
+      this.formatKnowledgeField('Uso', product.usage),
+      this.formatKnowledgeField('Notas', product.notes),
+      this.formatKnowledgeField('Palabras clave', this.asStringList(product.keywords).join(', ')),
+    ].filter((line) => line.length > 0);
+
+    return lines.join('\n');
+  }
+
+  private appendLabeledValue(sections: string[], label: string, value: unknown): void {
+    const content = this.asString(value);
+    if (!content) {
+      return;
+    }
+
+    sections.push(`${label}:\n${content}`);
+  }
+
+  private formatKnowledgeField(label: string, value: unknown): string {
+    const content = this.asString(value);
+    return content ? `- ${label}: ${content}` : '';
+  }
+
+  private asRecord(value: unknown): Record<string, unknown> {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      return {};
+    }
+
+    return value as Record<string, unknown>;
+  }
+
+  private asString(value: unknown): string {
+    return typeof value === 'string' ? value.trim() : '';
+  }
+
+  private asStringList(value: unknown): string[] {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+
+    return value
+      .filter((item) => typeof item === 'string')
+      .map((item) => item.trim())
+      .filter((item) => item.length > 0);
   }
 
   private async selectMedia(message: string, intent: BotIntent) {
@@ -1195,10 +1385,6 @@ export class BotService {
         (memoryContext.clientMemory.objections?.length ?? 0) > 0 ||
         memoryContext.clientMemory.status !== 'nuevo',
     );
-  }
-
-  private getReplyCacheKey(contactId: string, message: string): string {
-    return `cache:${contactId}:${message.trim().toLowerCase()}`;
   }
 
   private isShortReply(reply: string): boolean {

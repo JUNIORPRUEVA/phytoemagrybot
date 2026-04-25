@@ -10,6 +10,10 @@ import '../widgets/secondary_page_layout.dart';
 
 enum _MediaUploadKind { image, video }
 
+abstract class ProductsPageStateAccess {
+  Future<void> triggerAddProductSheet();
+}
+
 class ProductsPage extends StatefulWidget {
   const ProductsPage({
     super.key,
@@ -26,7 +30,8 @@ class ProductsPage extends StatefulWidget {
   State<ProductsPage> createState() => _ProductsPageState();
 }
 
-class _ProductsPageState extends State<ProductsPage> {
+class _ProductsPageState extends State<ProductsPage>
+  implements ProductsPageStateAccess {
   final TextEditingController _assetTitleController = TextEditingController();
   final TextEditingController _assetDescriptionController = TextEditingController();
   final TextEditingController _nameController = TextEditingController();
@@ -186,6 +191,7 @@ class _ProductsPageState extends State<ProductsPage> {
 
       setState(() {
         _media = <MediaFileData>[created, ..._media];
+        _selectedMediaIds.add(created.id);
         _selectedBytes = null;
         _selectedFileName = null;
         _selectedContentType = null;
@@ -422,6 +428,11 @@ class _ProductsPageState extends State<ProductsPage> {
     );
   }
 
+  @override
+  Future<void> triggerAddProductSheet() {
+    return _openProductSheet();
+  }
+
   Future<void> _deleteProduct(ProductCatalogItemData product) async {
     final List<ProductCatalogItemData> nextProducts = _products
         .where((ProductCatalogItemData item) => item.id != product.id)
@@ -550,24 +561,9 @@ class _ProductsPageState extends State<ProductsPage> {
     final Widget content = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        if (isMobile && widget.onRequestBack != null) ...<Widget>[
-          Align(
-            alignment: Alignment.topLeft,
-            child: IconButton(
-              onPressed: widget.onRequestBack,
-              tooltip: 'Regresar',
-              style: IconButton.styleFrom(
-                backgroundColor: const Color(0xFFF8FAFC),
-                foregroundColor: const Color(0xFF0F172A),
-              ),
-              icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 18),
-            ),
-          ),
-          const SizedBox(height: 12),
-        ],
         _ProductsHeader(
           count: _products.length,
-          onAdd: _openProductSheet,
+          showTitle: !isMobile,
         ),
         if (_loadError != null) ...<Widget>[
           const SizedBox(height: 14),
@@ -594,22 +590,12 @@ class _ProductsPageState extends State<ProductsPage> {
           onDelete: _deleteProduct,
           onOpenAsset: _openMedia,
         ),
-        const SizedBox(height: 90),
+        const SizedBox(height: 24),
       ],
     );
 
     return SecondaryPageLayout(
-      caption: 'Productos ordenados en una lista compacta. Usa el boton flotante para agregar o editar.',
-      child: Stack(
-        children: <Widget>[
-          content,
-          Positioned(
-            right: 0,
-            bottom: 0,
-            child: _ProductFloatingButton(onTap: _openProductSheet),
-          ),
-        ],
-      ),
+      child: content,
     );
   }
 }
@@ -617,11 +603,11 @@ class _ProductsPageState extends State<ProductsPage> {
 class _ProductsHeader extends StatelessWidget {
   const _ProductsHeader({
     required this.count,
-    required this.onAdd,
+    required this.showTitle,
   });
 
   final int count;
-  final VoidCallback onAdd;
+  final bool showTitle;
 
   @override
   Widget build(BuildContext context) {
@@ -631,16 +617,18 @@ class _ProductsHeader extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
-              const Text(
-                'PRODUCTOS',
-                style: TextStyle(
-                  color: Color(0xFF0F172A),
-                  fontSize: 28,
-                  fontWeight: FontWeight.w900,
-                  letterSpacing: 0.8,
+              if (showTitle) ...<Widget>[
+                const Text(
+                  'PRODUCTOS',
+                  style: TextStyle(
+                    color: Color(0xFF0F172A),
+                    fontSize: 28,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 0.8,
+                  ),
                 ),
-              ),
-              const SizedBox(height: 6),
+                const SizedBox(height: 6),
+              ],
               Text(
                 '$count registrados',
                 style: const TextStyle(
@@ -652,49 +640,7 @@ class _ProductsHeader extends StatelessWidget {
             ],
           ),
         ),
-        FilledButton.tonalIcon(
-          onPressed: onAdd,
-          icon: const Icon(Icons.add_rounded),
-          label: const Text('Nuevo'),
-        ),
       ],
-    );
-  }
-}
-
-class _ProductFloatingButton extends StatelessWidget {
-  const _ProductFloatingButton({required this.onTap});
-
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(999),
-        child: Ink(
-          width: 62,
-          height: 62,
-          decoration: const BoxDecoration(
-            color: Color(0xFF111827),
-            shape: BoxShape.circle,
-            boxShadow: <BoxShadow>[
-              BoxShadow(
-                color: Color(0x33111827),
-                blurRadius: 22,
-                offset: Offset(0, 12),
-              ),
-            ],
-          ),
-          child: const Icon(
-            Icons.add_rounded,
-            color: Colors.white,
-            size: 30,
-          ),
-        ),
-      ),
     );
   }
 }
@@ -1191,79 +1137,38 @@ class _ProductEditorSheet extends StatelessWidget {
                           'No hay assets cargados todavia.',
                           style: TextStyle(color: Color(0xFF64748B)),
                         )
-                      else
-                        Column(
-                          children: media.map((MediaFileData item) {
-                            final bool selected = selectedMediaIds.contains(item.id);
-                            final bool deleting = deletingIds.contains(item.id);
-                            return Padding(
-                              padding: const EdgeInsets.only(bottom: 8),
-                              child: Container(
-                                padding: const EdgeInsets.all(12),
-                                decoration: BoxDecoration(
-                                  color: selected
-                                      ? const Color(0xFFE0F2FE)
-                                      : Colors.white,
-                                  borderRadius: BorderRadius.circular(16),
-                                  border: Border.all(
-                                    color: selected
-                                        ? const Color(0xFF38BDF8)
-                                        : const Color(0xFFE2E8F0),
-                                  ),
-                                ),
-                                child: Row(
-                                  children: <Widget>[
-                                    Checkbox(
-                                      value: selected,
-                                      onChanged: (bool? value) {
-                                        onToggleMedia(item.id, value ?? false);
-                                      },
-                                    ),
-                                    Expanded(
-                                      child: Column(
-                                        crossAxisAlignment: CrossAxisAlignment.start,
-                                        children: <Widget>[
-                                          Text(
-                                            item.title,
-                                            style: const TextStyle(
-                                              color: Color(0xFF0F172A),
-                                              fontWeight: FontWeight.w700,
-                                            ),
-                                          ),
-                                          if ((item.description ?? '').trim().isNotEmpty)
-                                            Padding(
-                                              padding: const EdgeInsets.only(top: 4),
-                                              child: Text(
-                                                item.description!,
-                                                style: const TextStyle(
-                                                  color: Color(0xFF64748B),
-                                                  fontSize: 12,
-                                                ),
-                                              ),
-                                            ),
-                                        ],
-                                      ),
-                                    ),
-                                    IconButton(
-                                      onPressed: () => onOpenAsset(item),
-                                      icon: const Icon(Icons.open_in_new_rounded),
-                                    ),
-                                    IconButton(
-                                      onPressed: deleting ? null : () => onDeleteAsset(item),
-                                      icon: deleting
-                                          ? const SizedBox(
-                                              width: 18,
-                                              height: 18,
-                                              child: CircularProgressIndicator(strokeWidth: 2),
-                                            )
-                                          : const Icon(Icons.delete_outline_rounded),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            );
-                          }).toList(),
+                      else ...<Widget>[
+                        const Text(
+                          'Toca una miniatura para vincularla al producto.',
+                          style: TextStyle(
+                            color: Color(0xFF64748B),
+                            fontSize: 12.5,
+                          ),
                         ),
+                        const SizedBox(height: 12),
+                        SizedBox(
+                          height: 132,
+                          child: ListView.separated(
+                            scrollDirection: Axis.horizontal,
+                            itemCount: media.length,
+                            separatorBuilder: (_, _) => const SizedBox(width: 10),
+                            itemBuilder: (BuildContext context, int index) {
+                              final MediaFileData item = media[index];
+                              final bool selected = selectedMediaIds.contains(item.id);
+                              final bool deleting = deletingIds.contains(item.id);
+
+                              return _MediaThumbTile(
+                                item: item,
+                                selected: selected,
+                                deleting: deleting,
+                                onTap: () => onToggleMedia(item.id, !selected),
+                                onOpen: () => onOpenAsset(item),
+                                onDelete: deleting ? null : () => onDeleteAsset(item),
+                              );
+                            },
+                          ),
+                        ),
+                      ],
                     ],
                   ),
                 ),
@@ -1315,6 +1220,203 @@ class _EditorField extends StatelessWidget {
       controller: controller,
       hintText: hintText,
       maxLines: maxLines,
+    );
+  }
+}
+
+class _MediaThumbTile extends StatelessWidget {
+  const _MediaThumbTile({
+    required this.item,
+    required this.selected,
+    required this.deleting,
+    required this.onTap,
+    required this.onOpen,
+    required this.onDelete,
+  });
+
+  final MediaFileData item;
+  final bool selected;
+  final bool deleting;
+  final VoidCallback onTap;
+  final VoidCallback onOpen;
+  final VoidCallback? onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 110,
+        padding: const EdgeInsets.all(6),
+        decoration: BoxDecoration(
+          color: selected ? const Color(0xFFE0F2FE) : Colors.white,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(
+            color: selected ? const Color(0xFF38BDF8) : const Color(0xFFE2E8F0),
+            width: selected ? 1.6 : 1,
+          ),
+          boxShadow: const <BoxShadow>[
+            BoxShadow(
+              color: Color(0x0F0F172A),
+              blurRadius: 12,
+              offset: Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Stack(
+              children: <Widget>[
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(14),
+                  child: SizedBox(
+                    width: double.infinity,
+                    height: 72,
+                    child: item.isImage
+                        ? Image.network(
+                            item.fileUrl,
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, _, _) => _MediaThumbPlaceholder(item: item),
+                          )
+                        : _MediaThumbPlaceholder(item: item),
+                  ),
+                ),
+                Positioned(
+                  top: 6,
+                  left: 6,
+                  child: Container(
+                    padding: const EdgeInsets.all(4),
+                    decoration: BoxDecoration(
+                      color: selected
+                          ? const Color(0xFF0284C7)
+                          : const Color(0x990F172A),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(
+                      selected
+                          ? Icons.check_rounded
+                          : (item.isVideo
+                              ? Icons.play_arrow_rounded
+                              : Icons.image_outlined),
+                      size: 14,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+                Positioned(
+                  top: 4,
+                  right: 4,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[
+                      _ThumbActionButton(
+                        icon: Icons.open_in_new_rounded,
+                        onTap: onOpen,
+                      ),
+                      const SizedBox(width: 4),
+                      _ThumbActionButton(
+                        icon: Icons.delete_outline_rounded,
+                        onTap: onDelete,
+                        loading: deleting,
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              item.title,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: Color(0xFF0F172A),
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                height: 1.2,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              item.isVideo ? 'Video' : 'Imagen',
+              style: const TextStyle(
+                color: Color(0xFF64748B),
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _MediaThumbPlaceholder extends StatelessWidget {
+  const _MediaThumbPlaceholder({required this.item});
+
+  final MediaFileData item;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: item.isVideo
+              ? const <Color>[Color(0xFF0F172A), Color(0xFF334155)]
+              : const <Color>[Color(0xFFE2E8F0), Color(0xFFCBD5E1)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+      ),
+      child: Center(
+        child: Icon(
+          item.isVideo ? Icons.videocam_rounded : Icons.image_rounded,
+          color: item.isVideo ? Colors.white : const Color(0xFF475569),
+          size: 28,
+        ),
+      ),
+    );
+  }
+}
+
+class _ThumbActionButton extends StatelessWidget {
+  const _ThumbActionButton({
+    required this.icon,
+    required this.onTap,
+    this.loading = false,
+  });
+
+  final IconData icon;
+  final VoidCallback? onTap;
+  final bool loading;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: const Color(0xAA0F172A),
+      borderRadius: BorderRadius.circular(999),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(999),
+        onTap: loading ? null : onTap,
+        child: SizedBox(
+          width: 24,
+          height: 24,
+          child: Center(
+            child: loading
+                ? const SizedBox(
+                    width: 12,
+                    height: 12,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.white,
+                    ),
+                  )
+                : Icon(icon, size: 14, color: Colors.white),
+          ),
+        ),
+      ),
     );
   }
 }

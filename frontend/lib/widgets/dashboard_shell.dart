@@ -27,6 +27,8 @@ class _DashboardShellState extends State<DashboardShell> {
   int _mobileLastPrimaryPageIndex = 0;
   final GlobalKey<State<BotPromptConfigPage>> _promptPageKey =
       GlobalKey<State<BotPromptConfigPage>>();
+    final GlobalKey<State<ProductsPage>> _productsPageKey =
+      GlobalKey<State<ProductsPage>>();
   final GlobalKey<State<ConfigPage>> _configPageKey =
       GlobalKey<State<ConfigPage>>();
   late final ApiService _apiService;
@@ -59,6 +61,7 @@ class _DashboardShellState extends State<DashboardShell> {
         onRequestBack: () => _selectPage(_mobileMainPageIndex),
       ),
       ProductsPage(
+        key: _productsPageKey,
         apiService: _apiService,
         onConfigUpdated: _refreshOverview,
         onRequestBack: () => _selectPage(_mobileMainPageIndex),
@@ -85,9 +88,6 @@ class _DashboardShellState extends State<DashboardShell> {
     final bool isMobile = MediaQuery.sizeOf(context).width < 900;
     final bool isMobileMainPage =
         isMobile && _selectedIndex == _mobileMainPageIndex;
-    final bool hideMobileAppBar =
-        isMobile &&
-      _selectedIndex == _galleryPageIndex;
     final int mobileNavIndex = _mobileBottomNavIndices.indexOf(
       _mobileLastPrimaryPageIndex,
     );
@@ -104,9 +104,7 @@ class _DashboardShellState extends State<DashboardShell> {
               onSelect: _selectPage,
             )
           : null,
-      appBar: hideMobileAppBar
-          ? null
-          : AppBar(
+        appBar: AppBar(
               leading: isMobileMainPage
                   ? Builder(
                       builder: (context) {
@@ -135,10 +133,6 @@ class _DashboardShellState extends State<DashboardShell> {
                 future: _overviewFuture,
                 builder: (context, snapshot) {
                   final brandName = _resolveBrandName(snapshot.data);
-                  if (isMobileMainPage) {
-                    return Text(brandName);
-                  }
-
                   if (isMobile) {
                     return Text(labels[_selectedIndex]);
                   }
@@ -198,7 +192,17 @@ class _DashboardShellState extends State<DashboardShell> {
                   .toList(),
             )
           : _AppFooter(overviewFuture: _overviewFuture),
-      floatingActionButton: isMobile && _selectedIndex == _promptPageIndex
+      floatingActionButton: _selectedIndex == _galleryPageIndex
+          ? FloatingActionButton(
+              onPressed: () {
+                final state = _productsPageKey.currentState as ProductsPageStateAccess?;
+                state?.triggerAddProductSheet();
+              },
+              backgroundColor: const Color(0xFF111827),
+              foregroundColor: Colors.white,
+              child: const Icon(Icons.add_rounded),
+            )
+          : isMobile && _selectedIndex == _promptPageIndex
           ? FloatingActionButton.extended(
               onPressed: () {
                 final state =
@@ -221,6 +225,7 @@ class _DashboardShellState extends State<DashboardShell> {
                   _OfflineBanner(message: connectionStatus.message),
                 Expanded(
                   child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: <Widget>[
                       if (!isMobile)
                         Container(
@@ -314,7 +319,7 @@ class _DashboardShellState extends State<DashboardShell> {
                         child: Padding(
                           padding: EdgeInsets.fromLTRB(
                             isMobile ? 16 : 28,
-                            hideMobileAppBar ? 10 : (isMobile ? 16 : 24),
+                            isMobile ? 16 : 24,
                             isMobile ? 16 : 28,
                             isMobile ? 96 : 12,
                           ),

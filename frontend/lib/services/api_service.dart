@@ -205,7 +205,7 @@ class ClientConfigData {
       audioVoiceId: '',
       elevenLabsBaseUrl: '',
       promptBase:
-          'Eres un asistente profesional de WhatsApp. Responde con claridad, foco comercial y tono amable.',
+          'Eres un asistente de ventas por WhatsApp. Hablas como una persona real dominicana, respondes corto y siempre guias al cliente hacia la compra de PHYTOEMAGRY.',
       greetingPrompt: '',
       companyInfoPrompt: '',
       productInfoPrompt: '',

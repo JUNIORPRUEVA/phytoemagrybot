@@ -2,18 +2,21 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService as NestConfigService } from '@nestjs/config';
 import { AiSettings, BotSettings, Config, Prisma, WhatsAppSettings } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { RedisService } from '../redis/redis.service';
 import { SaveConfigDto } from './dto/save-config.dto';
 import { AppConfigRecord } from './config.types';
 
 @Injectable()
 export class ClientConfigService {
+  private static readonly KNOWLEDGE_CONTEXT_CACHE_KEY = 'bot:knowledge-context:v1';
+
   private static readonly CONFIG_ID = 1;
   private static readonly DEFAULT_WHATSAPP_WEBHOOK_URL =
     'https://ai-business-platform-phytoemagrybot-backend.onqyr1.easypanel.host/webhook/whatsapp';
   private static readonly LEGACY_N8N_WEBHOOK_URL =
     'https://n8n-n8n.gcdndd.easypanel.host/webhook/7e488a8b-fc78-4702-bbf4-8159f7ca094e';
   private static readonly DEFAULT_PROMPT =
-    'Eres un asistente profesional de WhatsApp. Responde con claridad, foco comercial y tono amable.';
+    'Eres un asistente de ventas por WhatsApp. Hablas como una persona real dominicana, respondes corto y siempre guias al cliente hacia la compra de PHYTOEMAGRY.';
   private static readonly DEFAULT_AI_MODEL = 'gpt-4o-mini';
   private static readonly DEFAULT_AI_TEMPERATURE = 0.4;
   private static readonly DEFAULT_AI_MAX_TOKENS = 420;
@@ -30,6 +33,7 @@ export class ClientConfigService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly configService: NestConfigService,
+    private readonly redisService: RedisService,
   ) {}
 
   async getConfig(): Promise<AppConfigRecord> {
@@ -79,6 +83,7 @@ export class ClientConfigService {
     });
 
     const syncedConfig = await this.syncStructuredSettings(config, mergedConfigurations);
+    await this.redisService.del(ClientConfigService.KNOWLEDGE_CONTEXT_CACHE_KEY);
     return this.applyEnvironmentFallbacks(syncedConfig);
   }
 
