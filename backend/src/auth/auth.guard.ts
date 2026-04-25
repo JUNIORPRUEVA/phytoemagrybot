@@ -27,7 +27,7 @@ export class AuthGuard implements CanActivate {
     }
 
     const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
-    const authorization = request.headers?.get('authorization');
+    const authorization = this.readAuthorizationHeader(request);
     if (!authorization?.startsWith('Bearer ')) {
       throw new UnauthorizedException('Debes iniciar sesión.');
     }
@@ -39,5 +39,28 @@ export class AuthGuard implements CanActivate {
 
     request.user = this.authService.verifyToken(token);
     return true;
+  }
+
+  private readAuthorizationHeader(request: AuthenticatedRequest): string {
+    const headers = request.headers as unknown;
+
+    if (headers && typeof (headers as { get?: unknown }).get === 'function') {
+      return String((headers as { get(name: string): string | null }).get('authorization') ?? '');
+    }
+
+    if (!headers || typeof headers !== 'object') {
+      return '';
+    }
+
+    const authorization = (headers as Record<string, unknown>).authorization;
+    if (typeof authorization === 'string') {
+      return authorization;
+    }
+
+    if (Array.isArray(authorization)) {
+      return authorization.find((value): value is string => typeof value === 'string') ?? '';
+    }
+
+    return '';
   }
 }

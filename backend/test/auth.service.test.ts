@@ -251,7 +251,7 @@ test('login rejects unknown user, wrong password, and invalid token', async () =
   );
 });
 
-test('auth guard reads bearer token and roles guard enforces admin access', async () => {
+test('auth guard reads bearer token from Fetch headers and Express headers object, and roles guard enforces admin access', async () => {
   const { authService } = createServices();
   const registered = await authService.register({
     name: 'Admin Demo',
@@ -272,6 +272,13 @@ test('auth guard reads bearer token and roles guard enforces admin access', asyn
 
   assert.equal(authGuard.canActivate(createContext(request)), true);
   assert.equal((request as any).user.userId, registered.user.id);
+
+  const expressStyleRequest = {
+    headers: { authorization: `Bearer ${session.token}` },
+  };
+
+  assert.equal(authGuard.canActivate(createContext(expressStyleRequest)), true);
+  assert.equal((expressStyleRequest as any).user.userId, registered.user.id);
 
   const rolesGuard = new RolesGuard({ getAllAndOverride: () => [UserRole.admin] } as any);
   assert.equal(rolesGuard.canActivate(createContext({ user: { role: UserRole.admin } })), true);

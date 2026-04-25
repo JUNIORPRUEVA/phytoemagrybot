@@ -121,11 +121,20 @@ interface MediaCacheEntry {
   updatedAt: number;
 }
 
+type MicroIntentKind = 'yes' | 'no' | 'soft' | 'thanks';
+
+type MicroIntentResolution = {
+  reply: string;
+  intent: BotIntent;
+  decision: BotDecisionState;
+};
+
 @Injectable()
 export class BotService {
   private static readonly KNOWLEDGE_CONTEXT_CACHE_KEY = 'bot:knowledge-context:v2';
   private static readonly COMPANY_RULES_CACHE_KEY = 'company_rules';
   private static readonly SENT_MEDIA_CACHE_KEY_PREFIX = 'bot:sent-media:';
+  private static readonly GREETING_TTL_SECONDS = 60 * 60 * 24;
   private static readonly CONVERSATION_MEMORY_TTL_SECONDS = 60 * 60 * 24;
   private static readonly CONVERSATION_END_TTL_SECONDS = 60 * 60 * 2;
   private static readonly INTENT_CACHE_TTL_SECONDS = 60 * 60;
@@ -134,6 +143,7 @@ export class BotService {
   private static readonly NBA_CACHE_TTL_SECONDS = 60 * 60 * 24;
   private static readonly MEDIA_CACHE_TTL_SECONDS = 60 * 60 * 6;
   private static readonly RESPONSE_CACHE_TTL_SECONDS = 60 * 10;
+  private static readonly MICRO_CONTEXT_TTL_SECONDS = 60 * 60 * 24;
   private static readonly MAX_REPLY_REGENERATION_ATTEMPTS = 2;
   private static readonly MEDIA_COOLDOWN_MS = 10 * 60 * 1000;
   private static readonly SHORT_TEXT_MESSAGE_MAX_CHARS = 40;
@@ -195,6 +205,68 @@ export class BotService {
     console.log('MENSAJE:', normalizedMessage);
 
     try {
+      if (await this.shouldHandleGreeting(normalizedContactId, normalizedMessage)) {
+        console.log('GREETING ACTIVADO:', normalizedContactId);
+
+        await this.memoryService.saveMessage({
+          contactId: normalizedContactId,
+          role: 'user',
+          content: normalizedMessage,
+        });
+        userMessageStored = true;
+
+        const conversationMemory = await this.getConversationMemory(normalizedContactId, []);
+        const greetingReply = this.buildGreetingReply(normalizedContactId, conversationMemory);
+        const greetingDecision = this.buildGreetingDecision(normalizedMessage);
+
+        await this.memoryService.saveMessage({
+          contactId: normalizedContactId,
+          role: 'assistant',
+          content: greetingReply,
+        });
+        await this.saveConversationMemory(
+          recordConversationDelivery(conversationMemory, {
+            messageText: greetingReply,
+            lastMessages: [normalizedMessage, greetingReply],
+            lastIntent: greetingDecision.intent,
+            state: greetingDecision.stage,
+            lastSentHadVideo: false,
+            cooldownMediaUntil: null,
+          }),
+        );
+        await this.redisService.set(
+          this.getGreetingKey(normalizedContactId),
+          true,
+          BotService.GREETING_TTL_SECONDS,
+        );
+
+        const greetingResult = this.createResult(
+          greetingReply,
+          'greeting',
+          'otro',
+          greetingDecision,
+          false,
+          [],
+          'text',
+          conversationMemory.lastMessages.length > 0,
+        );
+
+        await this.markBotResponseInDecisionState(
+          normalizedContactId,
+          greetingResult.reply,
+          greetingDecision,
+          [],
+        );
+        await this.persistMicroContext(
+          normalizedContactId,
+          greetingDecision.intent,
+          greetingResult.reply,
+          metadata?.messageType ?? 'text',
+        );
+        this.logReply(normalizedContactId, greetingResult);
+        return greetingResult;
+      }
+
       const config = await this.clientConfigService.getConfig();
       const botConfig = await this.botConfigService.getConfig();
       const memoryWindow = config.aiSettings?.memoryWindow ?? 6;
@@ -216,6 +288,7 @@ export class BotService {
         content: normalizedMessage,
       });
       userMessageStored = true;
+      await this.rememberLastMessageType(normalizedContactId, metadata?.messageType ?? 'text');
 
       const memoryContext = await this.memoryService.getConversationContext(
         normalizedContactId,
@@ -285,8 +358,66 @@ export class BotService {
           closureDecision,
           [],
         );
+        await this.persistMicroContext(
+          normalizedContactId,
+          closureDecision.intent,
+          closureResult.reply,
+          metadata?.messageType ?? 'text',
+        );
         this.logReply(normalizedContactId, closureResult);
         return closureResult;
+      }
+
+      const microIntentResult = await this.resolveMicroIntentResult({
+        contactId: normalizedContactId,
+        message: normalizedMessage,
+        conversationMemory,
+        memoryContext,
+        usedMemory,
+      });
+
+      if (microIntentResult) {
+        await this.memoryService.saveMessage({
+          contactId: normalizedContactId,
+          role: 'assistant',
+          content: microIntentResult.reply,
+        });
+        await this.saveConversationMemory(
+          recordConversationDelivery(conversationMemory, {
+            messageText: microIntentResult.reply,
+            lastMessages: [normalizedMessage, microIntentResult.reply],
+            lastIntent: microIntentResult.decision.intent,
+            state: microIntentResult.decision.stage,
+            lastSentHadVideo: false,
+            cooldownMediaUntil: null,
+          }),
+        );
+
+        const microResult = this.createResult(
+          microIntentResult.reply,
+          'micro',
+          microIntentResult.intent,
+          microIntentResult.decision,
+          microIntentResult.decision.stage === 'listo',
+          [],
+          'text',
+          usedMemory,
+        );
+
+        await this.markBotResponseInDecisionState(
+          normalizedContactId,
+          microResult.reply,
+          microIntentResult.decision,
+          [],
+        );
+        await this.persistMicroContext(
+          normalizedContactId,
+          microIntentResult.decision.intent,
+          microResult.reply,
+          metadata?.messageType ?? 'text',
+        );
+        this.logReply(normalizedContactId, microResult);
+        return microResult;
       }
 
       const companyData = await this.getCachedCompanyRules();
@@ -375,6 +506,12 @@ export class BotService {
           decision,
           [],
         );
+        await this.persistMicroContext(
+          normalizedContactId,
+          decision.intent,
+          blockedResult.reply,
+          metadata?.messageType ?? 'text',
+        );
         this.logReply(normalizedContactId, blockedResult);
         return blockedResult;
       }
@@ -450,6 +587,12 @@ export class BotService {
           cachedDecision,
           [],
         );
+        await this.persistMicroContext(
+          normalizedContactId,
+          cachedDecision.intent,
+          cachedResult.reply,
+          metadata?.messageType ?? 'text',
+        );
         this.logReply(normalizedContactId, cachedResult);
         return cachedResult;
       }
@@ -524,6 +667,12 @@ export class BotService {
         validatedReply.reply.content,
         decision,
         validatedReply.mediaFiles,
+      );
+      await this.persistMicroContext(
+        normalizedContactId,
+        decision.intent,
+        result.reply,
+        metadata?.messageType ?? 'text',
       );
       console.log('RESPUESTA FINAL:', {
         text: result.reply,
@@ -1241,6 +1390,7 @@ export class BotService {
       text: result.reply,
       mediaIds: [],
     });
+    await this.persistMicroContext(contactId, result.decisionIntent, result.reply, 'text');
     return result;
   }
 
@@ -1933,6 +2083,10 @@ export class BotService {
     return `intent:${contactId}`;
   }
 
+  private getGreetingKey(contactId: string): string {
+    return `greeted:${contactId}`;
+  }
+
   private getConversationEndKey(contactId: string): string {
     return `conversation_end:${contactId}`;
   }
@@ -1951,6 +2105,18 @@ export class BotService {
 
   private getResponseCacheKey(hash: string): string {
     return `response_cache:${hash}`;
+  }
+
+  private getLastIntentKey(contactId: string): string {
+    return `lastIntent:${contactId}`;
+  }
+
+  private getLastQuestionKey(contactId: string): string {
+    return `lastQuestion:${contactId}`;
+  }
+
+  private getLastMessageTypeKey(contactId: string): string {
+    return `lastMessageType:${contactId}`;
   }
 
   private buildResponseCacheHash(
@@ -2306,6 +2472,71 @@ export class BotService {
     return ['hola', 'hola!', 'buenas', 'buenos dias', 'buenos dias!', 'buenas tardes', 'buenas noches'].includes(message);
   }
 
+  private async shouldHandleGreeting(contactId: string, message: string): Promise<boolean> {
+    if (!this.isGreetingOnlyMessage(message)) {
+      return false;
+    }
+
+    if (await this.readRedisCache<boolean>(this.getConversationEndKey(contactId))) {
+      return false;
+    }
+
+    return (await this.readRedisCache<boolean>(this.getGreetingKey(contactId))) !== true;
+  }
+
+  private isGreetingOnlyMessage(message: string): boolean {
+    const normalized = this.normalizeTextForMatch(message);
+    if (!normalized) {
+      return false;
+    }
+
+    return [
+      'hola',
+      'buenas',
+      'klk',
+      'hey',
+      'saludos',
+      'buenas tardes',
+      'buenos dias',
+      'buenas noches',
+      'hola buenas',
+    ].includes(normalized);
+  }
+
+  private buildGreetingReply(
+    contactId: string,
+    conversationMemory: ConversationMemoryState,
+  ): string {
+    const variants = [
+      'Hola 👋 que tal, bienvenido. Dime en que te puedo ayudar.',
+      'Hey 🙌 como estas, dime que te gustaria saber.',
+      'Hola bro 🔥 bienvenido, aqui te ayudo con lo que necesites.',
+      'Saludos 👋 tranquilo, dime en que andas y te ayudo.',
+    ];
+    const offset = parseInt(this.hashValue(contactId).slice(0, 2), 16) % variants.length;
+    const orderedVariants = variants.slice(offset).concat(variants.slice(0, offset));
+
+    return this.pickFirstUnsentMessage(orderedVariants, conversationMemory.sentMessages);
+  }
+
+  private buildGreetingDecision(message: string): BotDecisionState {
+    const normalized = this.normalizeTextForMatch(message);
+
+    return {
+      intent: 'otro',
+      classificationSource: 'rules',
+      stage: 'curioso',
+      action: 'guiar',
+      purchaseIntentScore: 0,
+      currentIntent: 'greeting',
+      summaryText: 'Greeting shortcut handled before thinking.',
+      keyFacts: {
+        greetingHandled: true,
+      },
+      lastMessageId: `greeting:${this.hashValue(normalized || 'empty')}`,
+    };
+  }
+
   private shouldMarkConversationAsEnded(message: string): boolean {
     const normalized = this.normalizeTextForMatch(message);
     if (!normalized || this.shouldResumeClosedConversation(message)) {
@@ -2322,7 +2553,6 @@ export class BotService {
       'lo dejamos asi',
       'dejalo asi',
       'ok gracias',
-      'gracias',
       'esta bien',
       'todo bien',
       'perfecto gracias',
@@ -2402,6 +2632,289 @@ export class BotService {
       },
       lastMessageId: `conversation_end:${this.hashValue(normalized || 'empty')}`,
     };
+  }
+
+  private async resolveMicroIntentResult(params: {
+    contactId: string;
+    message: string;
+    conversationMemory: ConversationMemoryState;
+    memoryContext: Awaited<ReturnType<MemoryService['getConversationContext']>>;
+    usedMemory: boolean;
+  }): Promise<MicroIntentResolution | null> {
+    const microIntent = this.detectMicroIntent(params.message);
+    if (!microIntent) {
+      return null;
+    }
+
+    const lastIntent =
+      (await this.readRedisCache<string>(this.getLastIntentKey(params.contactId)))
+      ?? params.conversationMemory.lastIntent
+      ?? null;
+    const lastQuestion =
+      (await this.readRedisCache<string>(this.getLastQuestionKey(params.contactId)))
+      ?? this.findLatestAssistantQuestion(params.memoryContext.messages)
+      ?? null;
+    const hasPriorContext = Boolean((lastIntent ?? '').trim() || (lastQuestion ?? '').trim());
+    if (!hasPriorContext) {
+      return null;
+    }
+
+    const salesActive = this.isSalesContextActive(lastIntent, lastQuestion);
+    const coldConversation = !salesActive && !params.usedMemory;
+
+    if (microIntent === 'soft' && !salesActive && !lastQuestion) {
+      return null;
+    }
+
+    if (microIntent === 'thanks' && !salesActive && !coldConversation) {
+      return null;
+    }
+
+    const reply = this.buildMicroIntentReply(
+      microIntent,
+      salesActive,
+      coldConversation,
+      params.conversationMemory,
+    );
+    const decision = this.buildMicroIntentDecision(
+      params.contactId,
+      params.message,
+      microIntent,
+      salesActive,
+    );
+
+    return {
+      reply,
+      intent: this.mapDecisionIntentToBotIntent(decision.intent, params.message),
+      decision,
+    };
+  }
+
+  private detectMicroIntent(message: string): MicroIntentKind | null {
+    const normalized = this.normalizeTextForMatch(message);
+    if (!normalized) {
+      return null;
+    }
+
+    const words = normalized.split(' ').filter((word) => word.length > 0);
+    if (words.length === 0 || words.length > 3) {
+      return null;
+    }
+
+    if (['si', 'sí', 'claro', 'de una'].includes(normalized)) {
+      return 'yes';
+    }
+
+    if (['no', 'nop', 'negativo'].includes(normalized)) {
+      return 'no';
+    }
+
+    if (['ok', 'oka', 'okey', 'dale', 'dale pues'].includes(normalized)) {
+      return 'soft';
+    }
+
+    if (['gracias', 'muchas gracias', 'thanks'].includes(normalized)) {
+      return 'thanks';
+    }
+
+    return null;
+  }
+
+  private buildMicroIntentReply(
+    microIntent: MicroIntentKind,
+    salesActive: boolean,
+    coldConversation: boolean,
+    conversationMemory: ConversationMemoryState,
+  ): string {
+    if (microIntent === 'yes') {
+      return this.pickFirstUnsentMessage(
+        salesActive
+          ? [
+              'Perfecto 👍 ¿te lo preparo para hoy?',
+              'Buenisimo 👍 ¿quieres que te lo deje listo de una vez?',
+              'Dale 👍 ¿te organizo el pedido para hoy?',
+            ]
+          : [
+              'Perfecto 👍 ¿quieres que te explique precio, uso o como pedirlo?',
+              'Buenisimo 👍 dime si prefieres precio, resultados o como se usa.',
+            ],
+        conversationMemory.sentMessages,
+      );
+    }
+
+    if (microIntent === 'no') {
+      return this.pickFirstUnsentMessage([
+        'Tranquilo 👍 dime, ¿que fue lo que no te convencio?',
+        'Todo bien 👍 ¿que parte te genero duda, el precio, el uso o si funciona?',
+        'No hay problema 👍 dime que te freno y te lo aclaro sin rodeos.',
+      ], conversationMemory.sentMessages);
+    }
+
+    if (microIntent === 'soft') {
+      return this.pickFirstUnsentMessage(
+        coldConversation
+          ? [
+              'Oye, algo importante: esto te puede ayudar bastante y se usa super facil. ¿quieres que te explique rapido?',
+              'Dale 🔥 esto puede darte una buena ayuda si lo haces bien. ¿quieres que te oriente rapido?',
+            ]
+          : [
+              'Dale 🔥 eso te puede ayudar bastante... ¿quieres que te prepare uno?',
+              'Buenisimo 🙌 si quieres, te lo dejo listo y te explico como usarlo.',
+            ],
+        conversationMemory.sentMessages,
+      );
+    }
+
+    return this.pickFirstUnsentMessage(
+      coldConversation
+        ? [
+            'Gracias a ti 🙌 oye, esto no es como otras pastillas... ¿quieres que te explique rapido por que?',
+            'Gracias a ti 🙌 antes de irte, esto puede ayudarte bastante si quieres bajar sin complicarte.',
+          ]
+        : [
+            'Gracias a ti 🙌 oye, antes de irte... esto te puede ayudar bastante para arrancar bien. ¿quieres que te prepare uno?',
+            'Gracias a ti 🙌 si quieres, te digo rapido como sacarle mejor provecho y te lo dejo listo.',
+          ],
+      conversationMemory.sentMessages,
+    );
+  }
+
+  private buildMicroIntentDecision(
+    contactId: string,
+    message: string,
+    microIntent: MicroIntentKind,
+    salesActive: boolean,
+  ): BotDecisionState {
+    const normalized = this.normalizeTextForMatch(message);
+
+    if (microIntent === 'yes') {
+      return {
+        intent: salesActive ? 'compra' : 'interesado',
+        classificationSource: 'rules',
+        stage: salesActive ? 'listo' : 'interesado',
+        action: salesActive ? 'cerrar' : 'guiar',
+        purchaseIntentScore: salesActive ? 85 : 30,
+        currentIntent: 'micro_yes',
+        summaryText: 'Micro intent yes handled before thinking.',
+        keyFacts: { microIntent: 'yes', salesActive },
+        lastMessageId: `micro_yes:${contactId}:${this.hashValue(normalized || 'empty')}`,
+      };
+    }
+
+    if (microIntent === 'no') {
+      return {
+        intent: 'duda',
+        classificationSource: 'rules',
+        stage: 'dudoso',
+        action: 'persuadir',
+        purchaseIntentScore: 10,
+        currentIntent: 'micro_no',
+        summaryText: 'Micro intent no handled before thinking.',
+        keyFacts: { microIntent: 'no', salesActive },
+        lastMessageId: `micro_no:${contactId}:${this.hashValue(normalized || 'empty')}`,
+      };
+    }
+
+    if (microIntent === 'soft') {
+      return {
+        intent: 'interesado',
+        classificationSource: 'rules',
+        stage: salesActive ? 'interesado' : 'curioso',
+        action: salesActive ? 'cerrar' : 'guiar',
+        purchaseIntentScore: salesActive ? 55 : 20,
+        currentIntent: 'micro_soft',
+        summaryText: 'Micro intent soft acknowledgment handled before thinking.',
+        keyFacts: { microIntent: 'soft', salesActive },
+        lastMessageId: `micro_soft:${contactId}:${this.hashValue(normalized || 'empty')}`,
+      };
+    }
+
+    return {
+      intent: salesActive ? 'interesado' : 'otro',
+      classificationSource: 'rules',
+      stage: salesActive ? 'interesado' : 'curioso',
+      action: salesActive ? 'guiar' : 'hacer_seguimiento',
+      purchaseIntentScore: salesActive ? 35 : 5,
+      currentIntent: 'micro_thanks',
+      summaryText: 'Micro intent thanks handled before thinking.',
+      keyFacts: { microIntent: 'thanks', salesActive },
+      lastMessageId: `micro_thanks:${contactId}:${this.hashValue(normalized || 'empty')}`,
+    };
+  }
+
+  private isSalesContextActive(lastIntent: string | null, lastQuestion: string | null): boolean {
+    const normalizedIntent = (lastIntent ?? '').trim().toLowerCase();
+    if (['compra', 'interesado', 'precio', 'consulta_precio', 'hot'].includes(normalizedIntent)) {
+      return true;
+    }
+
+    const normalizedQuestion = this.normalizeTextForMatch(lastQuestion ?? '');
+    if (!normalizedQuestion) {
+      return false;
+    }
+
+    return [
+      'precio',
+      'pedido',
+      'preparo',
+      'dejo listo',
+      'quieres que te',
+      'como pedirlo',
+      'como se usa',
+    ].some((keyword) => normalizedQuestion.includes(keyword));
+  }
+
+  private findLatestAssistantQuestion(
+    messages: Array<{ role: 'user' | 'assistant'; content: string }>,
+  ): string | null {
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const item = messages[index];
+      if (item.role === 'assistant' && item.content.includes('?')) {
+        return item.content.trim();
+      }
+    }
+
+    return null;
+  }
+
+  private async rememberLastMessageType(
+    contactId: string,
+    messageType: 'text' | 'audio' | 'image',
+  ): Promise<void> {
+    await this.redisService.set(
+      this.getLastMessageTypeKey(contactId),
+      messageType,
+      BotService.MICRO_CONTEXT_TTL_SECONDS,
+    );
+  }
+
+  private async persistMicroContext(
+    contactId: string,
+    intent: string,
+    reply: string,
+    messageType: 'text' | 'audio' | 'image',
+  ): Promise<void> {
+    await this.redisService.set(
+      this.getLastIntentKey(contactId),
+      intent,
+      BotService.MICRO_CONTEXT_TTL_SECONDS,
+    );
+    await this.redisService.set(
+      this.getLastMessageTypeKey(contactId),
+      messageType,
+      BotService.MICRO_CONTEXT_TTL_SECONDS,
+    );
+
+    if (reply.includes('?')) {
+      await this.redisService.set(
+        this.getLastQuestionKey(contactId),
+        reply,
+        BotService.MICRO_CONTEXT_TTL_SECONDS,
+      );
+      return;
+    }
+
+    await this.redisService.del(this.getLastQuestionKey(contactId));
   }
 
   private isLongOrDetailedReply(reply: string): boolean {

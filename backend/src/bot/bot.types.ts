@@ -11,7 +11,7 @@ export type BotIntent =
   | 'hot'
   | 'otro';
 
-export type BotReplySource = 'ai' | 'cache' | 'hot' | 'duda' | 'cierre' | 'galeria' | 'fallback';
+export type BotReplySource = 'ai' | 'cache' | 'hot' | 'duda' | 'cierre' | 'galeria' | 'fallback' | 'greeting' | 'micro';
 
 export interface BotReplyResult {
   reply: string;

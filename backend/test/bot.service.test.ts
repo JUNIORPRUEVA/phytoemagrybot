@@ -329,7 +329,7 @@ test('always injects the mandatory combined knowledge context before replying', 
     },
   });
 
-  await service.processIncomingMessage('18095551234', 'hola');
+  await service.processIncomingMessage('18095551234', 'quiero informacion');
 
   const companyContext = String(
     (capturedParams as { companyContext?: string } | null)?.companyContext ?? '',
@@ -713,7 +713,7 @@ test('uses AI with available context when mandatory knowledge sources are incomp
     },
   });
 
-  const result = await service.processIncomingMessage('18095551234', 'hola');
+  const result = await service.processIncomingMessage('18095551234', 'quiero informacion');
 
   assert.equal(result.source, 'ai');
   assert.match(
@@ -741,7 +741,7 @@ test('uses AI with partial context when some knowledge sources exist', async () 
     },
   });
 
-  const result = await service.processIncomingMessage('18095551234', 'hola');
+  const result = await service.processIncomingMessage('18095551234', 'quiero informacion');
 
   const companyContext = String(
     (capturedParams as { companyContext?: string } | null)?.companyContext ?? '',
@@ -770,7 +770,7 @@ test('mandatory knowledge context always includes instructions products and comp
     },
   });
 
-  await service.processIncomingMessage('18095551234', 'hola');
+  await service.processIncomingMessage('18095551234', 'quiero informacion');
 
   const companyContext = String(
     (capturedParams as { companyContext?: string } | null)?.companyContext ?? '',
@@ -883,6 +883,100 @@ test('closure phrases stop the sale before AI and persist conversation_end in Re
   assert.equal(aiCalled, false);
   assert.doesNotMatch(result.reply, /\?/);
   assert.equal((service as any).redisService.store.get('conversation_end:18095550001'), true);
+});
+
+test('micro intent yes uses previous sales context to advance naturally without AI', async () => {
+  let aiCalled = false;
+  const service = createService();
+
+  await (service as any).redisService.set('lastIntent:18095550100', 'compra');
+  await (service as any).redisService.set('lastQuestion:18095550100', 'Quieres que te lo deje listo hoy?');
+  (service as any).aiService.generateReply = async () => {
+    aiCalled = true;
+    return { type: 'text', content: 'No deberia usar IA aqui.' };
+  };
+
+  const result = await service.processIncomingMessage('18095550100', 'si');
+
+  assert.equal(result.source, 'micro');
+  assert.equal(result.intent, 'compra');
+  assert.equal(aiCalled, false);
+  assert.match(result.reply.toLowerCase(), /preparo|listo|pedido/);
+  assert.equal((service as any).redisService.store.get('lastIntent:18095550100'), 'compra');
+  assert.equal((service as any).redisService.store.get('lastMessageType:18095550100'), 'text');
+});
+
+test('micro intent no turns into a soft objection follow-up without AI', async () => {
+  let aiCalled = false;
+  const service = createService();
+
+  await (service as any).redisService.set('lastIntent:18095550101', 'interesado');
+  (service as any).aiService.generateReply = async () => {
+    aiCalled = true;
+    return { type: 'text', content: 'No deberia usar IA aqui.' };
+  };
+
+  const result = await service.processIncomingMessage('18095550101', 'no');
+
+  assert.equal(result.source, 'micro');
+  assert.equal(result.intent, 'duda');
+  assert.equal(aiCalled, false);
+  assert.match(result.reply.toLowerCase(), /convencio|duda|freno/);
+});
+
+test('plain gracias re-engages naturally when the conversation is still active', async () => {
+  let aiCalled = false;
+  const service = createService();
+
+  await (service as any).redisService.set('lastIntent:18095550102', 'interesado');
+  await (service as any).redisService.set('lastQuestion:18095550102', 'Quieres que te explique como se usa?');
+  (service as any).aiService.generateReply = async () => {
+    aiCalled = true;
+    return { type: 'text', content: 'No deberia usar IA aqui.' };
+  };
+
+  const result = await service.processIncomingMessage('18095550102', 'gracias');
+
+  assert.equal(result.source, 'micro');
+  assert.notEqual(result.intent, 'cierre');
+  assert.equal(aiCalled, false);
+  assert.equal((service as any).redisService.store.get('conversation_end:18095550102'), undefined);
+});
+
+test('new contact with a pure greeting gets a human greeting without running AI', async () => {
+  let aiCalled = false;
+  const service = createService({
+    onGenerateReply: () => {
+      aiCalled = true;
+    },
+  });
+
+  const result = await service.processIncomingMessage('18095550005', 'hola');
+
+  assert.equal(result.source, 'greeting');
+  assert.equal(result.replyType, 'text');
+  assert.equal(result.usedGallery, false);
+  assert.equal(aiCalled, false);
+  assert.match(result.reply.toLowerCase(), /hola|hey|saludos/);
+  assert.doesNotMatch(result.reply.toLowerCase(), /precio|producto|catalogo|catálogo/);
+  assert.equal((service as any).redisService.store.get('greeted:18095550005'), true);
+});
+
+test('a contact greeted in Redis does not receive the greeting shortcut again', async () => {
+  let aiCalls = 0;
+  const service = createService({
+    aiReply: 'Claro, dime que necesitas y te respondo rapido.',
+    onGenerateReply: () => {
+      aiCalls += 1;
+    },
+  });
+
+  await (service as any).redisService.set('greeted:18095550006', true);
+
+  const result = await service.processIncomingMessage('18095550006', 'hola');
+
+  assert.equal(result.source, 'ai');
+  assert.equal(aiCalls, 1);
 });
 
 test('a closed conversation stays closed for generic messages until interest returns', async () => {
@@ -1520,7 +1614,7 @@ test('simulates a curious customer conversation with adaptive guidance', async (
     },
   });
 
-  const first = await service.processIncomingMessage('18095550001', 'hola');
+  const first = await service.processIncomingMessage('18095550001', 'de que trata la pastilla?');
   const second = await service.processIncomingMessage('18095550001', 'hablame de la pastilla');
   const third = await service.processIncomingMessage('18095550001', 'y el precio?');
 
@@ -1935,7 +2029,7 @@ test('uses a dynamic human fallback instead of a fixed bot configuration error',
     },
   });
 
-  const result = await service.processIncomingMessage('18095559996', 'hola');
+  const result = await service.processIncomingMessage('18095559996', 'quiero informacion');
 
   assert.equal(result.source, 'fallback');
   assert.doesNotMatch(result.reply, /Configuracion incompleta del bot/i);
@@ -1993,8 +2087,8 @@ test('response cache reuses a safe text reply for another contact with the same 
     },
   });
 
-  const first = await service.processIncomingMessage('18095554444', 'hola');
-  const second = await service.processIncomingMessage('18095554445', 'hola');
+  const first = await service.processIncomingMessage('18095554444', 'quiero informacion');
+  const second = await service.processIncomingMessage('18095554445', 'quiero informacion');
 
   assert.equal(first.cached, false);
   assert.equal(second.cached, true);
@@ -2013,8 +2107,8 @@ test('intent cache reuses classified intent for a similar message from the same 
     aiReply: 'Claro, dime que te interesa y te ayudo.',
   });
 
-  await service.processIncomingMessage('18095554446', 'hola buenas');
-  await service.processIncomingMessage('18095554446', 'hola buenas?');
+  await service.processIncomingMessage('18095554446', 'mmm');
+  await service.processIncomingMessage('18095554446', 'mmm?');
 
   assert.equal(classifyCalls, 1);
 });
