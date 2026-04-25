@@ -30,6 +30,22 @@ export type PromptTransformResult = {
 export class PromptTransformEngine {
   private static readonly PROMPT_TRANSLATION_TTL_MS = 1000 * 60 * 60 * 12;
 
+  private static readonly ALLOWED_XML_TAGS = new Set([
+    'prompts',
+    'identity',
+    'sales',
+    'greeting',
+    'media',
+    'voice',
+    'stop',
+    'rules',
+    'company',
+    'general',
+    'hours',
+    'location',
+    'products',
+  ]);
+
   private readonly translatedPromptCache = new Map<
     string,
     {
@@ -76,6 +92,8 @@ export class PromptTransformEngine {
       modelName: params.modelName,
       xmlEs,
     });
+
+    this.assertXmlWellFormed(translated);
 
     this.assertXmlHasRequiredTags(translated);
     this.assertCompanyHasRequiredSubtags(translated);
@@ -393,45 +411,135 @@ export class PromptTransformEngine {
   }
 
   private looksLikeSpanishText(text: string): boolean {
-    const normalized = (text ?? '')
-      .replace(/\r\n/g, '\n')
+    return this.getSpanishLikelihoodScore(text) >= 2;
+  }
+
+  private getSpanishLikelihoodScore(text: string): number {
+    const original = (text ?? '').replace(/\r\n/g, '\n').trim();
+    if (!original) {
+      return 0;
+    }
+
+    let score = 0;
+
+    // Very high-confidence Spanish punctuation/diacritics.
+    if (/[¿¡]/.test(original)) {
+      score += 2;
+    }
+    if (/[áéíóúñüÁÉÍÓÚÑÜ]/.test(original)) {
+      score += 2;
+    }
+
+    const normalized = original
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, ' ')
       .replace(/\s+/g, ' ')
-      .trim()
-      .toLowerCase();
+      .trim();
 
     if (!normalized) {
-      return false;
+      return score;
     }
 
-    if (/[áéíóúñü]/i.test(normalized)) {
-      return true;
-    }
+    const addIfPresent = (token: string, weight: number) => {
+      const re = new RegExp(`\\b${token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
+      if (re.test(normalized)) {
+        score += weight;
+      }
+    };
 
-    const spanishTokens = [
-      ' hola ',
-      ' que ',
-      ' de ',
-      ' la ',
-      ' el ',
-      ' para ',
-      ' con ',
-      ' sin ',
-      ' mañana ',
-      ' luego ',
-      ' despues ',
-      ' envío ',
-      ' envio ',
-      ' gracias ',
-      ' por favor ',
-      ' abierto ',
-      ' abrimos ',
-      ' horario ',
-      ' dirección ',
-      ' direccion ',
+    // Unambiguous / high-confidence Spanish tokens (single hit should fail under strict mode).
+    const strongTokens = [
+      'hola',
+      'buenas',
+      'buenos',
+      'tardes',
+      'dias',
+      'manana',
+      'luego',
+      'despues',
+      'gracias',
+      'por',
+      'favor',
+      'envio',
+      'entrega',
+      'direccion',
+      'horario',
+      'cliente',
+      'vendedor',
+      'dominicano',
     ];
 
-    const padded = ` ${normalized} `;
-    return spanishTokens.some((token) => padded.includes(token));
+    for (const token of strongTokens) {
+      // Treat "por favor" as a phrase: individual words are less decisive.
+      if (token === 'por' || token === 'favor') {
+        continue;
+      }
+      addIfPresent(token, 2);
+    }
+
+    addIfPresent('por', 0);
+    addIfPresent('favor', 0);
+    if (/\bpor\s+favor\b/i.test(normalized)) {
+      score += 2;
+    }
+
+    // Medium confidence tokens (avoid ambiguous stopwords like "de", "la", "el", "que").
+    const mediumTokens = ['producto', 'productos', 'precio', 'oferta', 'pago', 'transferencia'];
+    for (const token of mediumTokens) {
+      addIfPresent(token, 1);
+    }
+
+    return score;
+  }
+
+  private assertXmlWellFormed(xml: string): void {
+    const normalized = (xml ?? '').trim();
+    if (!normalized) {
+      throw new Error('Prompt XML is empty.');
+    }
+
+    // Tokenize tags (supports optional attributes even though we don't generate them).
+    const tagMatches = normalized.matchAll(/<\/?\s*([a-zA-Z][a-zA-Z0-9_-]*)(?:\s+[^>]*)?>/g);
+    const stack: string[] = [];
+
+    for (const match of tagMatches) {
+      const full = match[0];
+      const name = (match[1] ?? '').trim();
+      if (!name) {
+        continue;
+      }
+
+      if (!PromptTransformEngine.ALLOWED_XML_TAGS.has(name)) {
+        throw new Error(`Prompt XML contains an unexpected tag <${name}>.`);
+      }
+
+      const isClosing = /^<\//.test(full);
+      const isSelfClosing = /\/>\s*$/.test(full);
+
+      if (isSelfClosing) {
+        continue;
+      }
+
+      if (!isClosing) {
+        stack.push(name);
+        continue;
+      }
+
+      const last = stack.pop();
+      if (last !== name) {
+        throw new Error('Prompt XML is not well-formed (mismatched closing tags).');
+      }
+    }
+
+    if (stack.length > 0) {
+      throw new Error('Prompt XML is not well-formed (unclosed tags).');
+    }
+
+    if (!normalized.startsWith('<prompts>') || !normalized.endsWith('</prompts>')) {
+      throw new Error('Prompt XML is not wrapped in <prompts>.');
+    }
   }
 
   private assertXmlHasRequiredTags(xml: string): void {

@@ -207,8 +207,133 @@ export class BotService {
     console.log('MENSAJE:', normalizedMessage);
 
     try {
+      // RESPONSE LOCK (CRÍTICO): ensures exactly one layer produces the final response.
+      let responseGenerated = false;
+      let finalResult: BotReplyResult | null = null;
+      let finalResponse = '';
+
+      const logResponseDebug = (payload: {
+        layer: string;
+        blocked: boolean;
+        duplicateRemoved?: boolean;
+        reason?: string;
+        source?: string;
+      }) => {
+        this.logger.log(
+          JSON.stringify({
+            event: 'RESPONSE_DEBUG',
+            contactId: normalizedContactId,
+            message: normalizedMessage,
+            layer: payload.layer,
+            blocked: payload.blocked,
+            duplicateRemoved: payload.duplicateRemoved ?? false,
+            reason: payload.reason ?? null,
+            source: payload.source ?? null,
+          }),
+        );
+      };
+
+      const finalizeResponse = (layer: string, result: BotReplyResult): BotReplyResult => {
+        if (responseGenerated && finalResult) {
+          logResponseDebug({ layer, blocked: true, reason: 'response_already_generated', source: result.source });
+          return finalResult;
+        }
+
+        // RESPONSE COMPOSER hardening for ALL layers: remove duplicated sentences/lead phrases.
+        const original = (result.reply ?? '').trim();
+        const composed =
+          result.source === 'ai' || result.source === 'cache'
+            ? (composeFinalMessage(original) || original)
+            : (composeFinalMessage(original, { maxIdeas: 6, maxQuestions: 1 }) || original);
+
+        const duplicateRemoved = composed.trim() !== original;
+        const patchedResult = duplicateRemoved ? { ...result, reply: composed.trim() } : result;
+
+        responseGenerated = true;
+        finalResult = patchedResult;
+        finalResponse = patchedResult.reply;
+
+        logResponseDebug({ layer, blocked: false, duplicateRemoved, source: patchedResult.source });
+        return patchedResult;
+      };
+
+      const earlyClosureDetected = this.shouldMarkConversationAsEnded(normalizedMessage);
+      if (earlyClosureDetected) {
+        if (responseGenerated && finalResult) {
+          logResponseDebug({ layer: 'stop_early', blocked: true, reason: 'response_already_generated' });
+          return finalResult;
+        }
+
+        await this.memoryService.saveMessage({
+          contactId: normalizedContactId,
+          role: 'user',
+          content: normalizedMessage,
+        });
+        userMessageStored = true;
+        await this.rememberLastMessageType(normalizedContactId, metadata?.messageType ?? 'text');
+
+        const conversationEndKey = this.getConversationEndKey(normalizedContactId);
+        await this.redisService.set(
+          conversationEndKey,
+          true,
+          BotService.CONVERSATION_END_TTL_SECONDS,
+        );
+
+        const conversationMemory = await this.getConversationMemory(normalizedContactId, []);
+        const closureDecision = this.buildConversationEndedDecision(normalizedMessage);
+        const closureReply = this.buildConversationEndedReply(conversationMemory, true);
+
+        await this.memoryService.saveMessage({
+          contactId: normalizedContactId,
+          role: 'assistant',
+          content: closureReply,
+        });
+        await this.saveConversationMemory(
+          recordConversationDelivery(conversationMemory, {
+            messageText: closureReply,
+            lastMessages: [normalizedMessage, closureReply],
+            lastIntent: closureDecision.intent,
+            state: closureDecision.stage,
+            lastSentHadVideo: false,
+            cooldownMediaUntil: null,
+          }),
+        );
+
+        const usedMemory = conversationMemory.lastMessages.length > 0;
+        const closureResult = this.createResult(
+          closureReply,
+          'cierre',
+          'cierre',
+          closureDecision,
+          false,
+          [],
+          'text',
+          usedMemory,
+        );
+
+        await this.markBotResponseInDecisionState(
+          normalizedContactId,
+          closureResult.reply,
+          closureDecision,
+          [],
+        );
+        await this.persistMicroContext(
+          normalizedContactId,
+          closureDecision.intent,
+          closureResult.reply,
+          metadata?.messageType ?? 'text',
+        );
+        this.logReply(normalizedContactId, closureResult);
+        return finalizeResponse('stop_early', closureResult);
+      }
+
       const greetingOutcome = await this.getGreetingOutcome(normalizedContactId, normalizedMessage);
-      if (greetingOutcome !== 'none') {
+      if (greetingOutcome === 'first') {
+        if (responseGenerated && finalResult) {
+          logResponseDebug({ layer: 'greeting', blocked: true, reason: 'response_already_generated' });
+          return finalResult;
+        }
+
         console.log('GREETING ACTIVADO:', normalizedContactId, greetingOutcome);
 
         await this.memoryService.saveMessage({
@@ -219,10 +344,7 @@ export class BotService {
         userMessageStored = true;
 
         const conversationMemory = await this.getConversationMemory(normalizedContactId, []);
-        const greetingReply =
-          greetingOutcome === 'first'
-            ? this.buildGreetingReply(normalizedContactId, conversationMemory)
-            : this.buildGreetingNudgeReply(normalizedContactId, conversationMemory);
+        const greetingReply = this.buildGreetingReply(normalizedContactId, conversationMemory);
         const greetingDecision = this.buildGreetingDecision(normalizedMessage);
 
         await this.memoryService.saveMessage({
@@ -265,7 +387,7 @@ export class BotService {
           metadata?.messageType ?? 'text',
         );
         this.logReply(normalizedContactId, greetingResult);
-        return greetingResult;
+        return finalizeResponse('greeting', greetingResult);
       }
 
       const config = await this.clientConfigService.getConfig();
@@ -314,6 +436,11 @@ export class BotService {
 
       const closureDetected = this.shouldMarkConversationAsEnded(normalizedMessage);
       if ((closureDetected || conversationWasEnded) && !resumedByInterest) {
+        if (responseGenerated && finalResult) {
+          logResponseDebug({ layer: 'stop', blocked: true, reason: 'response_already_generated' });
+          return finalResult;
+        }
+
         await this.redisService.set(
           conversationEndKey,
           true,
@@ -366,7 +493,7 @@ export class BotService {
           metadata?.messageType ?? 'text',
         );
         this.logReply(normalizedContactId, closureResult);
-        return closureResult;
+        return finalizeResponse('stop', closureResult);
       }
 
       const microIntentResult = await this.resolveMicroIntentResult({
@@ -378,6 +505,11 @@ export class BotService {
       });
 
       if (microIntentResult) {
+        if (responseGenerated && finalResult) {
+          logResponseDebug({ layer: 'micro', blocked: true, reason: 'response_already_generated' });
+          return finalResult;
+        }
+
         await this.memoryService.saveMessage({
           contactId: normalizedContactId,
           role: 'assistant',
@@ -418,7 +550,7 @@ export class BotService {
           metadata?.messageType ?? 'text',
         );
         this.logReply(normalizedContactId, microResult);
-        return microResult;
+        return finalizeResponse('micro', microResult);
       }
 
       const companyData = await this.getCachedCompanyRules();
@@ -474,6 +606,11 @@ export class BotService {
       );
 
       if (!companyCheck.allowResponse && companyCheck.overrideResponse) {
+        if (responseGenerated && finalResult) {
+          logResponseDebug({ layer: 'company_rule', blocked: true, reason: 'response_already_generated' });
+          return finalResult;
+        }
+
         await this.memoryService.saveMessage({
           contactId: normalizedContactId,
           role: 'assistant',
@@ -514,7 +651,7 @@ export class BotService {
           metadata?.messageType ?? 'text',
         );
         this.logReply(normalizedContactId, blockedResult);
-        return blockedResult;
+        return finalizeResponse('company_rule', blockedResult);
       }
 
       const mediaIntent = this.detectMediaIntent(normalizedMessage);
@@ -547,6 +684,11 @@ export class BotService {
       );
       const cachedResponse = await this.getCachedResponse(responseCacheKey, conversationMemory);
       if (cachedResponse) {
+        if (responseGenerated && finalResult) {
+          logResponseDebug({ layer: 'cache', blocked: true, reason: 'response_already_generated' });
+          return finalResult;
+        }
+
         const cachedDecision: BotDecisionState = {
           ...decision,
           intent: cachedResponse.decisionIntent,
@@ -595,7 +737,7 @@ export class BotService {
           metadata?.messageType ?? 'text',
         );
         this.logReply(normalizedContactId, cachedResult);
-        return cachedResult;
+        return finalizeResponse('cache', cachedResult);
       }
 
       console.log('USANDO IA:', true);
@@ -685,7 +827,7 @@ export class BotService {
         mediaIds: result.mediaFiles.map((file) => file.fileUrl),
       });
       this.logReply(normalizedContactId, result);
-      return result;
+      return finalizeResponse('ai', result);
     } catch (error) {
       this.logger.error(
         JSON.stringify({
@@ -976,6 +1118,9 @@ export class BotService {
     return [
       'No repitas el mismo contenido, responde diferente.',
       `Motivo del rechazo anterior: ${reason}.`,
+      reason === 'too_many_questions'
+        ? 'Haz MAXIMO 1 pregunta en toda la respuesta (o ninguna si no hace falta).'
+        : '',
       rejectedText?.trim() ? `Texto rechazado: ${rejectedText.trim()}` : '',
       memory.sentMessages.length > 0
         ? `Evita estos textos exactos: ${memory.sentMessages.slice(-5).join(' | ')}`
@@ -2513,12 +2658,28 @@ export class BotService {
   private async getGreetingOutcome(
     contactId: string,
     message: string,
-  ): Promise<'none' | 'first' | 'repeat'> {
+  ): Promise<'none' | 'first'> {
     if (!this.isGreetingOnlyMessage(message)) {
       return 'none';
     }
 
     if (await this.readRedisCache<boolean>(this.getConversationEndKey(contactId))) {
+      return 'none';
+    }
+
+    // Only greet if there is NO prior interaction (first message ever).
+    try {
+      const memoryContext = await this.memoryService.getConversationContext(contactId, 1);
+      const hasAnyMessages = (memoryContext.messages?.length ?? 0) > 0;
+      const hasAnySummary = Boolean(memoryContext.summary?.summary?.trim());
+      const clientStatus = (memoryContext.clientMemory?.status ?? '').toString().trim().toLowerCase();
+      const hasKnownClient = clientStatus.length > 0 && clientStatus !== 'nuevo';
+
+      if (hasAnyMessages || hasAnySummary || hasKnownClient) {
+        return 'none';
+      }
+    } catch {
+      // If we can't confirm newness safely, avoid greeting shortcut.
       return 'none';
     }
 
@@ -2530,11 +2691,11 @@ export class BotService {
         true,
         BotService.GREETING_DAY_KEY_TTL_SECONDS,
       );
-      return acquired ? 'first' : 'repeat';
+      return acquired ? 'first' : 'none';
     } catch {
       const alreadyGreeted = (await this.readRedisCache<boolean>(greetingKey)) === true;
       if (alreadyGreeted) {
-        return 'repeat';
+        return 'none';
       }
 
       await this.redisService.set(

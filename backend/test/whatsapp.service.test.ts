@@ -2088,7 +2088,8 @@ test('processAndDeliverMessage forces text when emotion is frio even if bot repl
 
   assert.equal(sentTexts.length, 1);
   assert.equal(sentAudios.length, 0);
-  assert.match(sentTexts[0]?.text ?? '', /Tranquilo, dime qué te gustaría saber\./);
+  assert.match(sentTexts[0]?.text ?? '', /Te respondo por audio\./);
+  assert.doesNotMatch(sentTexts[0]?.text ?? '', /Tranquilo, dime qué te gustaría saber\./);
 });
 
 test('processAndDeliverMessage recommends audio when emotion is dudoso', async () => {

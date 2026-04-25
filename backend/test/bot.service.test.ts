@@ -1051,8 +1051,8 @@ test('a contact greeted in Redis does not receive the greeting shortcut again', 
 
   const result = await service.processIncomingMessage('18095550006', 'hola');
 
-  assert.equal(result.source, 'greeting');
-  assert.equal(aiCalls, 0);
+  assert.equal(result.source, 'ai');
+  assert.equal(aiCalls, 1);
   assert.doesNotMatch(result.reply.toLowerCase(), /hola|hey|saludos/);
 });
 

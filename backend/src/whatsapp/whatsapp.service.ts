@@ -939,7 +939,9 @@ export class WhatsAppService implements OnModuleInit {
     });
     await this.rememberLastDetectedEmotion(contactId, emotion);
 
-    const candidateReplyToSend = this.applyEmotionPersonalityToReply(emotion, botReply.reply);
+    const candidateReplyToSend = this.applyEmotionPersonalityToReply(emotion, botReply.reply, {
+      botReply,
+    });
     const uniqueCandidateReplyToSend = this.resolveUniqueOutgoingMessage(
       candidateReplyToSend,
       conversationSendState.sentMessages,
@@ -953,7 +955,9 @@ export class WhatsAppService implements OnModuleInit {
     const replyToSendRaw =
       uniqueCandidateReplyToSend ??
       (baseDuplicateRecoveryQuestion
-        ? this.applyEmotionPersonalityToReply(emotion, baseDuplicateRecoveryQuestion)
+        ? this.applyEmotionPersonalityToReply(emotion, baseDuplicateRecoveryQuestion, {
+            botReply,
+          })
         : null);
 
     if (!replyToSendRaw) {
@@ -1919,6 +1923,9 @@ export class WhatsAppService implements OnModuleInit {
   private applyEmotionPersonalityToReply(
     emotion: 'interesado' | 'curioso' | 'confundido' | 'apresurado' | 'frio' | 'caliente' | 'dudoso',
     reply: string,
+    context?: {
+      botReply: Awaited<ReturnType<BotService['processIncomingMessage']>>;
+    },
   ): string {
     const trimmed = reply.trim();
     if (!trimmed) {
@@ -1940,6 +1947,15 @@ export class WhatsAppService implements OnModuleInit {
     }
 
     if (emotion === 'frio') {
+      const allowColdPrefix =
+        context?.botReply?.source === 'fallback' &&
+        context?.botReply?.intent === 'otro' &&
+        context?.botReply?.usedMemory === false;
+
+      if (!allowColdPrefix) {
+        return trimmed;
+      }
+
       return startsWith('tranquilo') ? trimmed : `Tranquilo, dime qué te gustaría saber. ${trimmed}`;
     }
 

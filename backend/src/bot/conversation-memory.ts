@@ -14,6 +14,7 @@ export type ResponseValidationReason =
   | 'duplicate_video'
   | 'duplicate_media'
   | 'too_many_videos'
+  | 'too_many_questions'
   | 'cooldown_active'
   | 'redundant_content'
   | 'no_new_content';
@@ -245,6 +246,11 @@ export function validateResponseCandidate(
   const mediaIds = normalizeStringList(response.mediaIds ?? []);
   const videoIds = normalizeStringList(response.videoIds ?? []);
   const now = Date.now();
+
+  const questionCount = text ? (text.match(/[¿?]/g) ?? []).length : 0;
+  if (questionCount > 1) {
+    return { valid: false, reason: 'too_many_questions' };
+  }
 
   if (!text && mediaIds.length === 0) {
     return { valid: false, reason: 'no_new_content' };
