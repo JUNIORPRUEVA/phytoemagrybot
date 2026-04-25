@@ -201,3 +201,82 @@ test('parseAssistantResponses supports multi-candidate JSON payloads', () => {
   assert.equal(parsed[0]?.imageId, 'https://example.com/imagen-1.jpg');
   assert.equal(parsed[1]?.videoId, 'https://example.com/video-1.mp4');
 });
+
+test('generateResponses forwards thinkingInstruction into OpenAI messages', async () => {
+  const service = new AiService() as any;
+  let capturedMessages: Array<{ role: string; content: string }> = [];
+
+  service.createOpenAIClient = () => ({
+    chat: {
+      completions: {
+        create: async ({ messages }: { messages: Array<{ role: string; content: string }> }) => {
+          capturedMessages = messages;
+          return {
+            choices: [
+              {
+                finish_reason: 'stop',
+                message: {
+                  content: JSON.stringify({
+                    responses: [
+                      {
+                        text: 'Te explico breve y avanzamos al siguiente paso.',
+                        type: 'text',
+                      },
+                      {
+                        text: 'Si quieres, te resumo y luego vemos precio.',
+                        type: 'text',
+                      },
+                    ],
+                  }),
+                },
+              },
+            ],
+          };
+        },
+      },
+    },
+  });
+
+  const responses = await service.generateResponses({
+    config: {
+      openaiKey: 'test-key',
+      configurations: {},
+      aiSettings: {
+        memoryWindow: 6,
+        temperature: 0.4,
+        maxCompletionTokens: 180,
+      },
+    },
+    fullPrompt: 'Responde con claridad.',
+    companyContext: '[EMPRESA]\nPhyto Emagry',
+    contactId: '18095551234',
+    message: 'y el precio entonces?',
+    history: [
+      { role: 'user', content: 'como funciona?' },
+      { role: 'assistant', content: 'Ya te explique como funciona.' },
+    ],
+    context: '[THINKING_RESULT]\nalreadyExplained: true',
+    classifiedIntent: 'precio',
+    decisionAction: 'responder_precio_con_valor',
+    purchaseIntentScore: 72,
+    responseStyle: 'balanced',
+    leadStage: 'interesado',
+    replyObjective: 'avanzar_conversacion',
+    thinkingInstruction: 'Analiza primero, luego responde sin repetir. Usa el analisis para decidir la mejor accion.',
+    candidateCount: 2,
+  });
+
+  assert.equal(responses.length, 2);
+  assert.ok(
+    capturedMessages.some((message) =>
+      message.role === 'system'
+      && /Analiza primero, luego responde sin repetir/i.test(message.content),
+    ),
+  );
+  assert.ok(
+    capturedMessages.some((message) =>
+      message.role === 'system'
+      && /\[THINKING_RESULT\]/.test(message.content),
+    ),
+  );
+});

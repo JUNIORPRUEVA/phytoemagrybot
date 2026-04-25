@@ -37,6 +37,7 @@ export class AiService {
       leadStage,
       replyObjective,
       regenerationInstruction,
+      thinkingInstruction,
       candidateCount,
     } = params;
     const aiSettings = config.aiSettings;
@@ -53,7 +54,7 @@ export class AiService {
     }
 
     try {
-      const openai = new OpenAI({ apiKey: config.openaiKey });
+      const openai = this.createOpenAIClient(config.openaiKey);
       const messages = this.buildReplyMessages({
         config,
         fullPrompt,
@@ -69,6 +70,7 @@ export class AiService {
         leadStage,
         replyObjective,
         regenerationInstruction,
+        thinkingInstruction,
         candidateCount,
       });
 
@@ -126,6 +128,10 @@ export class AiService {
     };
   }
 
+  private createOpenAIClient(apiKey: string): OpenAI {
+    return new OpenAI({ apiKey });
+  }
+
   private buildReplyMessages(params: GenerateReplyParams) {
     const memoryWindow = params.config.aiSettings?.memoryWindow ?? 6;
     const requestedCandidates = Math.max(params.candidateCount ?? 3, 2);
@@ -169,6 +175,14 @@ export class AiService {
                 'REGENERACION OBLIGATORIA:',
                 params.regenerationInstruction.trim(),
               ].join('\n'),
+            },
+          ]
+        : []),
+      ...(params.thinkingInstruction?.trim()
+        ? [
+            {
+              role: 'system' as const,
+              content: params.thinkingInstruction.trim(),
             },
           ]
         : []),

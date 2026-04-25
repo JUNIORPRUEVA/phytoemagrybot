@@ -1406,6 +1406,41 @@ test('interested customer sends profile memory to AI before answering', async ()
   assert.match(context, /Estado del cliente: interesado/);
 });
 
+test('thinking layer injects structured analysis before AI response generation', async () => {
+  let capturedParams: Record<string, unknown> | null = null;
+  const service = createService({
+    memoryContext: {
+      messages: [
+        { role: 'user', content: 'como funciona?' },
+        { role: 'assistant', content: 'Claro, te explico como funciona.' },
+      ],
+      clientMemory: {
+        interest: 'precio',
+        status: 'interesado',
+        lastIntent: 'consulta_precio',
+      },
+      summary: {
+        summary: 'Ya se explicó el producto y ahora conviene avanzar.',
+      },
+    },
+    aiReply: 'Te resumo lo importante y si quieres te digo el precio de una vez.',
+    onGenerateReply: (params) => {
+      capturedParams = params;
+    },
+  });
+
+  await service.processIncomingMessage('18095559989', 'y el precio entonces?');
+
+  const context = String((capturedParams as { context?: string } | null)?.context ?? '');
+  const thinkingInstruction = String((capturedParams as { thinkingInstruction?: string } | null)?.thinkingInstruction ?? '');
+
+  assert.match(context, /\[THINKING_RESULT\]/);
+  assert.match(context, /alreadyExplained: true/);
+  assert.match(context, /nextBestAction: (resumir|avanzar)/);
+  assert.match(context, /responseStrategy:/);
+  assert.match(thinkingInstruction, /Analiza primero, luego responde sin repetir/i);
+});
+
 test('recurrent customer uses summary and history to avoid repeating the same answer', async () => {
   const replies: string[] = [];
   const service = createService({

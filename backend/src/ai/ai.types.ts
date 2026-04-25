@@ -39,4 +39,5 @@ export interface GenerateReplyParams {
   replyObjective: AssistantReplyObjective;
   regenerationInstruction?: string;
   candidateCount?: number;
+  thinkingInstruction?: string;
 }

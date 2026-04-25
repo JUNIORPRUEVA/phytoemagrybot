@@ -310,11 +310,12 @@ test('uses name and memory context for AI followups and avoids literal repetitio
 
   await service.processDueFollowups();
 
-  assert.equal(aiCalls.length, 1);
+  assert.equal(aiCalls.length, 3);
   assert.match(aiCalls[0].message, /Usa el nombre Ana/i);
   assert.match(aiCalls[0].message, /humano dominicano/i);
   assert.match(aiCalls[0].context, /Resumen de la conversacion/i);
   assert.match(aiCalls[0].context, /Objetivo del cliente: info/i);
+  assert.match(aiCalls[1].regenerationInstruction, /No repitas el ultimo follow-up/i);
   assert.notEqual(sentMessages[0]?.text, repeatedMessage);
   assert.equal(sentMessages.length, 1);
 });

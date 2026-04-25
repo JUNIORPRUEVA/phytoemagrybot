@@ -55,6 +55,15 @@ interface SentMediaState {
   sentMediaUrls: string[];
 }
 
+interface ThinkingAnalysis {
+  intent: string;
+  userState: 'frio' | 'curioso' | 'interesado' | 'listo';
+  alreadyExplained: boolean;
+  repetitionRisk: boolean;
+  nextBestAction: 'explicar' | 'resumir' | 'preguntar' | 'cerrar' | 'avanzar';
+  responseStrategy: string;
+}
+
 @Injectable()
 export class BotService {
   private static readonly KNOWLEDGE_CONTEXT_CACHE_KEY = 'bot:knowledge-context:v2';
@@ -165,6 +174,14 @@ export class BotService {
         intent,
         memoryContext.clientMemory.lastIntent,
       ) || decision.stage === 'listo';
+      const thinkingAnalysis = this.analyzeAndThink(normalizedMessage, {
+        memoryContext,
+        conversationMemory,
+        decision,
+        intent,
+        hotLead,
+      });
+      console.log('THINKING RESULT:', thinkingAnalysis);
       const responseStyle = this.resolveResponseStyleFromDecision(decision, normalizedMessage, intent);
       const leadStage = this.mapDecisionStageToLeadStage(decision.stage, hotLead);
       const replyObjective = this.mapDecisionActionToReplyObjective(decision.action);
@@ -193,13 +210,14 @@ export class BotService {
         contactId: normalizedContactId,
         message: normalizedMessage,
         history,
-        context: this.buildCombinedConversationContext(knowledgeContext, memoryContext),
+        context: this.buildCombinedConversationContext(knowledgeContext, memoryContext, thinkingAnalysis),
         classifiedIntent: decision.intent,
         decisionAction: decision.action,
         purchaseIntentScore: decision.purchaseIntentScore,
         responseStyle,
         leadStage,
         replyObjective,
+        thinkingAnalysis,
         conversationMemory,
         candidateMediaFiles: this.shouldAttachMediaToAiReply(
           normalizedMessage,
@@ -585,6 +603,7 @@ export class BotService {
     responseStyle: AssistantResponseStyle;
     leadStage: AssistantLeadStage;
     replyObjective: AssistantReplyObjective;
+    thinkingAnalysis: ThinkingAnalysis;
     conversationMemory: ConversationMemoryState;
     candidateMediaFiles: MediaFile[];
     intent: BotIntent;
@@ -617,6 +636,7 @@ export class BotService {
         responseStyle: params.responseStyle,
         leadStage: params.leadStage,
         replyObjective: params.replyObjective,
+        thinkingInstruction: 'Analiza primero, luego responde sin repetir. Usa el análisis para decidir la mejor acción.',
         candidateCount: 3,
         regenerationInstruction:
           attempt > 0 && lastReason
@@ -951,12 +971,109 @@ export class BotService {
   private buildCombinedConversationContext(
     knowledgeContext: string,
     memoryContext: Awaited<ReturnType<MemoryService['getConversationContext']>>,
+    thinkingAnalysis?: ThinkingAnalysis,
   ): string {
     const conversationContext = this.buildConversationContext(memoryContext);
+    const thinkingContext = thinkingAnalysis
+      ? this.buildThinkingContext(thinkingAnalysis)
+      : '';
 
-    return [knowledgeContext.trim(), conversationContext.trim()]
+    return [knowledgeContext.trim(), conversationContext.trim(), thinkingContext.trim()]
       .filter((section) => section.length > 0)
       .join('\n\n');
+  }
+
+  private analyzeAndThink(
+    userMessage: string,
+    state: {
+      memoryContext: Awaited<ReturnType<MemoryService['getConversationContext']>>;
+      conversationMemory: ConversationMemoryState;
+      decision: BotDecisionState;
+      intent: BotIntent;
+      hotLead: boolean;
+    },
+  ): ThinkingAnalysis {
+    const normalizedMessage = this.normalizeTextForMatch(userMessage);
+    const assistantHistory = state.memoryContext.messages.filter((item) => item.role === 'assistant');
+    const userHistory = state.memoryContext.messages.filter((item) => item.role === 'user');
+    const alreadyExplained = assistantHistory.some((item) =>
+      /funciona|sirve|precio|se usa|beneficio|resultado|explico/i.test(item.content),
+    ) || Boolean(state.memoryContext.summary.summary?.trim());
+    const repetitionRisk =
+      state.conversationMemory.sentMessages.length > 0 && (
+        state.conversationMemory.lastMessages.some((item) => this.normalizeTextForMatch(item) === normalizedMessage)
+        || this.hasShortBackAndForthLoop(userHistory)
+      );
+
+    const userState: ThinkingAnalysis['userState'] = state.hotLead
+      ? 'listo'
+      : state.decision.stage === 'interesado'
+        ? 'interesado'
+        : state.decision.stage === 'dudoso'
+          ? 'interesado'
+          : state.memoryContext.messages.length <= 2
+            ? 'frio'
+            : 'curioso';
+
+    let nextBestAction: ThinkingAnalysis['nextBestAction'] = 'avanzar';
+    let responseStrategy = 'responder natural y mover la conversacion.';
+
+    if (state.hotLead || state.decision.action === 'cerrar') {
+      nextBestAction = 'cerrar';
+      responseStrategy = 'cerrar suave y llevar al siguiente paso de compra.';
+    } else if (repetitionRisk && alreadyExplained) {
+      nextBestAction = 'avanzar';
+      responseStrategy = 'no repetir, resumir brevemente y llevar a precio o siguiente paso.';
+    } else if (alreadyExplained) {
+      nextBestAction = 'resumir';
+      responseStrategy = 'resumir lo esencial sin explicar otra vez y empujar la conversacion.';
+    } else if (state.intent === 'duda' || state.decision.action === 'persuadir') {
+      nextBestAction = 'explicar';
+      responseStrategy = 'explicar claro, resolver la duda y cerrar con una pregunta util.';
+    } else if (state.intent === 'interes' || state.intent === 'compra') {
+      nextBestAction = 'avanzar';
+      responseStrategy = 'ser directo, responder valor y mover a precio o compra.';
+    } else {
+      nextBestAction = 'preguntar';
+      responseStrategy = 'responder corto y hacer una sola pregunta para avanzar sin caer en bucle.';
+    }
+
+    return {
+      intent: state.decision.intent,
+      userState,
+      alreadyExplained,
+      repetitionRisk,
+      nextBestAction,
+      responseStrategy,
+    };
+  }
+
+  private hasShortBackAndForthLoop(userHistory: StoredMessage[]): boolean {
+    const recentUserMessages = userHistory
+      .slice(-3)
+      .map((item) => this.normalizeTextForMatch(item.content))
+      .filter((item) => item.length > 0);
+
+    if (recentUserMessages.length < 2) {
+      return false;
+    }
+
+    return new Set(recentUserMessages).size < recentUserMessages.length;
+  }
+
+  private buildThinkingContext(analysis: ThinkingAnalysis): string {
+    return [
+      '[THINKING_RESULT]',
+      `intent: ${analysis.intent}`,
+      `userState: ${analysis.userState}`,
+      `alreadyExplained: ${analysis.alreadyExplained ? 'true' : 'false'}`,
+      `repetitionRisk: ${analysis.repetitionRisk ? 'true' : 'false'}`,
+      `nextBestAction: ${analysis.nextBestAction}`,
+      `responseStrategy: ${analysis.responseStrategy}`,
+      'Usa este análisis para decidir si conviene explicar, resumir, preguntar, avanzar o cerrar.',
+      'Si ya se explicó lo suficiente, no expliques dos veces lo mismo.',
+      'Si no hay valor nuevo, pregunta. Si hay interés, avanza a compra con naturalidad.',
+    ].join('\n');
   }
 
   private async getRequiredKnowledgeContext(
