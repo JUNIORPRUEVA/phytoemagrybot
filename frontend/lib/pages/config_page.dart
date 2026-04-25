@@ -24,12 +24,14 @@ class ConfigPage extends StatefulWidget {
 
 abstract class ConfigPageStateAccess {
   bool handleBackNavigation();
+  Future<void> reloadCurrentSection();
 }
 
 enum _ConfigSection { channels, company, tools, memory }
 
 class _ConfigPageState extends State<ConfigPage>
     implements ConfigPageStateAccess {
+  final GlobalKey<State<MemoryPage>> _memoryPageKey = GlobalKey<State<MemoryPage>>();
   final TextEditingController _companyNameController = TextEditingController();
   final TextEditingController _companyDetailsController =
       TextEditingController();
@@ -218,8 +220,32 @@ class _ConfigPageState extends State<ConfigPage>
       return false;
     }
 
+    if (_selectedSection == _ConfigSection.memory) {
+      final memoryState = _memoryPageKey.currentState as MemoryPageStateAccess?;
+      final handled = memoryState?.handleBackNavigation() ?? false;
+      if (handled) {
+        return true;
+      }
+    }
+
     _closeSection();
     return true;
+  }
+
+  @override
+  Future<void> reloadCurrentSection() async {
+    if (_selectedSection == null) {
+      await _loadConfig();
+      return;
+    }
+
+    if (_selectedSection == _ConfigSection.memory) {
+      final memoryState = _memoryPageKey.currentState as MemoryPageStateAccess?;
+      await (memoryState?.reload() ?? Future<void>.value());
+      return;
+    }
+
+    await _loadConfig();
   }
 
   void _handleNestedConfigUpdated() {
@@ -347,6 +373,7 @@ class _ConfigPageState extends State<ConfigPage>
         );
       case _ConfigSection.memory:
         return MemoryPage(
+          key: _memoryPageKey,
           apiService: widget.apiService,
           onConfigUpdated: _handleNestedConfigUpdated,
           onRequestBack: _closeSection,

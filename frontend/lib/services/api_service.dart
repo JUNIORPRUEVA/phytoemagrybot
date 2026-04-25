@@ -1137,6 +1137,14 @@ class _MemoryRepository {
     );
     return MemoryDeleteActionResultData.fromJson(data);
   }
+
+  Future<MemoryDeleteActionResultData> deleteAllConversations({required String actor}) async {
+    final data = await _client.postJson(
+      '/memory/delete-all-conversations',
+      body: <String, dynamic>{'actor': actor},
+    );
+    return MemoryDeleteActionResultData.fromJson(data);
+  }
 }
 
 class _WhatsAppRepository {
@@ -1740,6 +1748,10 @@ class ApiService {
 
   Future<MemoryDeleteActionResultData> resetAllMemory() async {
     return _memoryRepository.resetAll(actor: 'dashboard-ui');
+  }
+
+  Future<MemoryDeleteActionResultData> deleteAllConversations() async {
+    return _memoryRepository.deleteAllConversations(actor: 'dashboard-ui');
   }
 
   Future<WhatsAppChannelData> getWhatsAppChannel() async {

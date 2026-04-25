@@ -62,7 +62,7 @@ export interface ConversationContextSnapshot {
 
 export interface MemoryDeleteResult {
   ok: boolean;
-  action: 'delete-client' | 'delete-conversation' | 'reset-all';
+  action: 'delete-client' | 'delete-conversation' | 'delete-all-conversations' | 'reset-all';
   actor: string;
   contactId: string | null;
   deletedAt: string;

@@ -38,6 +38,11 @@ export class MemoryController {
     return this.memoryService.resetAllMemory(dto.actor);
   }
 
+  @Post('delete-all-conversations')
+  async deleteAllConversations(@Body() dto: MemoryResetAllDto) {
+    return this.memoryService.deleteAllConversations(dto.actor);
+  }
+
   @Post(':contactId')
   async updateMemoryEntry(
     @Param('contactId') contactId: string,

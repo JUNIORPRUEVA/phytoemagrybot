@@ -69,3 +69,35 @@ test('resetAllMemory truncates memory tables and clears runtime memory patterns'
   assert.ok(deletedPatterns.includes('voice-pref:*'));
   assert.ok(deletedPatterns.includes('memory:summary-count:*'));
 });
+
+test('deleteAllConversations truncates conversation tables but keeps client memory', async () => {
+  let executedSql = '';
+  const deletedPatterns: string[] = [];
+  const prisma = {
+    $transaction: async (
+      callback: (tx: { $executeRawUnsafe: (sql: string) => Promise<void> }) => Promise<void>,
+    ) => {
+      await callback({
+        $executeRawUnsafe: async (sql: string) => {
+          executedSql = sql;
+        },
+      });
+    },
+  };
+  const redis = {
+    deleteByPattern: async (pattern: string) => {
+      deletedPatterns.push(pattern);
+      return 1;
+    },
+  };
+
+  const service = new MemoryService(prisma as any, redis as any, {} as any);
+  const result = await service.deleteAllConversations('dashboard-ui');
+
+  assert.equal(result.ok, true);
+  assert.equal(result.action, 'delete-all-conversations');
+  assert.match(executedSql, /TRUNCATE TABLE/);
+  assert.ok(!executedSql.includes('client_memory'));
+  assert.ok(deletedPatterns.includes('cache:*'));
+  assert.ok(deletedPatterns.includes('wa-inbound:*'));
+});

@@ -124,6 +124,18 @@ class _FakeApiService extends ApiService {
       counts: const <String, dynamic>{},
     );
   }
+
+  @override
+  Future<MemoryDeleteActionResultData> deleteAllConversations() async {
+    return MemoryDeleteActionResultData(
+      ok: true,
+      action: 'delete-conversation-all',
+      actor: 'dashboard-ui',
+      contactId: null,
+      deletedAt: null,
+      counts: const <String, dynamic>{},
+    );
+  }
 }
 
 void main() {
@@ -181,14 +193,20 @@ void main() {
     await tester.tap(find.text('Memoria por contacto'));
     await tester.pumpAndSettle();
 
+    expect(find.text('Memoria por contacto'), findsOneWidget);
     expect(find.text('Maria'), findsWidgets);
+    expect(find.text('Buscar contacto o conversación'), findsOneWidget);
+
+    await tester.tap(find.text('Maria').first);
+    await tester.pumpAndSettle();
+
     expect(find.text('Guardar memoria'), findsOneWidget);
-    expect(find.text('Borrar memoria del cliente'), findsOneWidget);
+    expect(find.text('Borrar memoria'), findsOneWidget);
     expect(find.text('Limpiar conversación'), findsOneWidget);
     expect(find.text('Prefiere entrega en la tarde'), findsOneWidget);
     expect(find.text('Cliente interesada en te detox; espera seguimiento.'), findsOneWidget);
 
-    await tester.tap(find.text('Borrar memoria del cliente'));
+    await tester.tap(find.text('Borrar memoria'));
     await tester.pumpAndSettle();
     expect(find.text('¿Seguro que deseas borrar esta información? Esto no se puede deshacer.'), findsOneWidget);
     await tester.tap(find.text('Cancelar'));

@@ -1,8 +1,15 @@
+﻿import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../services/api_service.dart';
 import '../widgets/app_text_field.dart';
 import '../widgets/secondary_page_layout.dart';
+
+abstract class MemoryPageStateAccess {
+  bool handleBackNavigation();
+  Future<void> reload();
+}
 
 class MemoryPage extends StatefulWidget {
   const MemoryPage({
@@ -20,10 +27,10 @@ class MemoryPage extends StatefulWidget {
   State<MemoryPage> createState() => _MemoryPageState();
 }
 
-class _MemoryPageState extends State<MemoryPage> {
+class _MemoryPageState extends State<MemoryPage>
+    implements MemoryPageStateAccess {
   final TextEditingController _searchController = TextEditingController();
   final TextEditingController _memoryWindowController = TextEditingController();
-  final TextEditingController _contactIdController = TextEditingController();
   final TextEditingController _nameController = TextEditingController();
   final TextEditingController _interestController = TextEditingController();
   final TextEditingController _lastIntentController = TextEditingController();
@@ -33,6 +40,7 @@ class _MemoryPageState extends State<MemoryPage> {
   List<MemoryContactListItemData> _contacts = const <MemoryContactListItemData>[];
   List<StoredMessageData> _messages = const <StoredMessageData>[];
 
+  Timer? _searchDebounce;
   String? _selectedContactId;
   bool _isLoadingContacts = true;
   bool _isLoadingDetail = false;
@@ -48,8 +56,33 @@ class _MemoryPageState extends State<MemoryPage> {
   @override
   void initState() {
     super.initState();
+    _searchController.addListener(_onSearchChanged);
     _loadPage();
   }
+
+  @override
+  bool handleBackNavigation() {
+    if (_selectedSection == null) {
+      return false;
+    }
+
+    if (_selectedSection == _MemorySection.contacts && _selectedContactId != null) {
+      _closeConversationDetail();
+      return true;
+    }
+
+    setState(() {
+      _selectedSection = null;
+      _selectedContactId = null;
+      _detailError = null;
+      _clearEditor();
+    });
+    _scrollToTop();
+    return true;
+  }
+
+  @override
+  Future<void> reload() => _loadPage();
 
   @override
   void didUpdateWidget(covariant MemoryPage oldWidget) {
@@ -61,9 +94,10 @@ class _MemoryPageState extends State<MemoryPage> {
 
   @override
   void dispose() {
+    _searchDebounce?.cancel();
+    _searchController.removeListener(_onSearchChanged);
     _searchController.dispose();
     _memoryWindowController.dispose();
-    _contactIdController.dispose();
     _nameController.dispose();
     _interestController.dispose();
     _lastIntentController.dispose();
@@ -97,10 +131,6 @@ class _MemoryPageState extends State<MemoryPage> {
         _contacts = contacts;
         _isLoadingContacts = false;
       });
-
-      if (_selectedContactId == null && contacts.isNotEmpty) {
-        await _loadContact(contacts.first.contactId);
-      }
     } catch (error) {
       if (!mounted) {
         return;
@@ -120,7 +150,9 @@ class _MemoryPageState extends State<MemoryPage> {
     });
 
     try {
-      final contacts = await widget.apiService.getMemoryContacts(query: _searchController.text);
+      final contacts = await widget.apiService.getMemoryContacts(
+        query: _searchController.text,
+      );
 
       if (!mounted) {
         return;
@@ -155,10 +187,10 @@ class _MemoryPageState extends State<MemoryPage> {
       _detailError = null;
     });
 
-    _contactIdController.text = normalizedContactId;
-
     try {
-      final contextData = await widget.apiService.getMemoryContext(normalizedContactId);
+      final contextData = await widget.apiService.getMemoryContext(
+        normalizedContactId,
+      );
 
       if (!mounted) {
         return;
@@ -192,7 +224,10 @@ class _MemoryPageState extends State<MemoryPage> {
   Future<void> _saveMemorySettings() async {
     final memoryWindow = int.tryParse(_memoryWindowController.text.trim());
     if (memoryWindow == null || memoryWindow <= 0) {
-      _showMessage('La ventana de memoria debe ser un numero mayor que cero.', isError: true);
+      _showMessage(
+        'La ventana de memoria debe ser un numero mayor que cero.',
+        isError: true,
+      );
       return;
     }
 
@@ -225,9 +260,9 @@ class _MemoryPageState extends State<MemoryPage> {
   }
 
   Future<void> _saveMemoryEntry() async {
-    final contactId = _contactIdController.text.trim();
+    final contactId = _selectedContactId?.trim() ?? '';
     if (contactId.isEmpty) {
-      _showMessage('Selecciona o escribe un contacto antes de guardar.', isError: true);
+      _showMessage('Selecciona un contacto antes de guardar.', isError: true);
       return;
     }
 
@@ -252,7 +287,6 @@ class _MemoryPageState extends State<MemoryPage> {
 
       _applyContext(contextData);
       setState(() {
-        _selectedContactId = contactId;
         _messages = contextData.messages;
       });
 
@@ -315,9 +349,12 @@ class _MemoryPageState extends State<MemoryPage> {
   }
 
   Future<void> _deleteSelectedClientMemory() async {
-    final contactId = _selectedContactId?.trim() ?? _contactIdController.text.trim();
+    final contactId = _selectedContactId?.trim() ?? '';
     if (contactId.isEmpty) {
-      _showMessage('Selecciona un contacto antes de borrar su memoria.', isError: true);
+      _showMessage(
+        'Selecciona un contacto antes de borrar su memoria.',
+        isError: true,
+      );
       return;
     }
 
@@ -338,7 +375,6 @@ class _MemoryPageState extends State<MemoryPage> {
 
       setState(() {
         _selectedContactId = null;
-        _contactIdController.clear();
         _clearEditor();
       });
       await _loadContacts();
@@ -359,9 +395,12 @@ class _MemoryPageState extends State<MemoryPage> {
   }
 
   Future<void> _deleteConversation() async {
-    final contactId = _selectedContactId?.trim() ?? _contactIdController.text.trim();
+    final contactId = _selectedContactId?.trim() ?? '';
     if (contactId.isEmpty) {
-      _showMessage('Selecciona un contacto antes de limpiar la conversación.', isError: true);
+      _showMessage(
+        'Selecciona un contacto antes de limpiar la conversación.',
+        isError: true,
+      );
       return;
     }
 
@@ -417,7 +456,6 @@ class _MemoryPageState extends State<MemoryPage> {
 
       setState(() {
         _selectedContactId = null;
-        _contactIdController.clear();
         _contacts = const <MemoryContactListItemData>[];
         _clearEditor();
       });
@@ -444,7 +482,8 @@ class _MemoryPageState extends State<MemoryPage> {
     messenger.showSnackBar(
       SnackBar(
         content: Text(message.replaceFirst('Exception: ', '')),
-        backgroundColor: isError ? const Color(0xFF9F1239) : const Color(0xFF166534),
+        backgroundColor:
+            isError ? const Color(0xFF9F1239) : const Color(0xFF166534),
       ),
     );
   }
@@ -464,6 +503,36 @@ class _MemoryPageState extends State<MemoryPage> {
     });
   }
 
+  void _onSearchChanged() {
+    _searchDebounce?.cancel();
+    _searchDebounce = Timer(const Duration(milliseconds: 280), () {
+      if (!mounted || _selectedSection != _MemorySection.contacts) {
+        return;
+      }
+      _loadContacts();
+    });
+  }
+
+  void _openSection(_MemorySection section) {
+    setState(() {
+      _selectedSection = section;
+      if (section == _MemorySection.contacts) {
+        _selectedContactId = null;
+        _detailError = null;
+        _clearEditor();
+      }
+    });
+    _scrollToTop();
+  }
+
+  void _closeConversationDetail() {
+    setState(() {
+      _selectedContactId = null;
+      _detailError = null;
+      _messages = const <StoredMessageData>[];
+    });
+  }
+
   String _sectionTitle(_MemorySection section) {
     switch (section) {
       case _MemorySection.window:
@@ -478,7 +547,7 @@ class _MemoryPageState extends State<MemoryPage> {
       case _MemorySection.window:
         return 'Define cuanta conversacion reciente usa el bot antes de responder.';
       case _MemorySection.contacts:
-        return 'Consulta y corrige lo que el bot recuerda de cada cliente.';
+        return 'Busca y revisa conversaciones guardadas por contacto.';
     }
   }
 
@@ -487,7 +556,7 @@ class _MemoryPageState extends State<MemoryPage> {
       case _MemorySection.window:
         return Icons.history_toggle_off_rounded;
       case _MemorySection.contacts:
-        return Icons.psychology_alt_rounded;
+        return Icons.chat_bubble_outline_rounded;
     }
   }
 
@@ -514,7 +583,7 @@ class _MemoryPageState extends State<MemoryPage> {
       ),
       _MemoryMenuItemData(
         section: _MemorySection.contacts,
-        title: _sectionTitle(_MemorySection.contacts),
+        title: 'Memoria por contacto',
         description: _sectionDescription(_MemorySection.contacts),
         status: _sectionStatus(_MemorySection.contacts),
         icon: _sectionIcon(_MemorySection.contacts),
@@ -522,18 +591,29 @@ class _MemoryPageState extends State<MemoryPage> {
     ];
   }
 
+  @override
+  Widget build(BuildContext context) {
+    final isBusy =
+        _isLoadingContacts ||
+        _isLoadingDetail ||
+        _isSavingMemory ||
+        _isSavingSettings ||
+        _isDeletingClientMemory ||
+        _isDeletingConversation ||
+      _isResettingAllMemory;
+
+    return SecondaryPageLayout(
+      caption: null,
+      child: _selectedSection == null
+          ? _buildMenuView(isBusy)
+          : _buildDetailView(_selectedSection!, isBusy),
+    );
+  }
+
   Widget _buildMenuView(bool isBusy) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        if (widget.onRequestBack != null) ...<Widget>[
-          TextButton.icon(
-            onPressed: widget.onRequestBack,
-            icon: const Icon(Icons.arrow_back_rounded, size: 18),
-            label: const Text('Atras'),
-          ),
-          const SizedBox(height: 6),
-        ],
         if (_isLoadingContacts) ...<Widget>[
           const SizedBox(height: 4),
           const LinearProgressIndicator(minHeight: 2),
@@ -549,74 +629,34 @@ class _MemoryPageState extends State<MemoryPage> {
         _MemoryMenuList(
           items: _menuItems(),
           enabled: !isBusy,
-          onTap: (_MemorySection section) {
-            setState(() {
-              _selectedSection = section;
-            });
-            _scrollToTop();
-          },
+          onTap: _openSection,
         ),
       ],
     );
   }
 
   Widget _buildDetailView(_MemorySection section, bool isBusy) {
+    switch (section) {
+      case _MemorySection.window:
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            _MemoryDetailHeader(title: _sectionTitle(section)),
+            const SizedBox(height: 18),
+            _buildWindowSection(),
+          ],
+        );
+      case _MemorySection.contacts:
+        return _selectedContactId == null
+            ? _buildContactsSection(isBusy)
+            : _buildConversationDetailView(isBusy);
+    }
+  }
+
+  Widget _buildWindowSection() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        _MemoryDetailHeader(
-          title: _sectionTitle(section),
-          subtitle: _sectionDescription(section),
-          onBack: () {
-            setState(() {
-              _selectedSection = null;
-            });
-            _scrollToTop();
-          },
-          onReload: isBusy ? null : _loadPage,
-        ),
-        const SizedBox(height: 18),
-        switch (section) {
-          _MemorySection.window => _buildWindowSection(isBusy),
-          _MemorySection.contacts => _buildContactsSection(isBusy),
-        },
-      ],
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final isBusy =
-        _isLoadingContacts ||
-        _isLoadingDetail ||
-        _isSavingMemory ||
-        _isSavingSettings ||
-        _isDeletingClientMemory ||
-        _isDeletingConversation ||
-        _isResettingAllMemory;
-    final selectedSection = _selectedSection;
-
-    return SecondaryPageLayout(
-      caption: null,
-      child: selectedSection == null
-          ? _buildMenuView(isBusy)
-          : _buildDetailView(selectedSection, isBusy),
-    );
-  }
-
-  Widget _buildWindowSection(bool isBusy) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: <Widget>[
-        const Text(
-          'Esta opcion controla cuantos mensajes recientes ve el bot antes de responder. Un numero mas alto conserva mas contexto; uno mas bajo lo hace mas rapido y estricto.',
-          style: TextStyle(
-            color: Color(0xFF64748B),
-            fontSize: 13,
-            height: 1.45,
-          ),
-        ),
-        const SizedBox(height: 18),
         SizedBox(
           width: 220,
           child: AppTextField(
@@ -624,7 +664,6 @@ class _MemoryPageState extends State<MemoryPage> {
             controller: _memoryWindowController,
             keyboardType: TextInputType.number,
             hintText: '6',
-            helperText: 'Cantidad de mensajes recientes.',
             enabled: !_isSavingSettings,
           ),
         ),
@@ -649,17 +688,6 @@ class _MemoryPageState extends State<MemoryPage> {
                     : 'Resetear toda la memoria',
               ),
             ),
-            OutlinedButton(
-              onPressed: isBusy
-                  ? null
-                  : () {
-                      setState(() {
-                        _selectedSection = null;
-                      });
-                      _scrollToTop();
-                    },
-              child: const Text('Atras'),
-            ),
           ],
         ),
       ],
@@ -670,358 +698,403 @@ class _MemoryPageState extends State<MemoryPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        const Text(
-          'Aqui puedes buscar un contacto, ver que recuerda el bot sobre esa persona y corregir nombre, interes, intencion, notas y resumen.',
-          style: TextStyle(
-            color: Color(0xFF64748B),
-            fontSize: 13,
-            height: 1.45,
+        _MemoryDetailHeader(title: 'Memoria por contacto'),
+        const SizedBox(height: 18),
+        Container(
+          padding: const EdgeInsets.all(18),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(22),
+            border: Border.all(color: const Color(0xFFE2E8F0)),
           ),
-        ),
-        const SizedBox(height: 18),
-        _buildContactsPanel(isBusy),
-        const SizedBox(height: 18),
-        _buildEditorPanel(isBusy),
-        const SizedBox(height: 18),
-        OutlinedButton(
-          onPressed: isBusy
-              ? null
-              : () {
-                  setState(() {
-                    _selectedSection = null;
-                  });
-                  _scrollToTop();
-                },
-          child: const Text('Atras'),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Container(
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(color: const Color(0xFFE2E8F0)),
+                  color: const Color(0xFFF8FAFC),
+                ),
+                child: TextField(
+                  controller: _searchController,
+                  enabled: !_isLoadingContacts,
+                  decoration: const InputDecoration(
+                    hintText: 'Buscar contacto o conversación',
+                    prefixIcon: Icon(Icons.search_rounded),
+                    border: InputBorder.none,
+                    enabledBorder: InputBorder.none,
+                    focusedBorder: InputBorder.none,
+                    filled: false,
+                    contentPadding: EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 18,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 14),
+              Container(height: 1, color: const Color(0xFFE2E8F0)),
+              if (_contactsError != null) ...<Widget>[
+                const SizedBox(height: 14),
+                _MemoryMessageLine(
+                  message: _contactsError!,
+                  color: const Color(0xFF9F1239),
+                ),
+              ],
+              const SizedBox(height: 18),
+              if (_contacts.isEmpty && !_isLoadingContacts)
+                const Text(
+                  'No hay contactos con memoria todavía.',
+                  style: TextStyle(color: Color(0xFF64748B)),
+                )
+              else
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxHeight: 720),
+                  child: ListView.separated(
+                    shrinkWrap: true,
+                    itemCount: _contacts.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 10),
+                    itemBuilder: (BuildContext context, int index) {
+                      final item = _contacts[index];
+
+                      return InkWell(
+                        onTap: isBusy ? null : () => _loadContact(item.contactId),
+                        borderRadius: BorderRadius.circular(18),
+                        child: Container(
+                          padding: const EdgeInsets.all(16),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFF8FAFC),
+                            borderRadius: BorderRadius.circular(18),
+                            border: Border.all(color: const Color(0xFFE2E8F0)),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: <Widget>[
+                              Row(
+                                children: <Widget>[
+                                  Expanded(
+                                    child: Text(
+                                      item.name?.trim().isNotEmpty == true
+                                          ? item.name!
+                                          : item.contactId,
+                                      style: const TextStyle(
+                                        color: Color(0xFF0F172A),
+                                        fontWeight: FontWeight.w700,
+                                        fontSize: 15,
+                                      ),
+                                    ),
+                                  ),
+                                  const Icon(
+                                    Icons.chevron_right_rounded,
+                                    color: Color(0xFF94A3B8),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 6),
+                              Text(
+                                item.contactId,
+                                style: const TextStyle(
+                                  color: Color(0xFF64748B),
+                                  fontSize: 12.5,
+                                ),
+                              ),
+                              if (item.summary?.isNotEmpty == true) ...<Widget>[
+                                const SizedBox(height: 12),
+                                Text(
+                                  item.summary!,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    color: Color(0xFF475569),
+                                    fontSize: 13,
+                                    height: 1.45,
+                                  ),
+                                ),
+                              ],
+                              if (item.interest?.isNotEmpty == true) ...<Widget>[
+                                const SizedBox(height: 10),
+                                _MemoryPill(label: item.interest!),
+                              ],
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+            ],
+          ),
         ),
       ],
     );
   }
 
-  Widget _buildContactsPanel(bool isBusy) {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          AppTextField(
-            label: 'Buscar contacto',
-            controller: _searchController,
-            hintText: 'Ej: 18095551234',
-            enabled: !_isLoadingContacts,
+  Widget _buildConversationDetailView(bool isBusy) {
+    MemoryContactListItemData? selectedItem;
+    for (final item in _contacts) {
+      if (item.contactId == _selectedContactId) {
+        selectedItem = item;
+        break;
+      }
+    }
+    final title = selectedItem?.name?.trim().isNotEmpty == true
+        ? selectedItem!.name!
+        : (_selectedContactId ?? 'Conversación');
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        _MemoryDetailHeader(title: 'Memoria por contacto'),
+        const SizedBox(height: 18),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(18),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(22),
+            border: Border.all(color: const Color(0xFFE2E8F0)),
           ),
-          const SizedBox(height: 12),
-          Row(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
-              Expanded(
-                child: OutlinedButton(
-                  onPressed: _isLoadingContacts ? null : _loadContacts,
-                  child: Text(_isLoadingContacts ? 'Buscando...' : 'Buscar'),
-                ),
+              Row(
+                children: <Widget>[
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: <Widget>[
+                        Text(
+                          title,
+                          style: const TextStyle(
+                            color: Color(0xFF0F172A),
+                            fontSize: 22,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          _selectedContactId ?? '',
+                          style: const TextStyle(
+                            color: Color(0xFF64748B),
+                            fontSize: 13,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
               ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: OutlinedButton(
-                  onPressed: _isLoadingContacts ? null : _loadPage,
-                  child: const Text('Recargar'),
+              if (_detailError != null) ...<Widget>[
+                const SizedBox(height: 12),
+                _MemoryMessageLine(
+                  message: _detailError!,
+                  color: const Color(0xFF9F1239),
                 ),
+              ],
+              const SizedBox(height: 18),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF8FAFC),
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(color: const Color(0xFFE2E8F0)),
+                ),
+                child: _isLoadingDetail
+                    ? const Center(child: CircularProgressIndicator())
+                    : _messages.isEmpty
+                        ? const Text(
+                            'Todavía no hay mensajes guardados para este contacto.',
+                            style: TextStyle(color: Color(0xFF64748B)),
+                          )
+                        : ListView.separated(
+                            shrinkWrap: true,
+                            physics: const NeverScrollableScrollPhysics(),
+                            itemCount: _messages.length,
+                            separatorBuilder: (_, __) => const SizedBox(height: 10),
+                            itemBuilder: (context, index) {
+                              final message = _messages[index];
+                              final isUser = message.role == 'user';
+
+                              return Align(
+                                alignment: isUser
+                                    ? Alignment.centerLeft
+                                    : Alignment.centerRight,
+                                child: ConstrainedBox(
+                                  constraints: const BoxConstraints(maxWidth: 520),
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 14,
+                                      vertical: 12,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: isUser
+                                          ? const Color(0xFFFFFFFF)
+                                          : const Color(0xFFEFF6FF),
+                                      borderRadius: BorderRadius.circular(16),
+                                      border: Border.all(
+                                        color: isUser
+                                            ? const Color(0xFFE2E8F0)
+                                            : const Color(0xFFBFDBFE),
+                                      ),
+                                    ),
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: <Widget>[
+                                        Text(
+                                          isUser ? 'Cliente' : 'Bot',
+                                          style: TextStyle(
+                                            color: isUser
+                                                ? const Color(0xFF0F172A)
+                                                : const Color(0xFF1D4ED8),
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 6),
+                                        Text(
+                                          message.content,
+                                          style: const TextStyle(
+                                            color: Color(0xFF334155),
+                                            fontSize: 13.5,
+                                            height: 1.45,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
               ),
+              const SizedBox(height: 18),
+              _buildEditorPanel(isBusy),
             ],
           ),
-          const SizedBox(height: 18),
-          AppTextField(
-            label: 'Abrir contacto',
-            controller: _contactIdController,
-            hintText: 'Escribe o elige un contacto',
-            enabled: !isBusy,
-          ),
-          const SizedBox(height: 12),
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton(
-              onPressed: isBusy ? null : () => _loadContact(_contactIdController.text),
-              child: Text(_isLoadingDetail ? 'Abriendo...' : 'Abrir'),
-            ),
-          ),
-          if (_contactsError != null) ...<Widget>[
-            const SizedBox(height: 14),
-            Text(
-              _contactsError!,
-              style: const TextStyle(color: Color(0xFF9F1239)),
-            ),
-          ],
-          const SizedBox(height: 18),
-          if (_contacts.isEmpty && !_isLoadingContacts)
-            const Text(
-              'No hay contactos con memoria todavia.',
-              style: TextStyle(color: Color(0xFF64748B)),
-            )
-          else
-            ConstrainedBox(
-              constraints: const BoxConstraints(maxHeight: 560),
-              child: ListView.separated(
-                shrinkWrap: true,
-                itemCount: _contacts.length,
-                separatorBuilder: (_, __) => const SizedBox(height: 10),
-                itemBuilder: (BuildContext context, int index) {
-                  final item = _contacts[index];
-                  final selected = item.contactId == _selectedContactId;
-
-                  return InkWell(
-                    onTap: isBusy ? null : () => _loadContact(item.contactId),
-                    borderRadius: BorderRadius.circular(14),
-                    child: Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: selected ? const Color(0xFFEFF6FF) : const Color(0xFFF8FAFC),
-                        borderRadius: BorderRadius.circular(14),
-                        border: Border.all(
-                          color: selected ? const Color(0xFF93C5FD) : const Color(0xFFE2E8F0),
-                        ),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: <Widget>[
-                          Text(
-                            item.name?.trim().isNotEmpty == true ? item.name! : item.contactId,
-                            style: const TextStyle(
-                              color: Color(0xFF0F172A),
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            item.contactId,
-                            style: const TextStyle(color: Color(0xFF64748B), fontSize: 13),
-                          ),
-                          if (item.interest?.isNotEmpty == true) ...<Widget>[
-                            const SizedBox(height: 10),
-                            Text(
-                              item.interest!,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(color: Color(0xFF334155)),
-                            ),
-                          ],
-                          if (item.summary?.isNotEmpty == true) ...<Widget>[
-                            const SizedBox(height: 10),
-                            Text(
-                              item.summary!,
-                              maxLines: 3,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(color: Color(0xFF475569), fontSize: 13),
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
-                  );
-                },
-              ),
-            ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 
   Widget _buildEditorPanel(bool isBusy) {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          Row(
-            children: <Widget>[
-              Expanded(
-                child: Text(
-                  _selectedContactId == null ? 'Sin contacto seleccionado' : 'Contacto: ${_selectedContactId!}',
-                  style: const TextStyle(
-                    color: Color(0xFF0F172A),
-                    fontSize: 18,
-                    fontWeight: FontWeight.w700,
-                  ),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Row(
+          children: <Widget>[
+            const Expanded(
+              child: Text(
+                'Memoria del contacto',
+                style: TextStyle(
+                  color: Color(0xFF0F172A),
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700,
                 ),
               ),
-              ElevatedButton(
-                onPressed: _isSavingMemory || _isLoadingDetail ? null : _saveMemoryEntry,
-                child: Text(_isSavingMemory ? 'Guardando...' : 'Guardar memoria'),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Wrap(
-            spacing: 12,
-            runSpacing: 12,
-            children: <Widget>[
-              OutlinedButton.icon(
-                onPressed: (_selectedContactId == null || _isDeletingConversation || isBusy)
-                    ? null
-                    : _deleteConversation,
-                icon: const Icon(Icons.cleaning_services_rounded),
-                label: Text(
-                  _isDeletingConversation
-                      ? 'Limpiando...'
-                      : 'Limpiar conversación',
-                ),
-              ),
-              FilledButton.icon(
-                onPressed: (_selectedContactId == null || _isDeletingClientMemory || isBusy)
-                    ? null
-                    : _deleteSelectedClientMemory,
-                style: FilledButton.styleFrom(
-                  backgroundColor: const Color(0xFFB91C1C),
-                ),
-                icon: const Icon(Icons.delete_outline_rounded),
-                label: Text(
-                  _isDeletingClientMemory
-                      ? 'Borrando...'
-                      : 'Borrar memoria del cliente',
-                ),
-              ),
-            ],
-          ),
-          if (_detailError != null) ...<Widget>[
-            const SizedBox(height: 12),
-            Text(
-              _detailError!,
-              style: const TextStyle(color: Color(0xFF9F1239)),
+            ),
+            ElevatedButton(
+              onPressed:
+                  _isSavingMemory || _isLoadingDetail ? null : _saveMemoryEntry,
+              child: Text(_isSavingMemory ? 'Guardando...' : 'Guardar memoria'),
             ),
           ],
-          const SizedBox(height: 18),
-          LayoutBuilder(
-            builder: (context, constraints) {
-              final fullWidth = constraints.maxWidth;
-              final halfWidth = fullWidth > 640 ? (fullWidth - 16) / 2 : fullWidth;
-
-              return Wrap(
-                spacing: 16,
-                runSpacing: 16,
-                children: <Widget>[
-                  SizedBox(
-                    width: halfWidth,
-                    child: AppTextField(
-                      label: 'Nombre',
-                      controller: _nameController,
-                      hintText: 'Nombre detectado o corregido',
-                      enabled: !isBusy,
-                    ),
-                  ),
-                  SizedBox(
-                    width: halfWidth,
-                    child: AppTextField(
-                      label: 'Ultima intencion',
-                      controller: _lastIntentController,
-                      hintText: 'consulta_precio, compra, soporte...',
-                      enabled: !isBusy,
-                    ),
-                  ),
-                  SizedBox(
-                    width: fullWidth,
-                    child: AppTextField(
-                      label: 'Interes',
-                      controller: _interestController,
-                      hintText: 'Que quiere el cliente',
-                      enabled: !isBusy,
-                    ),
-                  ),
-                  SizedBox(
-                    width: fullWidth,
-                    child: AppTextField(
-                      label: 'Notas',
-                      controller: _notesController,
-                      maxLines: 4,
-                      hintText: 'Preferencias, restricciones, datos utiles',
-                      enabled: !isBusy,
-                    ),
-                  ),
-                  SizedBox(
-                    width: fullWidth,
-                    child: AppTextField(
-                      label: 'Resumen operativo',
-                      controller: _summaryController,
-                      maxLines: 6,
-                      hintText: 'Resumen de contexto para retomar la conversacion',
-                      enabled: !isBusy,
-                    ),
-                  ),
-                ],
-              );
-            },
-          ),
-          const SizedBox(height: 22),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              color: const Color(0xFFF8FAFC),
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: const Color(0xFFE2E8F0)),
+        ),
+        const SizedBox(height: 12),
+        Wrap(
+          spacing: 12,
+          runSpacing: 12,
+          children: <Widget>[
+            OutlinedButton.icon(
+              onPressed:
+                  (_selectedContactId == null || _isDeletingConversation || isBusy)
+                      ? null
+                      : _deleteConversation,
+              icon: const Icon(Icons.cleaning_services_rounded),
+              label: Text(
+                _isDeletingConversation
+                    ? 'Limpiando...'
+                    : 'Limpiar conversación',
+              ),
             ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+            FilledButton.icon(
+              onPressed:
+                  (_selectedContactId == null || _isDeletingClientMemory || isBusy)
+                      ? null
+                      : _deleteSelectedClientMemory,
+              style: FilledButton.styleFrom(
+                backgroundColor: const Color(0xFFB91C1C),
+              ),
+              icon: const Icon(Icons.delete_outline_rounded),
+              label: Text(
+                _isDeletingClientMemory ? 'Borrando...' : 'Borrar memoria',
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 18),
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final fullWidth = constraints.maxWidth;
+            final halfWidth = fullWidth > 640 ? (fullWidth - 16) / 2 : fullWidth;
+
+            return Wrap(
+              spacing: 16,
+              runSpacing: 16,
               children: <Widget>[
-                const Text(
-                  'Mensajes recientes',
-                  style: TextStyle(
-                    color: Color(0xFF0F172A),
-                    fontWeight: FontWeight.w700,
+                SizedBox(
+                  width: halfWidth,
+                  child: AppTextField(
+                    label: 'Nombre',
+                    controller: _nameController,
+                    hintText: 'Nombre del contacto',
+                    enabled: !isBusy,
                   ),
                 ),
-                const SizedBox(height: 12),
-                if (_messages.isEmpty && !_isLoadingDetail)
-                  const Text(
-                    'Todavia no hay mensajes guardados para este contacto.',
-                    style: TextStyle(color: Color(0xFF64748B)),
-                  )
-                else
-                  ..._messages.map((StoredMessageData message) {
-                    final isUser = message.role == 'user';
-
-                    return Container(
-                      width: double.infinity,
-                      margin: const EdgeInsets.only(bottom: 10),
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: isUser ? const Color(0xFFEFF6FF) : Colors.white,
-                        borderRadius: BorderRadius.circular(14),
-                        border: Border.all(
-                          color: isUser ? const Color(0xFFBFDBFE) : const Color(0xFFE2E8F0),
-                        ),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: <Widget>[
-                          Text(
-                            isUser ? 'Cliente' : 'Bot',
-                            style: TextStyle(
-                              color: isUser ? const Color(0xFF1D4ED8) : const Color(0xFF0F172A),
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                          const SizedBox(height: 6),
-                          Text(
-                            message.content,
-                            style: const TextStyle(color: Color(0xFF334155), height: 1.45),
-                          ),
-                        ],
-                      ),
-                    );
-                  }),
+                SizedBox(
+                  width: halfWidth,
+                  child: AppTextField(
+                    label: 'Última intención',
+                    controller: _lastIntentController,
+                    hintText: 'consulta_precio, compra...',
+                    enabled: !isBusy,
+                  ),
+                ),
+                SizedBox(
+                  width: fullWidth,
+                  child: AppTextField(
+                    label: 'Interés',
+                    controller: _interestController,
+                    hintText: 'Qué quiere el cliente',
+                    enabled: !isBusy,
+                  ),
+                ),
+                SizedBox(
+                  width: fullWidth,
+                  child: AppTextField(
+                    label: 'Notas',
+                    controller: _notesController,
+                    maxLines: 3,
+                    hintText: 'Detalles útiles para seguimiento',
+                    enabled: !isBusy,
+                  ),
+                ),
+                SizedBox(
+                  width: fullWidth,
+                  child: AppTextField(
+                    label: 'Resumen',
+                    controller: _summaryController,
+                    maxLines: 4,
+                    hintText: 'Resumen breve del contexto',
+                    enabled: !isBusy,
+                  ),
+                ),
               ],
-            ),
-          ),
-        ],
-      ),
+            );
+          },
+        ),
+      ],
     );
   }
 }
@@ -1140,56 +1213,19 @@ class _MemoryMenuTile extends StatelessWidget {
 }
 
 class _MemoryDetailHeader extends StatelessWidget {
-  const _MemoryDetailHeader({
-    required this.title,
-    required this.subtitle,
-    required this.onBack,
-    required this.onReload,
-  });
+  const _MemoryDetailHeader({required this.title});
 
   final String title;
-  final String subtitle;
-  final VoidCallback onBack;
-  final VoidCallback? onReload;
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: <Widget>[
-        Row(
-          children: <Widget>[
-            TextButton.icon(
-              onPressed: onBack,
-              icon: const Icon(Icons.arrow_back_rounded, size: 18),
-              label: const Text('Atras'),
-            ),
-            const Spacer(),
-            TextButton(
-              onPressed: onReload,
-              child: const Text('Recargar'),
-            ),
-          ],
-        ),
-        const SizedBox(height: 8),
-        Text(
-          title,
-          style: const TextStyle(
-            color: Color(0xFF0F172A),
-            fontSize: 24,
-            fontWeight: FontWeight.w800,
-          ),
-        ),
-        const SizedBox(height: 6),
-        Text(
-          subtitle,
-          style: const TextStyle(
-            color: Color(0xFF64748B),
-            fontSize: 13,
-            height: 1.45,
-          ),
-        ),
-      ],
+    return Text(
+      title,
+      style: const TextStyle(
+        color: Color(0xFF0F172A),
+        fontSize: 24,
+        fontWeight: FontWeight.w800,
+      ),
     );
   }
 }
@@ -1219,6 +1255,31 @@ class _MemoryMessageLine extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+class _MemoryPill extends StatelessWidget {
+  const _MemoryPill({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: const Color(0xFFEFF6FF),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        label,
+        style: const TextStyle(
+          color: Color(0xFF1D4ED8),
+          fontSize: 12,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
     );
   }
 }

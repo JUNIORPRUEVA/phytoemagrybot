@@ -629,6 +629,32 @@ export class MemoryService implements OnModuleInit {
     return result;
   }
 
+  async deleteAllConversations(actor?: string): Promise<MemoryDeleteResult> {
+    const normalizedActor = this.normalizeActor(actor);
+    const deletedAt = new Date().toISOString();
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.$executeRawUnsafe(
+        'TRUNCATE TABLE "conversation_memory", "conversation_messages", "conversation_summaries", "contact_state", "conversation_summary", "conversation_followup" RESTART IDENTITY CASCADE',
+      );
+    });
+
+    const redisCounts = await this.clearAllRuntimeMemory();
+    const result: MemoryDeleteResult = {
+      ok: true,
+      action: 'delete-all-conversations',
+      actor: normalizedActor,
+      contactId: null,
+      deletedAt,
+      counts: {
+        redisKeys: redisCounts,
+      },
+    };
+
+    this.logger.warn(JSON.stringify({ event: 'memory_delete_all_conversations', ...result }));
+    return result;
+  }
+
   private async safePrimeRedis(contactId: string, messages: StoredMessage[]): Promise<void> {
     try {
       await this.redisService.setConversationMessages(

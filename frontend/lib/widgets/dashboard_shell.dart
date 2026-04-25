@@ -10,6 +10,13 @@ import '../services/api_service.dart';
 
 const String _appVersionLabel = 'v1.0.0';
 
+enum _DashboardOverflowAction {
+  reload,
+  deleteAllConversations,
+  resetAllMemory,
+  back,
+}
+
 class DashboardShell extends StatefulWidget {
   const DashboardShell({
     super.key,
@@ -59,6 +66,99 @@ class _DashboardShellState extends State<DashboardShell> {
     setState(() {
       _overviewFuture = _apiService.getConfig();
     });
+  }
+
+  Future<bool> _confirmDangerAction(String message) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Confirmar accion'),
+          content: Text(message),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancelar'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              style: FilledButton.styleFrom(
+                backgroundColor: const Color(0xFFB91C1C),
+              ),
+              child: const Text('Confirmar'),
+            ),
+          ],
+        );
+      },
+    );
+
+    return confirmed == true;
+  }
+
+  void _showMessage(String message, {bool isError = false}) {
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.hideCurrentSnackBar();
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor:
+            isError ? const Color(0xFF9F1239) : const Color(0xFF166534),
+      ),
+    );
+  }
+
+  Future<void> _handleOverflowReload() async {
+    _refreshOverview();
+    if (_selectedIndex == _configPageIndex) {
+      final state = _configPageKey.currentState as ConfigPageStateAccess?;
+      await state?.reloadCurrentSection();
+    }
+  }
+
+  Future<void> _handleOverflowDeleteAllConversations() async {
+    final ok = await _confirmDangerAction(
+      'Esto borrara todas las conversaciones guardadas (mensajes, resumen y estado). No borra la memoria del cliente (perfil).',
+    );
+    if (!ok) {
+      return;
+    }
+
+    try {
+      await _apiService.deleteAllConversations();
+      if (!mounted) {
+        return;
+      }
+      await _handleOverflowReload();
+      _showMessage('Todas las conversaciones fueron borradas.');
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      _showMessage(error.toString().replaceFirst('Exception: ', ''), isError: true);
+    }
+  }
+
+  Future<void> _handleOverflowResetAllMemory() async {
+    final ok = await _confirmDangerAction(
+      'Esto resetea toda la memoria del bot (conversaciones y perfiles). No se puede deshacer.',
+    );
+    if (!ok) {
+      return;
+    }
+
+    try {
+      await _apiService.resetAllMemory();
+      if (!mounted) {
+        return;
+      }
+      await _handleOverflowReload();
+      _showMessage('Toda la memoria fue reseteada.');
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      _showMessage(error.toString().replaceFirst('Exception: ', ''), isError: true);
+    }
   }
 
   @override
@@ -181,16 +281,51 @@ class _DashboardShellState extends State<DashboardShell> {
                   Padding(
                     padding: EdgeInsets.only(right: isMobile ? 12 : 24),
                     child: Center(
-                      child: FutureBuilder<ClientConfigData>(
-                        future: _overviewFuture,
-                        builder: (context, snapshot) {
-                          final config = snapshot.data;
-                          return _HeaderStateBadge(
-                            label: config?.botLabel ?? 'Cargando',
-                            accent: config?.botReady ?? false,
-                            compact: isMobile,
-                          );
+                      child: PopupMenuButton<_DashboardOverflowAction>(
+                        icon: const Icon(Icons.more_vert_rounded),
+                        tooltip: 'Opciones',
+                        onSelected: (action) async {
+                          switch (action) {
+                            case _DashboardOverflowAction.back:
+                              if (isMobile) {
+                                _handleMobileBack();
+                                return;
+                              }
+                              if (_selectedIndex == _configPageIndex) {
+                                final state = _configPageKey.currentState as ConfigPageStateAccess?;
+                                state?.handleBackNavigation();
+                              }
+                              return;
+                            case _DashboardOverflowAction.reload:
+                              await _handleOverflowReload();
+                              return;
+                            case _DashboardOverflowAction.deleteAllConversations:
+                              await _handleOverflowDeleteAllConversations();
+                              return;
+                            case _DashboardOverflowAction.resetAllMemory:
+                              await _handleOverflowResetAllMemory();
+                              return;
+                          }
                         },
+                        itemBuilder: (context) => const <PopupMenuEntry<_DashboardOverflowAction>>[
+                          PopupMenuItem<_DashboardOverflowAction>(
+                            value: _DashboardOverflowAction.reload,
+                            child: Text('Recargar'),
+                          ),
+                          PopupMenuItem<_DashboardOverflowAction>(
+                            value: _DashboardOverflowAction.deleteAllConversations,
+                            child: Text('Borrar todas las conversaciones'),
+                          ),
+                          PopupMenuItem<_DashboardOverflowAction>(
+                            value: _DashboardOverflowAction.resetAllMemory,
+                            child: Text('Resetear toda la memoria'),
+                          ),
+                          PopupMenuDivider(),
+                          PopupMenuItem<_DashboardOverflowAction>(
+                            value: _DashboardOverflowAction.back,
+                            child: Text('Atras'),
+                          ),
+                        ],
                       ),
                     ),
                   ),
@@ -607,43 +742,6 @@ class _IconNavButton extends StatelessWidget {
               ),
             ),
           ),
-        ),
-      ),
-    );
-  }
-}
-
-class _HeaderStateBadge extends StatelessWidget {
-  const _HeaderStateBadge({
-    required this.label,
-    required this.accent,
-    this.compact = false,
-  });
-
-  final String label;
-  final bool accent;
-  final bool compact;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: EdgeInsets.symmetric(
-        horizontal: compact ? 10 : 14,
-        vertical: compact ? 8 : 10,
-      ),
-      decoration: BoxDecoration(
-        color: accent ? const Color(0xFFECFDF5) : const Color(0xFFF8FAFC),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(
-          color: accent ? const Color(0xFFBBF7D0) : const Color(0xFFE2E8F0),
-        ),
-      ),
-      child: Text(
-        label,
-        style: TextStyle(
-          color: accent ? const Color(0xFF166534) : const Color(0xFF334155),
-          fontWeight: FontWeight.w700,
-          fontSize: compact ? 12 : 14,
         ),
       ),
     );
