@@ -111,7 +111,7 @@ class _FakeInstructionApiService extends ApiService {
 }
 
 void main() {
-  testWidgets('instruction center saves a combined prompt from four cards', (WidgetTester tester) async {
+  testWidgets('instruction center saves a combined prompt from instruction cards', (WidgetTester tester) async {
     final _FakeInstructionApiService apiService = _FakeInstructionApiService();
     final TestWidgetsFlutterBinding binding = TestWidgetsFlutterBinding.ensureInitialized();
     await binding.setSurfaceSize(const Size(1400, 900));
@@ -135,29 +135,47 @@ void main() {
     expect(find.text('OBJETIVO Y FLUJO'), findsOneWidget);
     expect(find.text('REGLAS Y LIMITES'), findsOneWidget);
     expect(find.text('INSTRUCCION DE VENTAS'), findsOneWidget);
+    expect(find.text('PROMPT ESPECIAL: SALUDO'), findsOneWidget);
+    expect(find.text('PROMPT ESPECIAL: DESPEDIDA'), findsOneWidget);
+    expect(find.text('PROMPT ESPECIAL: RESPUESTA CORTA'), findsOneWidget);
+    expect(find.text('PROMPT ESPECIAL: RESPUESTA LARGA'), findsOneWidget);
+    expect(find.text('MEDIA RULES'), findsOneWidget);
+    expect(find.text('AUDIO RULES'), findsOneWidget);
 
     expect(find.byType(TextField), findsNothing);
 
-    await tester.ensureVisible(find.text('IDENTIDAD Y COMPORTAMIENTO'));
-    await tester.tap(find.text('IDENTIDAD Y COMPORTAMIENTO'));
-    await tester.pumpAndSettle();
-    await tester.ensureVisible(find.text('OBJETIVO Y FLUJO'));
-    await tester.tap(find.text('OBJETIVO Y FLUJO'));
-    await tester.pumpAndSettle();
-    await tester.ensureVisible(find.text('REGLAS Y LIMITES'));
-    await tester.tap(find.text('REGLAS Y LIMITES'));
-    await tester.pumpAndSettle();
-    await tester.ensureVisible(find.text('INSTRUCCION DE VENTAS'));
-    await tester.tap(find.text('INSTRUCCION DE VENTAS'));
-    await tester.pumpAndSettle();
+    final titles = <String>[
+      'IDENTIDAD Y COMPORTAMIENTO',
+      'OBJETIVO Y FLUJO',
+      'REGLAS Y LIMITES',
+      'INSTRUCCION DE VENTAS',
+      'PROMPT ESPECIAL: SALUDO',
+      'PROMPT ESPECIAL: DESPEDIDA',
+      'PROMPT ESPECIAL: RESPUESTA CORTA',
+      'PROMPT ESPECIAL: RESPUESTA LARGA',
+      'MEDIA RULES',
+      'AUDIO RULES',
+    ];
+
+    for (final title in titles) {
+      await tester.ensureVisible(find.text(title));
+      await tester.tap(find.text(title));
+      await tester.pumpAndSettle();
+    }
 
     final fields = find.byType(TextField);
-    expect(fields, findsNWidgets(4));
+    expect(fields, findsNWidgets(10));
 
     await tester.enterText(fields.at(0), 'Identidad demo');
     await tester.enterText(fields.at(1), 'Objetivo demo');
     await tester.enterText(fields.at(2), 'Regla uno\nRegla dos');
     await tester.enterText(fields.at(3), 'Venta demo');
+    await tester.enterText(fields.at(4), 'Saludo demo');
+    await tester.enterText(fields.at(5), 'Despedida demo');
+    await tester.enterText(fields.at(6), 'Corta demo');
+    await tester.enterText(fields.at(7), 'Larga demo');
+    await tester.enterText(fields.at(8), 'Media demo');
+    await tester.enterText(fields.at(9), 'Audio demo');
 
     final pageState = tester.state(find.byType(BotPromptConfigPage))
       as BotPromptConfigPageStateAccess;
@@ -168,7 +186,7 @@ void main() {
     expect(apiService.saveBotPromptConfigCalls, 1);
     expect(
       apiService.lastPromptBase,
-      '[IDENTIDAD]\nIdentidad demo\n\n[OBJETIVO]\nObjetivo demo\n\n[REGLAS]\nRegla uno\nRegla dos\n\n[VENTAS]\nVenta demo',
+      '[IDENTIDAD]\nIdentidad demo\n\n[OBJETIVO]\nObjetivo demo\n\n[REGLAS]\nRegla uno\nRegla dos\n\n[VENTAS]\nVenta demo\n\n[PROMPTS_ESPECIALES]\nSALUDO:\nSaludo demo\n\nDESPEDIDA:\nDespedida demo\n\nRESPUESTA_CORTA:\nCorta demo\n\nRESPUESTA_LARGA:\nLarga demo\n\n[MEDIA_RULES]\nMedia demo\n\n[AUDIO_RULES]\nAudio demo',
     );
     expect(apiService.lastBotPromptBase, apiService.lastPromptBase);
 

@@ -44,7 +44,11 @@ import {
   CompanyRuleCheck,
   validateCompanyRuleResponse,
 } from './company-rule-engine';
-import { composeFinalMessage, selectBestResponse } from './response-composer';
+import {
+  ComposeOptions,
+  composeFinalMessage,
+  selectBestResponseWithOptions,
+} from './response-composer';
 
 type MediaIntent = 'IMAGEN' | 'VIDEO' | 'MEDIA' | null;
 
@@ -241,6 +245,14 @@ export class BotService {
       const finalizeResponse = (layer: string, result: BotReplyResult): BotReplyResult => {
         if (responseGenerated && finalResult) {
           logResponseDebug({ layer, blocked: true, reason: 'response_already_generated', source: result.source });
+          if (process.env.BOT_DEBUG_HOTLEAD === '1') {
+            console.log('FINALIZE_RESPONSE_RETURNING_EXISTING', {
+              layer,
+              source: finalResult.source,
+              hotLead: finalResult.hotLead,
+              usedGallery: finalResult.usedGallery,
+            });
+          }
           return finalResult;
         }
 
@@ -257,6 +269,15 @@ export class BotService {
         responseGenerated = true;
         finalResult = patchedResult;
         finalResponse = patchedResult.reply;
+
+        if (process.env.BOT_DEBUG_HOTLEAD === '1') {
+          console.log('FINALIZE_RESPONSE_SET', {
+            layer,
+            source: patchedResult.source,
+            hotLead: patchedResult.hotLead,
+            usedGallery: patchedResult.usedGallery,
+          });
+        }
 
         logResponseDebug({ layer, blocked: false, duplicateRemoved, source: patchedResult.source });
         return patchedResult;
@@ -332,7 +353,27 @@ export class BotService {
         return finalizeResponse('stop_early', closureResult);
       }
 
-      if (this.isSpeedGreetingMessage(normalizedMessage)) {
+      const isPureGreeting = this.isGreetingOnlyMessage(normalizedMessage);
+      let hasPriorContextForGreeting = false;
+      if (isPureGreeting) {
+        const preGreetingContext = await this.memoryService.getConversationContext(
+          normalizedContactId,
+          2,
+        );
+
+        const status = (preGreetingContext as { clientMemory?: { status?: string | null } })
+          ?.clientMemory?.status ?? 'nuevo';
+        const messageCount = (preGreetingContext as { messages?: unknown[] })?.messages?.length ?? 0;
+        const summaryText = (preGreetingContext as { summary?: { summary?: string | null } })
+          ?.summary?.summary ?? null;
+
+        hasPriorContextForGreeting =
+          messageCount > 0 ||
+          Boolean(summaryText?.trim()) ||
+          (typeof status === 'string' && status.trim().length > 0 && status !== 'nuevo');
+      }
+
+      if (this.isSpeedGreetingMessage(normalizedMessage) && !hasPriorContextForGreeting) {
         if (responseGenerated && finalResult) {
           logResponseDebug({ layer: 'hardcode_greeting', blocked: true, reason: 'response_already_generated' });
           return finalResult;
@@ -409,7 +450,7 @@ export class BotService {
       }
 
       const greetingOutcome = await this.getGreetingOutcome(normalizedContactId, normalizedMessage);
-      if (greetingOutcome === 'first') {
+      if (greetingOutcome === 'first' && isPureGreeting && !hasPriorContextForGreeting) {
         if (responseGenerated && finalResult) {
           logResponseDebug({ layer: 'greeting', blocked: true, reason: 'response_already_generated' });
           return finalResult;
@@ -475,7 +516,8 @@ export class BotService {
       const botConfig = await this.botConfigService.getConfig();
       const memoryWindow = config.aiSettings?.memoryWindow ?? 6;
       const allProducts = this.getProductsFromConfig(config);
-      const relevantProducts = this.filterRelevantProducts(allProducts, normalizedMessage);
+      const relevantProductsRaw = this.filterRelevantProducts(allProducts, normalizedMessage);
+      const relevantProducts = this.applySingleActiveProductAssumption(allProducts, relevantProductsRaw);
       console.log('PRODUCTOS:', allProducts);
       console.log('PRODUCTOS_RELEVANTES:', relevantProducts);
 
@@ -582,7 +624,7 @@ export class BotService {
         return finalizeResponse('hardcode_price', result);
       }
 
-      if (speedKind === 'hours' || speedKind === 'location') {
+      if (speedKind === 'hours' || speedKind === 'location' || speedKind === 'payment') {
         if (responseGenerated && finalResult) {
           logResponseDebug({ layer: 'hardcode_company_info', blocked: true, reason: 'response_already_generated' });
           return finalResult;
@@ -625,7 +667,9 @@ export class BotService {
           ? companyCheck.overrideResponse
           : speedKind === 'hours'
             ? 'Claro. En este momento no tengo el horario configurado. ¿Me confirmas tu ciudad?'
-            : 'Claro. En este momento no tengo la ubicacion configurada. ¿Me confirmas tu ciudad?';
+            : speedKind === 'location'
+              ? 'Claro. En este momento no tengo la ubicacion configurada. ¿Me confirmas tu ciudad?'
+              : 'Claro. En este momento no tengo los metodos de pago configurados. ¿Prefieres transferencia o efectivo?';
 
         const decision = this.buildQuickDecisionState({
           contactId: normalizedContactId,
@@ -910,7 +954,11 @@ export class BotService {
       }
 
       const earlyMediaIntent = this.detectMediaIntent(normalizedMessage);
-      if (earlyMediaIntent === null && normalizedMessage.length < BotService.SPEED_NO_AI_MAX_CHARS) {
+      if (
+        earlyMediaIntent === null &&
+        normalizedMessage.length < BotService.SPEED_NO_AI_MAX_CHARS &&
+        this.isCloseSignal(normalizedMessage)
+      ) {
         if (responseGenerated && finalResult) {
           logResponseDebug({ layer: 'short_no_ai', blocked: true, reason: 'response_already_generated' });
           return finalResult;
@@ -978,11 +1026,37 @@ export class BotService {
         config,
       });
       const intent = this.mapDecisionIntentToBotIntent(decision.intent, normalizedMessage);
-      const hotLead = this.shouldTreatAsHotLead(
+      const normalizedForMatch = this.normalizeTextForMatch(normalizedMessage);
+      const isInformationalRequest =
+        this.requiresDetailedResponse(normalizedMessage)
+        || this.requiresDetailedResponse(normalizedForMatch)
+        || decision.intent === 'info';
+      const clearHotLeadCarryover =
+        memoryContext.clientMemory.lastIntent === 'HOT'
+        && isInformationalRequest;
+      const stageHotLead =
+        decision.stage === 'listo' && (intent === 'hot' || intent === 'compra' || intent === 'cierre');
+      const shouldHotLead = this.shouldTreatAsHotLead(
         normalizedMessage,
         intent,
         memoryContext.clientMemory.lastIntent,
-      ) || decision.stage === 'listo';
+      );
+      const hotLead = (shouldHotLead || stageHotLead) && !clearHotLeadCarryover;
+
+      if (process.env.BOT_DEBUG_HOTLEAD === '1') {
+        console.log('HOTLEAD_DEBUG', {
+          message: normalizedMessage,
+          normalizedForMatch,
+          lastIntent: memoryContext.clientMemory.lastIntent,
+          decisionIntent: decision.intent,
+          decisionStage: decision.stage,
+          mappedIntent: intent,
+          shouldHotLead,
+          stageHotLead,
+          clearHotLeadCarryover,
+          hotLead,
+        });
+      }
       const thinkingAnalysis = this.analyzeAndThink(normalizedMessage, {
         memoryContext,
         conversationMemory,
@@ -1082,16 +1156,22 @@ export class BotService {
       const galleryMediaFiles = productMediaFiles.length > 0
         ? productMediaFiles
         : await this.selectMedia(normalizedMessage, intent);
-      const candidateMediaFiles = this.shouldAttachMediaToAiReply(
+      const shouldAttachMedia = this.shouldAttachMediaToAiReply(
         normalizedMessage,
         intent,
         mediaIntent,
         decision.action,
         allProducts.length > 0,
         relevantProducts.length > 0,
-      )
+      );
+      const rawCandidateMediaFiles = shouldAttachMedia
+        ? (productMediaFiles.length > 0
+          ? productMediaFiles
+          : ((mediaIntent || intent === 'catalogo') ? galleryMediaFiles : []))
+        : [];
+      const candidateMediaFiles = rawCandidateMediaFiles.length > 0
         ? this.filterConversationMediaFiles(
-            this.limitOutgoingMediaFiles(galleryMediaFiles, mediaIntent, sentMediaState),
+            this.limitOutgoingMediaFiles(rawCandidateMediaFiles, mediaIntent, sentMediaState),
             conversationMemory,
           )
         : [];
@@ -1160,10 +1240,14 @@ export class BotService {
       console.log('CONTEXTO LENGTH:', knowledgeContext.length);
       console.log('EMPRESA CONTEXTO:', knowledgeContext);
 
-      const companyDataText = knowledgeContext.includes('[EMPRESA]')
-        ? knowledgeContext.split('[EMPRESA]').slice(1).join('[EMPRESA]').trim()
-        : '';
+      const companyDataText = this.extractBracketSection(knowledgeContext, 'EMPRESA');
       const compactKnowledgeContext = this.buildCompactKnowledgeContext({
+        config,
+        botConfig,
+        relevantProduct: relevantProducts[0] ?? null,
+        companyDataText,
+      });
+      const compactContextKnowledgeContext = this.buildCompactContextKnowledgeContext({
         config,
         botConfig,
         relevantProduct: relevantProducts[0] ?? null,
@@ -1181,7 +1265,7 @@ export class BotService {
             contactId: normalizedContactId,
             message: normalizedMessage,
             history,
-            context: this.buildCombinedConversationContext(compactKnowledgeContext, memoryContext, thinkingAnalysis),
+            context: this.buildCombinedConversationContext(compactContextKnowledgeContext, memoryContext, thinkingAnalysis),
             classifiedIntent: decision.intent,
             decisionAction: decision.action,
             purchaseIntentScore: decision.purchaseIntentScore,
@@ -1661,9 +1745,14 @@ export class BotService {
     let lastReason: ResponseValidationReason | null = null;
 
     for (let attempt = 0; attempt <= BotService.MAX_REPLY_REGENERATION_ATTEMPTS; attempt += 1) {
+      const companyRuleInstruction = buildCompanyRuleInstruction(
+        params.message,
+        params.companyData,
+        params.companyCheck,
+      );
       const mergedContext = [
+        companyRuleInstruction,
         params.context,
-        buildCompanyRuleInstruction(params.message, params.companyData, params.companyCheck),
         buildConversationMemoryContext(params.conversationMemory),
         this.buildMediaSelectionContext(params.candidateMediaFiles),
       ]
@@ -1693,7 +1782,19 @@ export class BotService {
       });
 
       console.log('RESPUESTAS GENERADAS:', candidates);
-      const selected = this.decideResponse(candidates, params.candidateMediaFiles, params.conversationMemory);
+      const composerOptions = this.resolveComposerOptions({
+        message: params.message,
+        responseStyle: params.responseStyle,
+        replyObjective: params.replyObjective,
+        decisionAction: params.decisionAction,
+        thinkingAnalysis: params.thinkingAnalysis,
+      });
+      const selected = this.decideResponse(
+        candidates,
+        params.candidateMediaFiles,
+        params.conversationMemory,
+        composerOptions,
+      );
 
       if (selected) {
         const companyRuleValidation = validateCompanyRuleResponse(
@@ -1757,6 +1858,7 @@ export class BotService {
     candidates: AssistantResponseCandidate[],
     candidateMediaFiles: MediaFile[],
     conversationMemory: ConversationMemoryState,
+    composerOptions: ComposeOptions,
   ): {
     reply: { type: 'text' | 'audio'; content: string };
     mediaFiles: MediaFile[];
@@ -1800,9 +1902,10 @@ export class BotService {
       return null;
     }
 
-    const selection = selectBestResponse(valid.map((item) => item.candidate.text));
+    const selection = selectBestResponseWithOptions(valid.map((item) => item.candidate.text), composerOptions);
     const picked = valid[Math.max(0, Math.min(selection.selectedIndex, valid.length - 1))];
-    const finalText = composeFinalMessage(picked.candidate.text) || picked.candidate.text.trim();
+    const finalText =
+      composeFinalMessage(picked.candidate.text, composerOptions) || picked.candidate.text.trim();
 
     for (const item of valid) {
       if (item.index === picked.index) {
@@ -1828,6 +1931,28 @@ export class BotService {
       mediaFiles: picked.mediaFiles,
       source: 'ai',
     };
+  }
+
+  private resolveComposerOptions(params: {
+    message: string;
+    responseStyle: AssistantResponseStyle;
+    replyObjective: AssistantReplyObjective;
+    decisionAction: BotDecisionAction;
+    thinkingAnalysis?: ThinkingAnalysis;
+  }): ComposeOptions {
+    const detailedRequest = this.requiresDetailedResponse(params.message);
+    const shouldExplain = params.thinkingAnalysis?.nextBestAction === 'explicar' || params.replyObjective === 'resolver_duda';
+
+    if (params.responseStyle === 'detailed' || detailedRequest || shouldExplain) {
+      return { maxIdeas: 5, maxQuestions: 1 };
+    }
+
+    if (params.responseStyle === 'balanced' || params.replyObjective === 'generar_confianza') {
+      return { maxIdeas: 3, maxQuestions: 1 };
+    }
+
+    // brief / close
+    return { maxIdeas: 2, maxQuestions: 1 };
   }
 
   private getLastCandidateRejectionReason(
@@ -2107,27 +2232,28 @@ export class BotService {
   }
 
   private isSpeedGreetingMessage(message: string): boolean {
-    const normalized = this.normalizeTextForMatch(message);
-    if (!normalized) {
-      return false;
-    }
-
-    const tokens = normalized.split(' ').filter((token) => token.length > 0);
-    if (tokens.some((token) => token.startsWith('hola'))) {
-      return true;
-    }
-
-    const greetingTokens = new Set(['buenas', 'saludos', 'hey']);
-    return tokens.some((token) => greetingTokens.has(token));
+    return this.isGreetingOnlyMessage(message);
   }
 
-  private detectSpeedKind(message: string): 'price' | 'hours' | 'location' | null {
+  private detectSpeedKind(message: string): 'price' | 'hours' | 'location' | 'payment' | null {
     const normalized = this.normalizeTextForMatch(message);
     if (!normalized) {
       return null;
     }
 
-    if (normalized.includes('precio') || normalized.includes('cuanto cuesta') || normalized.includes('cuánto cuesta')) {
+    const raw = message.trim().toLowerCase();
+
+    if (
+      [
+        'precio',
+        'cuanto cuesta',
+        'cuánto cuesta',
+        'cuanto vale',
+        'cuánto vale',
+        'cuanto sale',
+        'cuánto sale',
+      ].includes(raw)
+    ) {
       return 'price';
     }
 
@@ -2137,6 +2263,18 @@ export class BotService {
 
     if (normalized.includes('donde estan') || normalized.includes('ubicacion') || normalized.includes('ubicados')) {
       return 'location';
+    }
+
+    if (
+      normalized.includes('como pago') ||
+      normalized.includes('como se paga') ||
+      normalized.includes('metodo de pago') ||
+      normalized.includes('metodos de pago') ||
+      normalized.includes('cuenta') ||
+      normalized.includes('transfer') ||
+      normalized.includes('deposito')
+    ) {
+      return 'payment';
     }
 
     return null;
@@ -2283,6 +2421,34 @@ export class BotService {
     return this.limitText(sections.join('\n\n').trim(), BotService.AI_CONTEXT_MAX_CHARS);
   }
 
+  private buildCompactContextKnowledgeContext(params: {
+    config: Awaited<ReturnType<ClientConfigService['getConfig']>>;
+    botConfig: Awaited<ReturnType<BotConfigService['getConfig']>>;
+    relevantProduct: StructuredProduct | null;
+    companyDataText: string;
+  }): string {
+    const instructions = this.buildInstructionsKnowledgeBlock(params.config, params.botConfig);
+    const productBlock = params.relevantProduct ? this.formatProductKnowledgeBlock(params.relevantProduct) : '';
+
+    const sections: string[] = [];
+    if (instructions.trim()) {
+      sections.push('[INSTRUCCIONES]');
+      sections.push(this.limitText(instructions.trim(), 520));
+    }
+
+    if (productBlock.trim()) {
+      sections.push('[PRODUCTOS]');
+      sections.push(this.limitText(productBlock.trim(), 520));
+    }
+
+    if (params.companyDataText.trim()) {
+      sections.push('[EMPRESA]');
+      sections.push(this.limitText(params.companyDataText.trim(), 520));
+    }
+
+    return this.limitText(sections.join('\n\n').trim(), BotService.AI_CONTEXT_MAX_CHARS);
+  }
+
   private pickProductSnippet(product: StructuredProduct | null): string {
     if (!product?.titulo?.trim()) {
       return '';
@@ -2309,7 +2475,8 @@ export class BotService {
     const intent = this.detectIntent(message);
 
     const products = config ? this.getProductsFromConfig(config) : [];
-    const relevantProducts = config ? this.filterRelevantProducts(products, message) : [];
+    const relevantProductsRaw = config ? this.filterRelevantProducts(products, message) : [];
+    const relevantProducts = this.applySingleActiveProductAssumption(products, relevantProductsRaw);
     const featuredProduct = relevantProducts[0] ?? products[0] ?? null;
     const productSnippet = this.pickProductSnippet(featuredProduct);
 
@@ -2402,7 +2569,8 @@ export class BotService {
       ? this.buildThinkingContext(thinkingAnalysis)
       : '';
 
-    return [knowledgeContext.trim(), conversationContext.trim(), thinkingContext.trim()]
+    // Keep mandatory knowledge early (less truncation risk), then thinking, then memory.
+    return [knowledgeContext.trim(), thinkingContext.trim(), conversationContext.trim()]
       .filter((section) => section.length > 0)
       .join('\n\n');
   }
@@ -2539,19 +2707,6 @@ export class BotService {
       companyBlock || 'Informacion de empresa no configurada. Si preguntan horario, ubicacion, pago o contacto, responde solo con lo que este disponible sin inventar.',
     ];
 
-    sections.push(
-      'Regla critica: antes de responder, usa SIEMPRE [INSTRUCCIONES] como comportamiento y [PRODUCTOS] como fuente principal de datos.',
-    );
-    sections.push(
-      'Lee el catalogo completo antes de responder. Si existe un producto relevante, usa siempre su titulo, descripcion, precio, imagenes y videos antes de inferir o improvisar.',
-    );
-    sections.push(
-      'Si hay media disponible en productos o galeria y ayuda a vender, priorizala. No digas que no hay fotos o videos sin revisar primero las URLs disponibles.',
-    );
-    sections.push(
-      'Usa el contexto disponible como base de la respuesta. Si falta alguna parte, responde natural, clara y orientada a vender sin inventar datos.',
-    );
-
     const knowledgeContext = sections.join('\n\n');
 
     await this.redisService.set(BotService.KNOWLEDGE_CONTEXT_CACHE_KEY, knowledgeContext);
@@ -2565,42 +2720,347 @@ export class BotService {
     const configurations = this.asRecord(config.configurations);
     const structuredInstructions = this.asRecord(configurations.instructions);
     const identity = this.asRecord(structuredInstructions.identity);
-    const rules = this.asStringList(structuredInstructions.rules);
+    const structuredRules = this.asStringList(structuredInstructions.rules);
     const salesPrompts = this.asRecord(structuredInstructions.salesPrompts);
     const prompts = this.asRecord(configurations.prompts);
-    const sections: string[] = [];
 
-    this.appendLabeledValue(sections, 'Prompt base del sistema', config.promptBase);
-    this.appendLabeledValue(
-      sections,
-      'Prompt maestro comercial',
+    const primaryPrompt = this.pickFirstMeaningful([
+      this.asString(config.promptBase),
       this.botConfigService.getFullPrompt(botConfig),
-    );
-    this.appendLabeledValue(sections, 'Nombre interno del bot', identity.assistantName);
-    this.appendLabeledValue(sections, 'Rol comercial', identity.role);
-    this.appendLabeledValue(sections, 'Objetivo principal', identity.objective);
-    this.appendLabeledValue(sections, 'Tono de voz', identity.tone);
-    this.appendLabeledValue(sections, 'Personalidad', identity.personality);
-    this.appendLabeledValue(sections, 'Estilo de respuesta', identity.responseStyle);
-    this.appendLabeledValue(sections, 'Firma sugerida', identity.signature);
-    this.appendLabeledValue(sections, 'Guardrails', identity.guardrails);
+    ]);
 
-    if (rules.length > 0) {
-      sections.push(`Reglas:\n${rules.map((rule) => `- ${rule}`).join('\n')}`);
+    const parsedFromPrompt = primaryPrompt ? this.parseInstructionsPrompt(primaryPrompt) : {};
+
+    const fallbackIdentity = this.joinInstructionBlocks([
+      this.asString(identity.assistantName) ? `Nombre interno: ${this.asString(identity.assistantName)}` : '',
+      this.asString(identity.role) ? `Rol: ${this.asString(identity.role)}` : '',
+      this.asString(identity.tone) ? `Tono: ${this.asString(identity.tone)}` : '',
+      this.asString(identity.personality) ? `Personalidad: ${this.asString(identity.personality)}` : '',
+      this.asString(identity.responseStyle) ? `Estilo: ${this.asString(identity.responseStyle)}` : '',
+      this.asString(identity.signature) ? `Firma: ${this.asString(identity.signature)}` : '',
+    ]);
+
+    const fallbackObjective = this.joinInstructionBlocks([
+      this.asString(identity.objective),
+    ]);
+
+    const fallbackRules = this.joinInstructionBlocks([
+      structuredRules.length > 0 ? structuredRules.map((rule) => `- ${rule}`).join('\n') : '',
+      this.asString(identity.guardrails),
+    ]);
+
+    const fallbackSales = this.joinInstructionBlocks([
+      this.asString(salesPrompts.opening) ? `Apertura: ${this.asString(salesPrompts.opening)}` : '',
+      this.asString(salesPrompts.qualification) ? `Calificacion: ${this.asString(salesPrompts.qualification)}` : '',
+      this.asString(salesPrompts.offer) ? `Oferta: ${this.asString(salesPrompts.offer)}` : '',
+      this.asString(salesPrompts.objectionHandling) ? `Objeciones: ${this.asString(salesPrompts.objectionHandling)}` : '',
+      this.asString(salesPrompts.closing) ? `Cierre: ${this.asString(salesPrompts.closing)}` : '',
+      this.asString(salesPrompts.followUp) ? `Seguimiento: ${this.asString(salesPrompts.followUp)}` : '',
+      this.asString(prompts.salesGuidelines),
+      this.asString(prompts.objectionHandling),
+      this.asString(prompts.closingPrompt),
+      this.asString(prompts.supportPrompt),
+    ]);
+
+    const specialsFallback = {
+      saludo: this.asString(prompts.greeting),
+      despedida: '',
+      respuestaCorta: '',
+      respuestaLarga: '',
+    };
+
+    const normalized = this.normalizeInstructionsSections({
+      identidad: this.pickFirstMeaningful([parsedFromPrompt.identidad, fallbackIdentity]),
+      objetivo: this.pickFirstMeaningful([parsedFromPrompt.objetivo, fallbackObjective]),
+      reglas: this.pickFirstMeaningful([parsedFromPrompt.reglas, fallbackRules]),
+      ventas: this.pickFirstMeaningful([parsedFromPrompt.ventas, fallbackSales]),
+      mediaRules: this.pickFirstMeaningful([parsedFromPrompt.mediaRules, '']),
+      audioRules: this.pickFirstMeaningful([parsedFromPrompt.audioRules, '']),
+      promptsEspeciales: {
+        saludo: this.pickFirstMeaningful([
+          parsedFromPrompt.promptsEspeciales?.saludo,
+          specialsFallback.saludo,
+        ]),
+        despedida: this.pickFirstMeaningful([
+          parsedFromPrompt.promptsEspeciales?.despedida,
+          specialsFallback.despedida,
+        ]),
+        respuestaCorta: this.pickFirstMeaningful([
+          parsedFromPrompt.promptsEspeciales?.respuestaCorta,
+          specialsFallback.respuestaCorta,
+        ]),
+        respuestaLarga: this.pickFirstMeaningful([
+          parsedFromPrompt.promptsEspeciales?.respuestaLarga,
+          specialsFallback.respuestaLarga,
+        ]),
+      },
+    });
+
+    return this.renderInstructionsPrompt(normalized).trim();
+  }
+
+  private pickFirstMeaningful(values: Array<string | null | undefined>): string {
+    for (const value of values) {
+      const normalized = (value ?? '').trim();
+      if (normalized) {
+        return normalized;
+      }
     }
 
-    this.appendLabeledValue(sections, 'Apertura', salesPrompts.opening);
-    this.appendLabeledValue(sections, 'Calificacion', salesPrompts.qualification);
-    this.appendLabeledValue(sections, 'Oferta', salesPrompts.offer);
-    this.appendLabeledValue(sections, 'Objeciones', salesPrompts.objectionHandling);
-    this.appendLabeledValue(sections, 'Cierre', salesPrompts.closing);
-    this.appendLabeledValue(sections, 'Seguimiento', salesPrompts.followUp);
-    this.appendLabeledValue(sections, 'Informacion de empresa legacy', prompts.companyInfo);
-    this.appendLabeledValue(sections, 'Guia comercial legacy', prompts.salesGuidelines);
-    this.appendLabeledValue(sections, 'Objeciones legacy', prompts.objectionHandling);
-    this.appendLabeledValue(sections, 'Cierre legacy', prompts.closingPrompt);
+    return '';
+  }
 
-    return sections.join('\n\n').trim();
+  private joinInstructionBlocks(values: Array<string | null | undefined>): string {
+    const blocks = values
+      .map((value) => (value ?? '').trim())
+      .filter((value) => value.length > 0);
+
+    return blocks.join('\n\n').trim();
+  }
+
+  private parseInstructionsPrompt(prompt: string): {
+    identidad?: string;
+    objetivo?: string;
+    reglas?: string;
+    ventas?: string;
+    mediaRules?: string;
+    audioRules?: string;
+    promptsEspeciales?: {
+      saludo?: string;
+      despedida?: string;
+      respuestaCorta?: string;
+      respuestaLarga?: string;
+    };
+  } {
+    const text = (prompt ?? '').replace(/\r\n/g, '\n').trim();
+    if (!text) {
+      return {};
+    }
+
+    const identidad = this.extractBracketSection(text, 'IDENTIDAD');
+    const objetivo = this.extractBracketSection(text, 'OBJETIVO');
+    const reglas = this.extractBracketSection(text, 'REGLAS');
+    const ventas = this.extractBracketSection(text, 'VENTAS');
+    const mediaRules = this.extractBracketSection(text, 'MEDIA_RULES');
+    const audioRules = this.extractBracketSection(text, 'AUDIO_RULES');
+    const promptsEspecialesBlock = this.extractBracketSection(text, 'PROMPTS_ESPECIALES');
+
+    const promptsEspeciales = promptsEspecialesBlock
+      ? {
+          saludo: this.extractKeyedSection(promptsEspecialesBlock, 'SALUDO'),
+          despedida: this.extractKeyedSection(promptsEspecialesBlock, 'DESPEDIDA'),
+          respuestaCorta: this.extractKeyedSection(promptsEspecialesBlock, 'RESPUESTA_CORTA'),
+          respuestaLarga: this.extractKeyedSection(promptsEspecialesBlock, 'RESPUESTA_LARGA'),
+        }
+      : undefined;
+
+    return {
+      identidad,
+      objetivo,
+      reglas,
+      ventas,
+      mediaRules,
+      audioRules,
+      promptsEspeciales,
+    };
+  }
+
+  private extractBracketSection(text: string, sectionName: string): string {
+    const escaped = sectionName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const normalized = (text ?? '').replace(/\r\n/g, '\n');
+    const match = normalized.match(
+      // Strict header match: [SECTION] must be alone on its line.
+      new RegExp(`(^|\\n)\\[${escaped}\\][\\t ]*\\n([\\s\\S]*?)(?=\\n\\[[A-Z0-9_]+\\][\\t ]*\\n|$)`),
+    );
+
+    return (match?.[2] ?? '').trim();
+  }
+
+  private extractKeyedSection(text: string, key: string): string {
+    const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const normalized = (text ?? '').replace(/\r\n/g, '\n').trim();
+    if (!normalized) {
+      return '';
+    }
+
+    const match = normalized.match(
+      new RegExp(`(^|\\n)${escaped}:\\s*([\\s\\S]*?)(?=\\n[A-Z0-9_]+:|$)`),
+    );
+
+    return (match?.[2] ?? '').trim();
+  }
+
+  private normalizeInstructionsSections(sections: {
+    identidad: string;
+    objetivo: string;
+    reglas: string;
+    ventas: string;
+    mediaRules: string;
+    audioRules: string;
+    promptsEspeciales: {
+      saludo: string;
+      despedida: string;
+      respuestaCorta: string;
+      respuestaLarga: string;
+    };
+  }): {
+    identidad: string;
+    objetivo: string;
+    reglas: string;
+    ventas: string;
+    mediaRules: string;
+    audioRules: string;
+    promptsEspeciales: {
+      saludo: string;
+      despedida: string;
+      respuestaCorta: string;
+      respuestaLarga: string;
+    };
+  } {
+    const defaults = {
+      identidad:
+        'Eres un asistente de ventas por WhatsApp. Hablas como una persona real dominicana: directo, claro y natural. No suenas robotico.',
+      objetivo:
+        'Ayudar al cliente, responder dudas y guiar la conversacion hacia la compra sin presion agresiva.',
+      reglas: [
+        '- Usa SIEMPRE [INSTRUCCIONES] como comportamiento.',
+        '- Usa SIEMPRE [PRODUCTOS] como fuente principal de datos (titulo, descripcion, precio, imagenes y videos).',
+        '- Usa [EMPRESA] para ubicacion, horario, pago y contacto. Nunca inventes datos.',
+        '- Si falta un dato, dilo claro y ofrece el siguiente paso (pregunta unica).',
+        '- Responde humano, breve y util. No mas de una pregunta por respuesta.',
+      ].join('\n'),
+      ventas:
+        'Cuando el cliente muestre interes, responde con beneficio + pregunta de cierre suave. Si dice "me interesa"/"precio"/"quiero", pasa a cerrar pidiendo nombre, direccion y telefono en un solo mensaje.',
+      mediaRules: [
+        '- Si hay imagenes o videos disponibles y ayudan a vender, priorizalos.',
+        '- No digas que no hay media sin revisar URLs/IDs disponibles en [PRODUCTOS] o galeria.',
+        '- No inventes IDs/URLs.',
+      ].join('\n'),
+      audioRules: [
+        '- La decision de audio es solo de formato, no de contenido.',
+        '- Si respondes en audio, el audio debe decir EXACTAMENTE lo mismo que el texto final (misma frase, mismo contenido).',
+        '- No reescribas ni parafrasees para voz. Prohibido doble generacion de contenido.',
+      ].join('\n'),
+      promptsEspeciales: {
+        saludo:
+          'Hola 👋 Que tal? En que te puedo ayudar hoy?',
+        despedida:
+          'Perfecto, cualquier cosa me escribes y te ayudo. 🙌',
+        respuestaCorta:
+          'Responde directo, en 1-2 frases, y avanza con una sola pregunta si hace falta.',
+        respuestaLarga:
+          'Si el cliente pide detalles, explica completo y ordenado, sin sonar tecnico ni robotico, y cierra con un siguiente paso.',
+      },
+    };
+
+    const identidad = (sections.identidad || defaults.identidad).trim();
+    const objetivo = (sections.objetivo || defaults.objetivo).trim();
+
+    const reglasMerged = this.dedupeNonEmptyLines(
+      this.joinInstructionBlocks([sections.reglas, defaults.reglas]),
+    );
+
+    const ventas = (sections.ventas || defaults.ventas).trim();
+    const mediaRules = this.dedupeNonEmptyLines(
+      this.joinInstructionBlocks([sections.mediaRules, defaults.mediaRules]),
+    );
+    const audioRules = this.dedupeNonEmptyLines(
+      this.joinInstructionBlocks([sections.audioRules, defaults.audioRules]),
+    );
+
+    const promptsEspeciales = {
+      saludo: (sections.promptsEspeciales.saludo || defaults.promptsEspeciales.saludo).trim(),
+      despedida: (sections.promptsEspeciales.despedida || defaults.promptsEspeciales.despedida).trim(),
+      respuestaCorta: (sections.promptsEspeciales.respuestaCorta || defaults.promptsEspeciales.respuestaCorta).trim(),
+      respuestaLarga: (sections.promptsEspeciales.respuestaLarga || defaults.promptsEspeciales.respuestaLarga).trim(),
+    };
+
+    return {
+      identidad,
+      objetivo,
+      reglas: reglasMerged,
+      ventas,
+      mediaRules,
+      audioRules,
+      promptsEspeciales,
+    };
+  }
+
+  private dedupeNonEmptyLines(text: string): string {
+    const lines = (text ?? '').replace(/\r\n/g, '\n').split('\n');
+    const seen = new Set<string>();
+    const out: string[] = [];
+
+    for (const rawLine of lines) {
+      const line = rawLine.replace(/\s+$/g, '');
+      const key = line.trim().toLowerCase();
+      if (!key) {
+        out.push('');
+        continue;
+      }
+
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      out.push(line);
+    }
+
+    return out
+      .join('\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+  }
+
+  private renderInstructionsPrompt(sections: {
+    identidad: string;
+    objetivo: string;
+    reglas: string;
+    ventas: string;
+    mediaRules: string;
+    audioRules: string;
+    promptsEspeciales: {
+      saludo: string;
+      despedida: string;
+      respuestaCorta: string;
+      respuestaLarga: string;
+    };
+  }): string {
+    const blocks: string[] = [];
+
+    blocks.push('[IDENTIDAD]');
+    blocks.push((sections.identidad ?? '').trim());
+
+    blocks.push('[OBJETIVO]');
+    blocks.push((sections.objetivo ?? '').trim());
+
+    blocks.push('[REGLAS]');
+    blocks.push((sections.reglas ?? '').trim());
+
+    blocks.push('[VENTAS]');
+    blocks.push((sections.ventas ?? '').trim());
+
+    blocks.push('[PROMPTS_ESPECIALES]');
+    blocks.push(
+      [
+        `SALUDO:\n${(sections.promptsEspeciales?.saludo ?? '').trim()}`.trim(),
+        `DESPEDIDA:\n${(sections.promptsEspeciales?.despedida ?? '').trim()}`.trim(),
+        `RESPUESTA_CORTA:\n${(sections.promptsEspeciales?.respuestaCorta ?? '').trim()}`.trim(),
+        `RESPUESTA_LARGA:\n${(sections.promptsEspeciales?.respuestaLarga ?? '').trim()}`.trim(),
+      ].join('\n\n'),
+    );
+
+    blocks.push('[MEDIA_RULES]');
+    blocks.push((sections.mediaRules ?? '').trim());
+
+    blocks.push('[AUDIO_RULES]');
+    blocks.push((sections.audioRules ?? '').trim());
+
+    return blocks
+      .map((value) => (value ?? '').trim())
+      .filter((value) => value.length > 0)
+      .join('\n\n')
+      .trim();
   }
 
   private buildProductsKnowledgeBlock(products: StructuredProduct[]): string {
@@ -2676,6 +3136,19 @@ export class BotService {
     }
 
     return [];
+  }
+
+  private applySingleActiveProductAssumption(
+    allProducts: StructuredProduct[],
+    relevantProducts: StructuredProduct[],
+  ): StructuredProduct[] {
+    // CRITICAL RULE: if there is only one active product, never ask "which product".
+    // Treat it as relevant even when the message doesn't mention the product name.
+    if (allProducts.length === 1 && relevantProducts.length === 0) {
+      return [allProducts[0]];
+    }
+
+    return relevantProducts;
   }
 
   private isGenericPriceQuestion(message: string): boolean {
@@ -4640,7 +5113,10 @@ export class BotService {
       return false;
     }
 
-    if (this.requiresDetailedResponse(message)) {
+    if (
+      this.requiresDetailedResponse(message)
+      || this.requiresDetailedResponse(this.normalizeTextForMatch(message))
+    ) {
       return false;
     }
 

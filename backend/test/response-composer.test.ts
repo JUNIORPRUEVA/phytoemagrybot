@@ -29,6 +29,23 @@ test('composeFinalMessage selects the first option when text looks like multiple
   assert.equal(output, 'Te explico cómo funciona.');
 });
 
+test('composeFinalMessage preserves bullet explanations (does not collapse to first bullet)', () => {
+  const input = [
+    'Claro, te explico:',
+    '- reduce el apetito',
+    '- ayuda con liquidos retenidos',
+    '- acelera el metabolismo',
+    '¿Quieres que te diga el precio?',
+  ].join('\n');
+
+  const output = composeFinalMessage(input, { maxIdeas: 5, maxQuestions: 1 });
+
+  assert.match(output, /reduce el apetito/i);
+  assert.match(output, /acelera el metabolismo/i);
+  assert.match(output, /\?$/);
+  assert.match(output, /\n- /);
+});
+
 test('selectBestResponse prefers a clearer and shorter candidate', () => {
   const result = selectBestResponse([
     'Tranquilo... Perfecto... Perfecto... Te explico rapidito como funciona y te doy todos los detalles para que lo entiendas completo y luego vemos el precio y el pedido sin problema, dime por favor.',

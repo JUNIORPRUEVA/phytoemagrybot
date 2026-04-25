@@ -136,7 +136,17 @@ export class PromptTransformEngine {
     rules: string;
     company: string;
   } {
+    const identityTagged = this.extractBracketSection(systemPromptEs, 'IDENTIDAD');
+    const objectiveTagged = this.extractBracketSection(systemPromptEs, 'OBJETIVO');
+    const rulesTagged = this.extractBracketSection(systemPromptEs, 'REGLAS');
+    const salesTagged = this.extractBracketSection(systemPromptEs, 'VENTAS');
+    const mediaRulesTagged = this.extractBracketSection(systemPromptEs, 'MEDIA_RULES');
+    const audioRulesTagged = this.extractBracketSection(systemPromptEs, 'AUDIO_RULES');
+    const greetingTagged = this.extractSpecialPrompt(systemPromptEs, 'SALUDO');
+
     const identity = this.pickBlocks([
+      identityTagged,
+      objectiveTagged,
       this.extractBlock(systemPromptEs, 'Identidad y comportamiento del bot'),
       this.extractBlock(systemPromptEs, 'Prompt base del sistema'),
       this.extractBlock(systemPromptEs, 'Prompt maestro comercial'),
@@ -153,7 +163,10 @@ export class PromptTransformEngine {
       'Ejemplo (referencial): un saludo corto y humano + una sola pregunta para entender la necesidad.',
     ].join('\n');
 
-    const greeting = this.joinBlocks([greetingLegacy, greetingRules]);
+    const greeting = this.joinBlocks([
+      greetingTagged || greetingLegacy,
+      greetingRules,
+    ]);
 
     const products = this.extractBlock(systemPromptEs, 'Productos disponibles');
     const productLegacy = this.extractBlock(systemPromptEs, 'Catalogo y detalles de productos');
@@ -164,14 +177,24 @@ export class PromptTransformEngine {
       '- No decir "no hay fotos" o "no hay videos" sin revisar URLs/IDs de media disponibles en el contexto.',
       '- No inventar IDs/URLs. Usar solo los que existan en el contexto.',
     ].join('\n');
-    const media = this.joinBlocks([productLegacy, products, mediaRules]);
+    const media = this.joinBlocks([
+      productLegacy,
+      products,
+      mediaRulesTagged,
+      mediaRules,
+    ]);
 
-    const voice = [
+    const voiceDefaults = [
       'REGLAS NUEVAS DE VOICE (obligatorio):',
       '- Usar audio si la explicacion seria larga o si el cliente usa audio.',
       '- Usar texto si es corto (precio, disponibilidad, envio, confirmacion).',
       '- La decision de voice se toma DESPUES de STOP/SALUDOS/MICRO-INTENT/EMOCION y antes de MEDIA.',
     ].join('\n');
+
+    const voice = this.joinBlocks([
+      audioRulesTagged,
+      voiceDefaults,
+    ]);
 
     const stop = [
       'REGLAS NUEVAS DE STOP (obligatorio):',
@@ -182,6 +205,7 @@ export class PromptTransformEngine {
     ].join('\n');
 
     const sales = this.pickBlocks([
+      salesTagged,
       this.extractBlock(systemPromptEs, 'Prompts de ventas'),
       this.extractBlock(systemPromptEs, 'Guia comercial y tono de ventas'),
       this.extractBlock(systemPromptEs, 'Manejo de objeciones'),
@@ -193,6 +217,7 @@ export class PromptTransformEngine {
     ]);
 
     const rules = this.joinBlocks([
+      rulesTagged,
       this.extractBlock(systemPromptEs, 'Fuentes obligatorias antes de responder'),
       this.extractBlock(systemPromptEs, 'Piensa primero y responde despues'),
       this.extractBlock(systemPromptEs, 'Actua como un vendedor dominicano real por WhatsApp'),
@@ -242,6 +267,31 @@ export class PromptTransformEngine {
       rules,
       company: '',
     };
+  }
+
+  private extractBracketSection(text: string, sectionName: string): string {
+    const escaped = sectionName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const normalized = (text ?? '').replace(/\r\n/g, '\n');
+    const match = normalized.match(
+      new RegExp(`(^|\\n)\\[${escaped}\\]\\s*([\\s\\S]*?)(?=\\n\\[[A-Z0-9_]+\\]|$)`),
+    );
+
+    return (match?.[2] ?? '').trim();
+  }
+
+  private extractSpecialPrompt(systemPromptEs: string, key: string): string {
+    const block = this.extractBracketSection(systemPromptEs, 'PROMPTS_ESPECIALES');
+    if (!block) {
+      return '';
+    }
+
+    const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const normalized = block.replace(/\r\n/g, '\n').trim();
+    const match = normalized.match(
+      new RegExp(`(^|\\n)${escaped}:\\s*([\\s\\S]*?)(?=\\n[A-Z0-9_]+:|$)`),
+    );
+
+    return (match?.[2] ?? '').trim();
   }
 
   private buildPromptsXml(modules: {

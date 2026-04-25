@@ -29,6 +29,12 @@ class _BotPromptConfigPageState extends State<BotPromptConfigPage>
   static const String _objectiveSectionKey = 'objective';
   static const String _rulesSectionKey = 'rules';
   static const String _salesSectionKey = 'sales';
+  static const String _greetingSectionKey = 'special_greeting';
+  static const String _farewellSectionKey = 'special_farewell';
+  static const String _shortReplySectionKey = 'special_short';
+  static const String _longReplySectionKey = 'special_long';
+  static const String _mediaRulesSectionKey = 'media_rules';
+  static const String _audioRulesSectionKey = 'audio_rules';
 
   static const String _identityPlaceholder =
     'Eres un asistente de ventas por WhatsApp. Hablas como una persona real dominicana. Eres directo, claro y natural. No hablas mucho ni explicas de mas. Tu objetivo es vender. Usa expresiones naturales como: claro, perfecto, dale, tranquilo, te explico.';
@@ -39,10 +45,29 @@ class _BotPromptConfigPageState extends State<BotPromptConfigPage>
   static const String _salesPlaceholder =
     'Si el cliente duda, responde con seguridad y luego pregunta siempre: quieres probarlo? Cuando este interesado usa urgencia suave como: tenemos disponibilidad ahora mismo, se estan vendiendo bastante rapido, te lo puedo enviar hoy si confirmas. Si el cliente dice que si, pide en un solo mensaje nombre, direccion con ciudad y sector, y telefono. El objetivo final es cerrar la venta rapido, natural y sin presion agresiva.';
 
+  static const String _greetingPlaceholder =
+    'Hola 👋 Que tal? En que te puedo ayudar hoy?';
+  static const String _farewellPlaceholder =
+    'Perfecto, cualquier cosa me escribes y te ayudo. 🙌';
+  static const String _shortReplyPlaceholder =
+    'Responde directo, en 1-2 frases, y avanza con una sola pregunta si hace falta.';
+  static const String _longReplyPlaceholder =
+    'Si el cliente pide detalles, explica completo y ordenado, sin sonar tecnico ni robotico, y cierra con un siguiente paso.';
+  static const String _mediaRulesPlaceholder =
+    '- Si hay imagenes o videos disponibles y ayudan a vender, priorizalos.\n- No digas que no hay media sin revisar URLs/IDs disponibles.\n- No inventes IDs/URLs.';
+  static const String _audioRulesPlaceholder =
+    '- La decision de audio es solo de formato, no de contenido.\n- Si respondes en audio, el audio debe decir EXACTAMENTE lo mismo que el texto final.\n- No reescribas ni parafrasees para voz. Prohibido doble generacion.';
+
   final TextEditingController _identityController = TextEditingController();
   final TextEditingController _objectiveController = TextEditingController();
   final TextEditingController _rulesController = TextEditingController();
   final TextEditingController _salesController = TextEditingController();
+  final TextEditingController _greetingController = TextEditingController();
+  final TextEditingController _farewellController = TextEditingController();
+  final TextEditingController _shortReplyController = TextEditingController();
+  final TextEditingController _longReplyController = TextEditingController();
+  final TextEditingController _mediaRulesController = TextEditingController();
+  final TextEditingController _audioRulesController = TextEditingController();
   final Set<String> _expandedSections = <String>{};
 
   ClientConfigData? _currentConfig;
@@ -69,6 +94,12 @@ class _BotPromptConfigPageState extends State<BotPromptConfigPage>
     _objectiveController.dispose();
     _rulesController.dispose();
     _salesController.dispose();
+    _greetingController.dispose();
+    _farewellController.dispose();
+    _shortReplyController.dispose();
+    _longReplyController.dispose();
+    _mediaRulesController.dispose();
+    _audioRulesController.dispose();
     super.dispose();
   }
 
@@ -118,6 +149,15 @@ class _BotPromptConfigPageState extends State<BotPromptConfigPage>
       _objectiveController.text = _extractSection(taggedPrompt, 'OBJETIVO');
       _rulesController.text = _extractSection(taggedPrompt, 'REGLAS');
       _salesController.text = _extractSection(taggedPrompt, 'VENTAS');
+
+      final specials = _extractSection(taggedPrompt, 'PROMPTS_ESPECIALES');
+      _greetingController.text = _extractSpecialPrompt(specials, 'SALUDO');
+      _farewellController.text = _extractSpecialPrompt(specials, 'DESPEDIDA');
+      _shortReplyController.text = _extractSpecialPrompt(specials, 'RESPUESTA_CORTA');
+      _longReplyController.text = _extractSpecialPrompt(specials, 'RESPUESTA_LARGA');
+
+      _mediaRulesController.text = _extractSection(taggedPrompt, 'MEDIA_RULES');
+      _audioRulesController.text = _extractSection(taggedPrompt, 'AUDIO_RULES');
       return;
     }
 
@@ -149,6 +189,15 @@ class _BotPromptConfigPageState extends State<BotPromptConfigPage>
       config.salesPrompts.followUp,
       botConfig?.promptSales,
     ]);
+
+    _greetingController.text = _joinBlocks(<String?>[
+      config.greetingPrompt,
+    ]);
+    _farewellController.text = '';
+    _shortReplyController.text = '';
+    _longReplyController.text = '';
+    _mediaRulesController.text = '';
+    _audioRulesController.text = '';
   }
 
   void _applyFallback() {
@@ -156,6 +205,12 @@ class _BotPromptConfigPageState extends State<BotPromptConfigPage>
     _objectiveController.text = _objectivePlaceholder;
     _rulesController.text = _rulesPlaceholder;
     _salesController.text = _salesPlaceholder;
+    _greetingController.text = _greetingPlaceholder;
+    _farewellController.text = _farewellPlaceholder;
+    _shortReplyController.text = _shortReplyPlaceholder;
+    _longReplyController.text = _longReplyPlaceholder;
+    _mediaRulesController.text = _mediaRulesPlaceholder;
+    _audioRulesController.text = _audioRulesPlaceholder;
   }
 
   bool _looksLikeCombinedPrompt(String value) {
@@ -168,11 +223,27 @@ class _BotPromptConfigPageState extends State<BotPromptConfigPage>
   String _extractSection(String prompt, String sectionName) {
     final escapedSection = RegExp.escape(sectionName);
     final expression = RegExp(
-      '\\[$escapedSection\\]\\s*([\\s\\S]*?)(?=\\n\\[[A-Z]+\\]|\\z)',
+      '\\[$escapedSection\\]\\s*([\\s\\S]*?)(?=\\n\\[[A-Z0-9_]+\\]|\\z)',
       caseSensitive: true,
     );
     final match = expression.firstMatch(prompt);
     return match == null ? '' : (match.group(1) ?? '').trim();
+  }
+
+  String _extractSpecialPrompt(String specialsBlock, String key) {
+    final escapedKey = RegExp.escape(key);
+    final expression = RegExp(
+      '(^|\\n)$escapedKey:\\s*([\\s\\S]*?)(?=\\n[A-Z_]+:|\\z)',
+      caseSensitive: true,
+    );
+
+    final normalized = specialsBlock.trim();
+    if (normalized.isEmpty) {
+      return '';
+    }
+
+    final match = expression.firstMatch(normalized);
+    return match == null ? '' : (match.group(2) ?? '').trim();
   }
 
   String? _firstMeaningful(List<String?> values) {
@@ -203,17 +274,67 @@ class _BotPromptConfigPageState extends State<BotPromptConfigPage>
   }
 
   String _buildFinalPrompt() {
+    final identity = _identityController.text.trim().isEmpty
+      ? _identityPlaceholder
+      : _identityController.text.trim();
+    final objective = _objectiveController.text.trim().isEmpty
+      ? _objectivePlaceholder
+      : _objectiveController.text.trim();
+    final rules = _rulesController.text.trim().isEmpty
+      ? _rulesPlaceholder
+      : _rulesController.text.trim();
+    final sales = _salesController.text.trim().isEmpty
+      ? _salesPlaceholder
+      : _salesController.text.trim();
+    final greeting = _greetingController.text.trim().isEmpty
+      ? _greetingPlaceholder
+      : _greetingController.text.trim();
+    final farewell = _farewellController.text.trim().isEmpty
+      ? _farewellPlaceholder
+      : _farewellController.text.trim();
+    final shortReply = _shortReplyController.text.trim().isEmpty
+      ? _shortReplyPlaceholder
+      : _shortReplyController.text.trim();
+    final longReply = _longReplyController.text.trim().isEmpty
+      ? _longReplyPlaceholder
+      : _longReplyController.text.trim();
+    final mediaRules = _mediaRulesController.text.trim().isEmpty
+      ? _mediaRulesPlaceholder
+      : _mediaRulesController.text.trim();
+    final audioRules = _audioRulesController.text.trim().isEmpty
+      ? _audioRulesPlaceholder
+      : _audioRulesController.text.trim();
+
     return '''[IDENTIDAD]
-${_identityController.text.trim()}
+${identity}
 
 [OBJETIVO]
-${_objectiveController.text.trim()}
+${objective}
 
 [REGLAS]
-${_rulesController.text.trim()}
+${rules}
 
 [VENTAS]
-${_salesController.text.trim()}'''.trim();
+${sales}
+
+[PROMPTS_ESPECIALES]
+SALUDO:
+${greeting}
+
+DESPEDIDA:
+${farewell}
+
+RESPUESTA_CORTA:
+${shortReply}
+
+RESPUESTA_LARGA:
+${longReply}
+
+[MEDIA_RULES]
+${mediaRules}
+
+[AUDIO_RULES]
+${audioRules}'''.trim();
   }
 
   Future<void> _saveConfig() async {
@@ -363,6 +484,66 @@ ${_salesController.text.trim()}'''.trim();
           hintText: _salesPlaceholder,
           enabled: !isBusy,
           expanded: _expandedSections.contains(_salesSectionKey),
+          onToggle: _toggleSection,
+        ),
+        const SizedBox(height: 16),
+        _PromptCard(
+          sectionKey: _greetingSectionKey,
+          title: 'PROMPT ESPECIAL: SALUDO',
+          controller: _greetingController,
+          hintText: _greetingPlaceholder,
+          enabled: !isBusy,
+          expanded: _expandedSections.contains(_greetingSectionKey),
+          onToggle: _toggleSection,
+        ),
+        const SizedBox(height: 16),
+        _PromptCard(
+          sectionKey: _farewellSectionKey,
+          title: 'PROMPT ESPECIAL: DESPEDIDA',
+          controller: _farewellController,
+          hintText: _farewellPlaceholder,
+          enabled: !isBusy,
+          expanded: _expandedSections.contains(_farewellSectionKey),
+          onToggle: _toggleSection,
+        ),
+        const SizedBox(height: 16),
+        _PromptCard(
+          sectionKey: _shortReplySectionKey,
+          title: 'PROMPT ESPECIAL: RESPUESTA CORTA',
+          controller: _shortReplyController,
+          hintText: _shortReplyPlaceholder,
+          enabled: !isBusy,
+          expanded: _expandedSections.contains(_shortReplySectionKey),
+          onToggle: _toggleSection,
+        ),
+        const SizedBox(height: 16),
+        _PromptCard(
+          sectionKey: _longReplySectionKey,
+          title: 'PROMPT ESPECIAL: RESPUESTA LARGA',
+          controller: _longReplyController,
+          hintText: _longReplyPlaceholder,
+          enabled: !isBusy,
+          expanded: _expandedSections.contains(_longReplySectionKey),
+          onToggle: _toggleSection,
+        ),
+        const SizedBox(height: 16),
+        _PromptCard(
+          sectionKey: _mediaRulesSectionKey,
+          title: 'MEDIA RULES',
+          controller: _mediaRulesController,
+          hintText: _mediaRulesPlaceholder,
+          enabled: !isBusy,
+          expanded: _expandedSections.contains(_mediaRulesSectionKey),
+          onToggle: _toggleSection,
+        ),
+        const SizedBox(height: 16),
+        _PromptCard(
+          sectionKey: _audioRulesSectionKey,
+          title: 'AUDIO RULES',
+          controller: _audioRulesController,
+          hintText: _audioRulesPlaceholder,
+          enabled: !isBusy,
+          expanded: _expandedSections.contains(_audioRulesSectionKey),
           onToggle: _toggleSection,
         ),
         const SizedBox(height: 18),

@@ -1,0 +1,189 @@
+﻿[32m[Nest] 209104  - [39m25/04/2026, 7:18:51 p. m. [32m    LOG[39m [38;5;3m[BotService] [39m[32m{"event":"bot_message_received","contactId":"18095551234","message":"Antes explicame un poco de la pastilla"}[39m
+NUMERO: 18095551234
+MENSAJE: Antes explicame un poco de la pastilla
+PRODUCTOS: [
+  {
+    id: 'Te Detox Premium',
+    titulo: 'Te Detox Premium',
+    descripcionCorta: 'Ayuda a digestion y bienestar.',
+    descripcionCompleta: '',
+    precio: 'RD$1,500',
+    precioMinimo: null,
+    imagenes: [],
+    videos: [],
+    activo: true
+  }
+]
+PRODUCTOS_RELEVANTES: [
+  {
+    id: 'Te Detox Premium',
+    titulo: 'Te Detox Premium',
+    descripcionCorta: 'Ayuda a digestion y bienestar.',
+    descripcionCompleta: '',
+    precio: 'RD$1,500',
+    precioMinimo: null,
+    imagenes: [],
+    videos: [],
+    activo: true
+  }
+]
+REDIS MISS: conversation_end:18095551234
+REDIS MISS: company_rules
+REDIS MISS: state:18095551234
+REDIS MISS: intent:18095551234
+HOTLEAD_DEBUG {
+  message: 'Antes explicame un poco de la pastilla',
+  normalizedForMatch: 'antes explicame un poco de la pastilla',
+  lastIntent: 'HOT',
+  decisionIntent: 'info',
+  decisionStage: 'interesado',
+  mappedIntent: 'interes',
+  shouldHotLead: false,
+  stageHotLead: false,
+  clearHotLeadCarryover: true,
+  hotLead: false
+}
+THINKING RESULT: {
+  intent: 'info',
+  userState: 'interesado',
+  alreadyExplained: false,
+  repetitionRisk: false,
+  nextBestAction: 'avanzar',
+  responseStrategy: 'ser directo, responder valor y mover a precio o compra.'
+}
+COMPANY RULE APPLIED: enforce_real_company_data
+REDIS MISS: media_cache:Te Detox Premium
+REDIS MISS: media_cache:query:b014f60213847c4f46964da679b9b1d21b2b9ccd
+REDIS MISS: response_cache:663b60323ae00e50548b8a0ea0bca086f61e285d
+USANDO IA: true
+CONTEXTO LENGTH: 2016
+EMPRESA CONTEXTO: [INSTRUCCIONES]
+
+[IDENTIDAD]
+
+Nombre interno: Aura
+
+Rol: Asesora comercial
+
+Tono: Cercana
+
+[OBJETIVO]
+
+Convertir conversaciones en pedidos
+
+[REGLAS]
+
+- Siempre responde con datos reales
+
+- Usa SIEMPRE [INSTRUCCIONES] como comportamiento.
+- Usa SIEMPRE [PRODUCTOS] como fuente principal de datos (titulo, descripcion, precio, imagenes y videos).
+- Usa [EMPRESA] para ubicacion, horario, pago y contacto. Nunca inventes datos.
+- Si falta un dato, dilo claro y ofrece el siguiente paso (pregunta unica).
+- Responde humano, breve y util. No mas de una pregunta por respuesta.
+
+[VENTAS]
+
+Apertura: Abre con cercania.
+
+Oferta: Presenta valor y precio.
+
+[PROMPTS_ESPECIALES]
+
+SALUDO:
+Hola ­ƒæï Que tal? En que te puedo ayudar hoy?
+
+DESPEDIDA:
+Perfecto, cualquier cosa me escribes y te ayudo. ­ƒÖî
+
+RESPUESTA_CORTA:
+Responde directo, en 1-2 frases, y avanza con una sola pregunta si hace falta.
+
+RESPUESTA_LARGA:
+Si el cliente pide detalles, explica completo y ordenado, sin sonar tecnico ni robotico, y cierra con un siguiente paso.
+
+[MEDIA_RULES]
+
+- Si hay imagenes o videos disponibles y ayudan a vender, priorizalos.
+- No digas que no hay media sin revisar URLs/IDs disponibles en [PRODUCTOS] o galeria.
+- No inventes IDs/URLs.
+
+[AUDIO_RULES]
+
+- La decision de audio es solo de formato, no de contenido.
+- Si respondes en audio, el audio debe decir EXACTAMENTE lo mismo que el texto final (misma frase, mismo contenido).
+- No reescribas ni parafrasees para voz. Prohibido doble generacion de contenido.
+
+[PRODUCTOS]
+
+Te Detox Premium
+- ID: Te Detox Premium
+- Descripcion corta: Ayuda a digestion y bienestar.
+- Precio: RD$1,500
+- Activo: si
+
+[PRODUCTOS_RELEVANTES]
+
+Te Detox Premium
+- ID: Te Detox Premium
+- Descripcion corta: Ayuda a digestion y bienestar.
+- Precio: RD$1,500
+- Activo: si
+
+Usa primero estos productos relevantes para responder y vender. Si vas a enviar media, toma primero sus imagenes o videos.
+
+[EMPRESA]
+
+CONTEXTO_EMPRESA
+
+{"company_name":"Phyto Emagry","phone":"809-555-1234","address":"Santo Domingo"}
+RESPUESTAS GENERADAS: [
+  {
+    text: 'Claro, te explico un poco como funciona la pastilla y para quien va mejor.',
+    type: 'text'
+  }
+]
+[32m[Nest] 209104  - [39m25/04/2026, 7:18:51 p. m. [32m    LOG[39m [38;5;3m[BotService] [39m[32m{"event":"RESPONSE_COMPOSER","total_respuestas":1,"seleccionada":0,"descartadas":[]}[39m
+RESPUESTA FINAL: {
+  text: 'Claro, te explico un poco como funciona la pastilla y para quien va mejor.',
+  mediaIds: [ 'https://example.com/1.jpg', 'https://example.com/2.jpg' ],
+  source: 'ai'
+}
+RESPUESTA FINAL: {
+  text: 'Claro, te explico un poco como funciona la pastilla y para quien va mejor.',
+  mediaIds: [ 'https://example.com/1.jpg', 'https://example.com/2.jpg' ],
+  source: 'ai'
+}
+ENVIADA: {
+  text: 'Claro, te explico un poco como funciona la pastilla y para quien va mejor.',
+  mediaIds: [ 'https://example.com/1.jpg', 'https://example.com/2.jpg' ]
+}
+[32m[Nest] 209104  - [39m25/04/2026, 7:18:51 p. m. [32m    LOG[39m [38;5;3m[BotService] [39m[32m{"event":"bot_reply_generated","contactId":"18095551234","intent":"interes","hotLead":false,"usedMemory":true,"usedGallery":true,"cached":false,"source":"ai","replyType":"text"}[39m
+[32m[Nest] 209104  - [39m25/04/2026, 7:18:51 p. m. [32m    LOG[39m [38;5;3m[BotService] [39m[32m{"event":"RESPONSE_DEBUG","contactId":"18095551234","message":"Antes explicame un poco de la pastilla","layer":"ai","blocked":false,"duplicateRemoved":false,"reason":null,"source":"ai"}[39m
+[31mÔ£û informational request after a hot lead uses AI instead of the hot close [90m(11.98ms)[39m[39m
+[34mÔä╣ tests 1[39m
+[34mÔä╣ suites 0[39m
+[34mÔä╣ pass 0[39m
+[34mÔä╣ fail 1[39m
+[34mÔä╣ cancelled 0[39m
+[34mÔä╣ skipped 0[39m
+[34mÔä╣ todo 0[39m
+[34mÔä╣ duration_ms 1978.033[39m
+
+[31mÔ£û failing tests:[39m
+
+test at test\bot.service.test.ts:1315:25
+[31mÔ£û informational request after a hot lead uses AI instead of the hot close [90m(11.98ms)[39m[39m
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  true !== false
+  
+      at TestContext.<anonymous> (C:\Users\pc\DEV\PROYECTOS\CLIENTES\PHYTOEMAGRYBOT\backend\test\bot.service.test.ts:1597:10)
+      at async Test.run (node:internal/test_runner/test:1125:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:358:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: true,
+    expected: false,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
