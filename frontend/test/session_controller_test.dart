@@ -1,9 +1,8 @@
 import 'package:dashboard_pwa/services/auth_service.dart';
 import 'package:dashboard_pwa/services/api_client.dart';
 import 'package:dashboard_pwa/services/api_service.dart';
-import 'package:flutter/services.dart';
+import 'package:dashboard_pwa/services/token_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 
 class _NoopClient extends http.BaseClient {
@@ -17,97 +16,43 @@ class _NoopClient extends http.BaseClient {
   }
 }
 
-class _MemoryStorage extends FlutterSecureStorage {
+class _MemoryStorage implements AuthTokenStorage {
   _MemoryStorage();
 
   final Map<String, String> _values = <String, String>{};
 
   @override
-  Future<void> write({
-    required String key,
-    String? value,
-    AppleOptions? iOptions,
-    AndroidOptions? aOptions,
-    LinuxOptions? lOptions,
-    WebOptions? webOptions,
-    WindowsOptions? wOptions,
-    AppleOptions? mOptions,
-  }) async {
-    if (value == null) {
-      _values.remove(key);
-      return;
-    }
+  Future<void> writeToken(String key, String value) async {
     _values[key] = value;
   }
 
   @override
-  Future<String?> read({
-    required String key,
-    AppleOptions? iOptions,
-    AndroidOptions? aOptions,
-    LinuxOptions? lOptions,
-    WebOptions? webOptions,
-    WindowsOptions? wOptions,
-    AppleOptions? mOptions,
-  }) async {
+  Future<String?> readToken(String key) async {
     return _values[key];
   }
 
   @override
-  Future<void> delete({
-    required String key,
-    AppleOptions? iOptions,
-    AndroidOptions? aOptions,
-    LinuxOptions? lOptions,
-    WebOptions? webOptions,
-    WindowsOptions? wOptions,
-    AppleOptions? mOptions,
-  }) async {
+  Future<void> deleteToken(String key) async {
     _values.remove(key);
   }
 }
 
-class _ThrowingStorage extends FlutterSecureStorage {
+class _ThrowingStorage implements AuthTokenStorage {
   _ThrowingStorage();
 
   @override
-  Future<void> write({
-    required String key,
-    String? value,
-    AppleOptions? iOptions,
-    AndroidOptions? aOptions,
-    LinuxOptions? lOptions,
-    WebOptions? webOptions,
-    WindowsOptions? wOptions,
-    AppleOptions? mOptions,
-  }) async {
-    throw MissingPluginException('write missing');
+  Future<void> writeToken(String key, String value) async {
+    throw Exception('write missing');
   }
 
   @override
-  Future<String?> read({
-    required String key,
-    AppleOptions? iOptions,
-    AndroidOptions? aOptions,
-    LinuxOptions? lOptions,
-    WebOptions? webOptions,
-    WindowsOptions? wOptions,
-    AppleOptions? mOptions,
-  }) async {
-    throw MissingPluginException('read missing');
+  Future<String?> readToken(String key) async {
+    throw Exception('read missing');
   }
 
   @override
-  Future<void> delete({
-    required String key,
-    AppleOptions? iOptions,
-    AndroidOptions? aOptions,
-    LinuxOptions? lOptions,
-    WebOptions? webOptions,
-    WindowsOptions? wOptions,
-    AppleOptions? mOptions,
-  }) async {
-    throw MissingPluginException('delete missing');
+  Future<void> deleteToken(String key) async {
+    throw Exception('delete missing');
   }
 }
 
@@ -219,7 +164,7 @@ void main() {
 
       expect(controller.isAuthenticated, isTrue);
       expect(controller.currentUser?.email, 'admin@phyto.com');
-      expect(await storage.read(key: 'session_token'), 'jwt-token-123');
+      expect(await storage.readToken('session_token'), 'jwt-token-123');
       expect(authService.lastAppliedToken, 'jwt-token-123');
       expect(apiService.lastAppliedToken, 'jwt-token-123');
     },
@@ -229,7 +174,7 @@ void main() {
     'session controller restores persisted session on app restart',
     () async {
       final storage = _MemoryStorage();
-      await storage.write(key: 'session_token', value: 'jwt-token-123');
+      await storage.writeToken('session_token', 'jwt-token-123');
       final authService = _FakeAuthService(storage: storage);
       final apiService = _SpyApiService();
       final controller = SessionController(
@@ -250,7 +195,7 @@ void main() {
     'session controller clears invalid persisted sessions and logs out locally',
     () async {
       final storage = _MemoryStorage();
-      await storage.write(key: 'session_token', value: 'expired-token');
+      await storage.writeToken('session_token', 'expired-token');
       final authService = _FakeAuthService(storage: storage)
         ..failGetUser = true;
       final apiService = _SpyApiService();
@@ -263,7 +208,7 @@ void main() {
 
       expect(controller.status, SessionStatus.unauthenticated);
       expect(controller.currentUser, isNull);
-      expect(await storage.read(key: 'session_token'), isNull);
+      expect(await storage.readToken('session_token'), isNull);
       expect(apiService.cleared, isTrue);
 
       await controller.login(
@@ -274,13 +219,13 @@ void main() {
 
       expect(controller.status, SessionStatus.unauthenticated);
       expect(authService.logoutCalled, isTrue);
-      expect(await storage.read(key: 'session_token'), isNull);
+      expect(await storage.readToken('session_token'), isNull);
       expect(apiService.cleared, isTrue);
     },
   );
 
   test(
-    'auth service falls back gracefully when secure storage plugin is unavailable',
+    'auth service falls back gracefully when token persistence fails',
     () async {
       final authService = AuthService(
         baseUrl: 'https://example.com',

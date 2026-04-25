@@ -1,9 +1,8 @@
 import 'package:flutter/foundation.dart';
-import 'package:flutter/services.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import 'api_client.dart';
 import 'api_service.dart';
+import 'token_storage.dart';
 
 class AuthUserData {
   const AuthUserData({
@@ -58,14 +57,14 @@ class AuthService {
   AuthService({
     required String baseUrl,
     ApiClient? apiClient,
-    FlutterSecureStorage? storage,
+    AuthTokenStorage? storage,
   }) : _apiClient = apiClient ?? ApiClient(baseUrl: baseUrl),
-       _storage = storage ?? const FlutterSecureStorage();
+       _storage = storage ?? const SharedPreferencesTokenStorage();
 
   static const String _tokenStorageKey = 'session_token';
 
   final ApiClient _apiClient;
-  final FlutterSecureStorage _storage;
+  final AuthTokenStorage _storage;
   String? _fallbackTokenCache;
 
   void setSessionToken(String? token) {
@@ -180,31 +179,18 @@ class AuthService {
     _fallbackTokenCache = token;
 
     try {
-      await _storage.write(key: _tokenStorageKey, value: token);
-    } on MissingPluginException {
-      debugPrint(
-        'flutter_secure_storage plugin unavailable; using in-memory auth token fallback.',
-      );
-    } on PlatformException catch (error) {
-      debugPrint(
-        'flutter_secure_storage write failed: ${error.message ?? error.code}',
-      );
+      await _storage.writeToken(_tokenStorageKey, token);
+    } catch (error) {
+      debugPrint('Token persistence write failed; using in-memory fallback. $error');
     }
   }
 
   Future<String?> readPersistedToken() async {
     try {
-      final persistedToken = await _storage.read(key: _tokenStorageKey);
+      final persistedToken = await _storage.readToken(_tokenStorageKey);
       return persistedToken ?? _fallbackTokenCache;
-    } on MissingPluginException {
-      debugPrint(
-        'flutter_secure_storage plugin unavailable while reading token; using in-memory auth token fallback.',
-      );
-      return _fallbackTokenCache;
-    } on PlatformException catch (error) {
-      debugPrint(
-        'flutter_secure_storage read failed: ${error.message ?? error.code}',
-      );
+    } catch (error) {
+      debugPrint('Token persistence read failed; using in-memory fallback. $error');
       return _fallbackTokenCache;
     }
   }
@@ -213,15 +199,9 @@ class AuthService {
     _fallbackTokenCache = null;
 
     try {
-      await _storage.delete(key: _tokenStorageKey);
-    } on MissingPluginException {
-      debugPrint(
-        'flutter_secure_storage plugin unavailable while clearing token; cleared in-memory auth token fallback only.',
-      );
-    } on PlatformException catch (error) {
-      debugPrint(
-        'flutter_secure_storage delete failed: ${error.message ?? error.code}',
-      );
+      await _storage.deleteToken(_tokenStorageKey);
+    } catch (error) {
+      debugPrint('Token persistence delete failed; cleared in-memory fallback only. $error');
     }
   }
 }
