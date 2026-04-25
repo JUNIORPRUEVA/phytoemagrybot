@@ -300,7 +300,8 @@ test('always injects the mandatory combined knowledge context before replying', 
   assert.match(companyContext, /Phyto Emagry/);
 });
 
-test('falls back to a resilient sales reply when mandatory knowledge sources are incomplete', async () => {
+test('uses AI with available context when mandatory knowledge sources are incomplete', async () => {
+  let capturedParams: Record<string, unknown> | null = null;
   const service = createService({
     configConfigurations: {
       instructions: {
@@ -311,26 +312,49 @@ test('falls back to a resilient sales reply when mandatory knowledge sources are
       },
     },
     companyContextText: '',
+    onGenerateReply: (params) => {
+      capturedParams = params;
+    },
   });
 
   const result = await service.processIncomingMessage('18095551234', 'hola');
 
-  assert.equal(result.source, 'fallback');
-  assert.match(result.reply, /PHYTOEMAGRY|capsula|pedirlo/i);
+  assert.equal(result.source, 'ai');
+  assert.match(
+    String((capturedParams as { companyContext?: string } | null)?.companyContext ?? ''),
+    /\[INSTRUCCIONES\]|Eres un asistente de ventas por WhatsApp\./,
+  );
 });
 
-test('falls back to a deterministic sales reply when AI generation fails', async () => {
+test('uses AI with partial context when some knowledge sources exist', async () => {
+  let capturedParams: Record<string, unknown> | null = null;
   const service = createService({
-    generateReply: async () => {
-      throw new Error('OpenAI down');
+    configConfigurations: {
+      instructions: {
+        identity: {
+          assistantName: 'Aura',
+          role: 'Asesora comercial',
+        },
+        products: [],
+      },
+    },
+    companyContextText:
+      'CONTEXTO_EMPRESA\n\n{"company_name":"Phyto Emagry","phone":"809-555-1234"}',
+    onGenerateReply: (params) => {
+      capturedParams = params;
     },
   });
 
-  const result = await service.processIncomingMessage('18095551234', 'precio');
+  const result = await service.processIncomingMessage('18095551234', 'hola');
 
-  assert.equal(result.source, 'fallback');
-  assert.equal(result.intent, 'interes');
-  assert.match(result.reply, /pasame tu nombre, direccion y telefono|enviartelo hoy/i);
+  const companyContext = String(
+    (capturedParams as { companyContext?: string } | null)?.companyContext ?? '',
+  );
+
+  assert.equal(result.source, 'ai');
+  assert.match(companyContext, /\[INSTRUCCIONES\]/);
+  assert.match(companyContext, /\[EMPRESA\]/);
+  assert.doesNotMatch(companyContext, /\[PRODUCTOS\]/);
 });
 
 test('location question injects only location business context', async () => {
