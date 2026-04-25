@@ -2,32 +2,50 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import 'pages/login_page.dart';
+import 'services/app_settings_service.dart';
 import 'services/auth_service.dart';
 import 'services/api_service.dart';
 import 'widgets/dashboard_shell.dart';
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  runApp(const DashboardApp());
+  const settingsService = AppSettingsService();
+  final initialBaseUrl =
+      await settingsService.readApiBaseUrl() ?? ApiService.defaultBaseUrl;
+  runApp(
+    DashboardApp(
+      settingsService: settingsService,
+      initialBaseUrl: initialBaseUrl,
+    ),
+  );
 }
 
 class DashboardApp extends StatefulWidget {
-  const DashboardApp({super.key});
+  const DashboardApp({
+    super.key,
+    required this.settingsService,
+    required this.initialBaseUrl,
+  });
+
+  final AppSettingsService settingsService;
+  final String initialBaseUrl;
 
   @override
   State<DashboardApp> createState() => _DashboardAppState();
 }
 
 class _DashboardAppState extends State<DashboardApp> {
-  late final ApiService _apiService;
-  late final AuthService _authService;
-  late final SessionController _sessionController;
+  late ApiService _apiService;
+  late AuthService _authService;
+  late SessionController _sessionController;
+  late String _baseUrl;
 
   @override
   void initState() {
     super.initState();
-    _apiService = ApiService();
-    _authService = AuthService(baseUrl: _apiService.baseUrl);
+    _baseUrl = widget.initialBaseUrl;
+    _apiService = ApiService(baseUrl: _baseUrl);
+    _authService = AuthService(baseUrl: _baseUrl);
     _sessionController = SessionController(
       apiService: _apiService,
       authService: _authService,
@@ -39,6 +57,153 @@ class _DashboardAppState extends State<DashboardApp> {
   void dispose() {
     _sessionController.dispose();
     super.dispose();
+  }
+
+  Future<void> _reconfigureBackend(String baseUrl) async {
+    _sessionController.dispose();
+
+    _baseUrl = baseUrl;
+    _apiService = ApiService(baseUrl: _baseUrl);
+    _authService = AuthService(baseUrl: _baseUrl);
+    _sessionController = SessionController(
+      apiService: _apiService,
+      authService: _authService,
+    );
+
+    if (mounted) {
+      setState(() {});
+    }
+
+    await _sessionController.restoreSession();
+  }
+
+  Future<void> _openBackendDialog(BuildContext context) async {
+    final controller = TextEditingController(text: _baseUrl);
+    final formKey = GlobalKey<FormState>();
+    var isTesting = false;
+    String? statusMessage;
+    Color statusColor = const Color(0xFF475569);
+
+    await showDialog<void>(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: const Text('Servidor del backend'),
+              content: Form(
+                key: formKey,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    TextFormField(
+                      controller: controller,
+                      decoration: const InputDecoration(
+                        labelText: 'URL base',
+                        hintText: 'https://tu-backend.com',
+                      ),
+                      validator: (value) {
+                        final normalized = value?.trim() ?? '';
+                        final parsed = Uri.tryParse(normalized);
+                        if (normalized.isEmpty) {
+                          return 'Escribe la URL del backend.';
+                        }
+                        if (parsed == null || !parsed.hasScheme || !parsed.hasAuthority) {
+                          return 'URL inválida.';
+                        }
+                        return null;
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      'Actual: $_baseUrl',
+                      style: const TextStyle(
+                        color: Color(0xFF64748B),
+                        fontSize: 12,
+                      ),
+                    ),
+                    if (statusMessage != null) ...<Widget>[
+                      const SizedBox(height: 12),
+                      Text(
+                        statusMessage!,
+                        style: TextStyle(
+                          color: statusColor,
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              actions: <Widget>[
+                TextButton(
+                  onPressed: isTesting
+                      ? null
+                      : () async {
+                          await widget.settingsService.clearApiBaseUrl();
+                          if (!mounted) {
+                            return;
+                          }
+                          Navigator.of(context).pop();
+                          await _reconfigureBackend(ApiService.defaultBaseUrl);
+                        },
+                  child: const Text('Usar predeterminado'),
+                ),
+                OutlinedButton(
+                  onPressed: isTesting
+                      ? null
+                      : () async {
+                          if (!formKey.currentState!.validate()) {
+                            return;
+                          }
+                          setDialogState(() {
+                            isTesting = true;
+                            statusMessage = null;
+                          });
+
+                          final candidate = controller.text.trim().replaceAll(RegExp(r'/+$'), '');
+                          final health = await ApiService(baseUrl: candidate).getHealth();
+
+                          setDialogState(() {
+                            isTesting = false;
+                            statusMessage = health.online
+                                ? 'Conexión correcta con el backend.'
+                                : 'No se pudo conectar con ese backend.';
+                            statusColor = health.online
+                                ? const Color(0xFF166534)
+                                : const Color(0xFFB91C1C);
+                          });
+                        },
+                  child: Text(isTesting ? 'Probando...' : 'Probar'),
+                ),
+                ElevatedButton(
+                  onPressed: isTesting
+                      ? null
+                      : () async {
+                          if (!formKey.currentState!.validate()) {
+                            return;
+                          }
+
+                          final candidate = controller.text.trim().replaceAll(RegExp(r'/+$'), '');
+                          await widget.settingsService.writeApiBaseUrl(candidate);
+                          if (!mounted) {
+                            return;
+                          }
+                          Navigator.of(context).pop();
+                          await _reconfigureBackend(candidate);
+                        },
+                  child: const Text('Guardar'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    controller.dispose();
   }
 
   @override
@@ -179,6 +344,7 @@ class _DashboardAppState extends State<DashboardApp> {
           return LoginPage(
             isBusy: _sessionController.isBusy,
             errorMessage: _sessionController.errorMessage,
+            onEditBackendUrl: () => _openBackendDialog(context),
             onSubmit: ({required String identifier, required String password}) {
               return _sessionController.login(
                 identifier: identifier,

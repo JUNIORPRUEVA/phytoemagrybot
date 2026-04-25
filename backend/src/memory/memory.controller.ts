@@ -23,14 +23,6 @@ export class MemoryController {
     return this.memoryService.getConversationContext(contactId);
   }
 
-  @Post(':contactId')
-  async updateMemoryEntry(
-    @Param('contactId') contactId: string,
-    @Body() dto: UpdateMemoryEntryDto,
-  ) {
-    return this.memoryService.updateMemoryEntry(contactId, dto);
-  }
-
   @Post('delete-client')
   async deleteClientMemory(@Body() dto: MemoryDeleteContactDto) {
     return this.memoryService.deleteClientMemory(dto.contactId, dto.actor);
@@ -44,5 +36,13 @@ export class MemoryController {
   @Post('reset-all')
   async resetAllMemory(@Body() dto: MemoryResetAllDto) {
     return this.memoryService.resetAllMemory(dto.actor);
+  }
+
+  @Post(':contactId')
+  async updateMemoryEntry(
+    @Param('contactId') contactId: string,
+    @Body() dto: UpdateMemoryEntryDto,
+  ) {
+    return this.memoryService.updateMemoryEntry(contactId, dto);
   }
 }

@@ -6,11 +6,13 @@ class LoginPage extends StatefulWidget {
     required this.isBusy,
     required this.errorMessage,
     required this.onSubmit,
+    this.onEditBackendUrl,
   });
 
   final bool isBusy;
   final String? errorMessage;
   final Future<void> Function({required String identifier, required String password}) onSubmit;
+  final VoidCallback? onEditBackendUrl;
 
   @override
   State<LoginPage> createState() => _LoginPageState();
@@ -45,6 +47,13 @@ class _LoginPageState extends State<LoginPage> {
       eyebrow: 'Acceso seguro',
       title: 'Inicia sesión',
       subtitle: null,
+      headerAction: widget.onEditBackendUrl == null
+          ? null
+          : IconButton(
+              onPressed: widget.isBusy ? null : widget.onEditBackendUrl,
+              tooltip: 'Configurar servidor',
+              icon: const Icon(Icons.settings_rounded),
+            ),
       child: Form(
         key: _formKey,
         child: Column(
@@ -112,6 +121,7 @@ class AuthScaffold extends StatelessWidget {
     required this.subtitle,
     required this.child,
     this.footer,
+    this.headerAction,
   });
 
   final String eyebrow;
@@ -119,6 +129,7 @@ class AuthScaffold extends StatelessWidget {
   final String? subtitle;
   final Widget child;
   final Widget? footer;
+  final Widget? headerAction;
 
   @override
   Widget build(BuildContext context) {
@@ -154,38 +165,49 @@ class AuthScaffold extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: <Widget>[
-                      Column(
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: <Widget>[
-                          Text(
-                            eyebrow.toUpperCase(),
-                            textAlign: TextAlign.center,
-                            style: const TextStyle(
-                              color: Color(0xFF2563EB),
-                              fontWeight: FontWeight.w800,
-                              letterSpacing: 1.2,
-                              fontSize: 12,
+                          Expanded(
+                            child: Column(
+                              children: <Widget>[
+                                Text(
+                                  eyebrow.toUpperCase(),
+                                  textAlign: TextAlign.center,
+                                  style: const TextStyle(
+                                    color: Color(0xFF2563EB),
+                                    fontWeight: FontWeight.w800,
+                                    letterSpacing: 1.2,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                                const SizedBox(height: 14),
+                                Text(
+                                  title,
+                                  textAlign: TextAlign.center,
+                                  style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                                    fontSize: 38,
+                                    fontWeight: FontWeight.w700,
+                                    color: const Color(0xFF1E2235),
+                                  ),
+                                ),
+                                if (subtitle?.trim().isNotEmpty ?? false) ...<Widget>[
+                                  const SizedBox(height: 14),
+                                  Text(
+                                    subtitle!,
+                                    textAlign: TextAlign.center,
+                                    style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                                      color: const Color(0xFF5B6476),
+                                      height: 1.6,
+                                    ),
+                                  ),
+                                ],
+                              ],
                             ),
                           ),
-                          const SizedBox(height: 14),
-                          Text(
-                            title,
-                            textAlign: TextAlign.center,
-                            style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                              fontSize: 38,
-                              fontWeight: FontWeight.w700,
-                              color: const Color(0xFF1E2235),
-                            ),
-                          ),
-                          if (subtitle?.trim().isNotEmpty ?? false) ...<Widget>[
-                            const SizedBox(height: 14),
-                            Text(
-                              subtitle!,
-                              textAlign: TextAlign.center,
-                              style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                                color: const Color(0xFF5B6476),
-                                height: 1.6,
-                              ),
-                            ),
+                          if (headerAction != null) ...<Widget>[
+                            const SizedBox(width: 8),
+                            headerAction!,
                           ],
                         ],
                       ),

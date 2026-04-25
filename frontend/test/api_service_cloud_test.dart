@@ -8,6 +8,13 @@ import 'package:http/testing.dart';
 
 void main() {
   group('cloud-first api layer', () {
+    test('keeps the production backend URL as the default base URL', () {
+      expect(
+        ApiService.defaultBaseUrl,
+        'https://ai-business-platform-phytoemagrybot-backend.onqyr1.easypanel.host',
+      );
+    });
+
     test('stores token only in memory and uses it in requests', () async {
       String? authorizationHeader;
       final client = ApiClient(
