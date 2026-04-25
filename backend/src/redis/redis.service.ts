@@ -7,37 +7,33 @@ import { StoredMessage } from '../memory/memory.types';
 export class RedisService implements OnModuleDestroy {
   private readonly logger = new Logger(RedisService.name);
 
+  private static readonly GROUPED_TEXT_FLUSH_ZSET_KEY = 'grouped-text:flush:due';
+
   private readonly client: Redis;
 
   constructor(private readonly configService: ConfigService) {
-    const redisUrl = this.configService.get<string>('REDIS_URL')?.trim();
-    const host = this.configService.get<string>('REDIS_HOST') ?? '127.0.0.1';
-    const port = Number(this.configService.get<string>('REDIS_PORT') ?? 6379);
-    const password = this.configService.get<string>('REDIS_PASSWORD')?.trim();
-    const tlsEnabled = this.parseBoolean(this.configService.get<string>('REDIS_TLS'));
+    const redisUrl = this.configService.get<string>('REDIS_URL')?.trim() ?? '';
+
+    if (!redisUrl) {
+      throw new Error('Missing required environment variable REDIS_URL');
+    }
+
+    const info = this.getRedisInfo(redisUrl);
+    if (this.isLocalHost(info.host)) {
+      throw new Error(`Refusing to start with a local REDIS_URL (host=${info.host ?? '?'})`);
+    }
 
     const options: RedisOptions = {
       maxRetriesPerRequest: null,
       lazyConnect: false,
     };
 
-    if (!redisUrl) {
-      options.host = host;
-      options.port = port;
-    }
-
-    if (password) {
-      options.password = password;
-    }
-
-    if (tlsEnabled) {
-      options.tls = {};
-    }
-
-    this.client = redisUrl ? new Redis(redisUrl, options) : new Redis(options);
+    this.client = new Redis(redisUrl, options);
 
     this.client.on('ready', () => {
-      this.logger.log(redisUrl ? `Redis ready at ${redisUrl}` : `Redis ready at ${host}:${port}`);
+      this.logger.log(
+        `CLOUD REDIS CONNECTED (host=${info.host ?? '?'}, port=${info.port ?? '?'}, tls=${info.tls})`,
+      );
     });
 
     this.client.on('error', (error) => {
@@ -231,6 +227,49 @@ export class RedisService implements OnModuleDestroy {
     };
   }
 
+  async scheduleGroupedTextFlush(contactId: string, delayMs: number): Promise<void> {
+    const normalizedContactId = contactId.trim();
+    if (!normalizedContactId) {
+      return;
+    }
+
+    const now = Date.now();
+    const score = now + Math.max(delayMs, 0);
+
+    await this.client.zadd(
+      RedisService.GROUPED_TEXT_FLUSH_ZSET_KEY,
+      String(score),
+      normalizedContactId,
+    );
+  }
+
+  async popDueGroupedTextFlushContacts(limit = 50): Promise<string[]> {
+    const safeLimit = Math.max(1, Math.min(limit, 200));
+    const now = Date.now();
+
+    const script = `
+      local key = KEYS[1]
+      local now = tonumber(ARGV[1])
+      local limit = tonumber(ARGV[2])
+      local ids = redis.call('ZRANGEBYSCORE', key, '-inf', now, 'LIMIT', 0, limit)
+      if (#ids == 0) then
+        return ids
+      end
+      redis.call('ZREM', key, unpack(ids))
+      return ids
+    `;
+
+    const result = await this.client.eval(
+      script,
+      1,
+      RedisService.GROUPED_TEXT_FLUSH_ZSET_KEY,
+      String(now),
+      String(safeLimit),
+    );
+
+    return Array.isArray(result) ? result.map((value) => String(value)) : [];
+  }
+
   async ping(): Promise<boolean> {
     try {
       return (await this.client.ping()) === 'PONG';
@@ -288,5 +327,28 @@ export class RedisService implements OnModuleDestroy {
     }
 
     return ['true', '1', 'yes', 'on'].includes(value.trim().toLowerCase());
+  }
+
+  private getRedisInfo(url: string): { host?: string; port?: number; tls: boolean } {
+    try {
+      const parsed = new URL(url);
+      return {
+        host: parsed.hostname,
+        port: parsed.port ? Number(parsed.port) : undefined,
+        tls: parsed.protocol === 'rediss:',
+      };
+    } catch {
+      return { tls: false };
+    }
+  }
+
+  private isLocalHost(host?: string): boolean {
+    const normalized = (host || '').trim().toLowerCase();
+    return (
+      normalized === 'localhost' ||
+      normalized === '127.0.0.1' ||
+      normalized === '0.0.0.0' ||
+      normalized === 'redis'
+    );
   }
 }

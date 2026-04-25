@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import { createHash, randomUUID } from 'node:crypto';
 import { ConfigService } from '@nestjs/config';
+import { Interval } from '@nestjs/schedule';
 import { MediaFile, WhatsAppInstance } from '@prisma/client';
 import axios, { AxiosInstance } from 'axios';
 import { BotService } from '../bot/bot.service';
@@ -58,10 +59,6 @@ type ConversationSendState = {
 
 @Injectable()
 export class WhatsAppService implements OnModuleInit {
-  private static readonly AUTO_WEBHOOK_URL =
-    'https://ai-business-platform-phytoemagrybot-backend.onqyr1.easypanel.host/webhook/whatsapp';
-  private static readonly LEGACY_N8N_WEBHOOK_URL =
-    'https://n8n-n8n.gcdndd.easypanel.host/webhook/7e488a8b-fc78-4702-bbf4-8159f7ca094e';
   private static readonly AUTO_WEBHOOK_EVENTS = ['messages.upsert'];
   private static readonly SHORT_AUDIO_MAX_SECONDS = 12;
   private static readonly MAX_AUDIO_DURATION_SECONDS = 60;
@@ -100,7 +97,6 @@ export class WhatsAppService implements OnModuleInit {
   ];
 
   private readonly logger = new Logger(WhatsAppService.name);
-  private readonly groupedTextFlushTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
   constructor(
     private readonly botService: BotService,
@@ -142,6 +138,27 @@ export class WhatsAppService implements OnModuleInit {
     });
 
     return { ok: true, accepted: true, traceId: trace.traceId };
+  }
+
+  @Interval(750)
+  private async processDueGroupedTextFlushes(): Promise<void> {
+    try {
+      const dueContacts = await this.redisService.popDueGroupedTextFlushContacts(50);
+      if (dueContacts.length === 0) {
+        return;
+      }
+
+      for (const contactId of dueContacts) {
+        await this.flushGroupedTextMessage(contactId);
+      }
+    } catch (error) {
+      this.logger.warn(
+        JSON.stringify({
+          event: 'grouped_message_flush_poll_failed',
+          error: error instanceof Error ? error.message : 'Unknown error',
+        }),
+      );
+    }
   }
 
   private async syncConfiguredWebhookOnStartup(): Promise<void> {
@@ -363,9 +380,7 @@ export class WhatsAppService implements OnModuleInit {
     const instanceName = this.normalizeInstanceName(name);
     await this.ensureWebhookInstanceExists(instanceName);
 
-    const resolvedWebhook =
-      webhook?.trim() ||
-      WhatsAppService.AUTO_WEBHOOK_URL.trim();
+    const resolvedWebhook = webhook?.trim() || this.getManagedWebhookUrl();
     const requestEvents = (events?.length ? events : WhatsAppService.AUTO_WEBHOOK_EVENTS)
       .map((event) => event.trim())
       .filter((event) => event.length > 0);
@@ -772,26 +787,15 @@ export class WhatsAppService implements OnModuleInit {
   }
 
   private scheduleGroupedTextFlush(contactId: string, windowMs: number): void {
-    const existingTimer = this.groupedTextFlushTimers.get(contactId);
-    if (existingTimer) {
-      clearTimeout(existingTimer);
-    }
-
-    const timer = setTimeout(() => {
-      this.groupedTextFlushTimers.delete(contactId);
-      void this.flushGroupedTextMessage(contactId).catch((error: unknown) => {
-        this.logger.error(
-          JSON.stringify({
-            event: 'grouped_message_flush_failed',
-            contactId,
-            error: error instanceof Error ? error.message : 'Unknown error',
-          }),
-          error instanceof Error ? error.stack : undefined,
-        );
-      });
-    }, Math.max(windowMs, 0));
-
-    this.groupedTextFlushTimers.set(contactId, timer);
+    void this.redisService.scheduleGroupedTextFlush(contactId, windowMs).catch((error: unknown) => {
+      this.logger.warn(
+        JSON.stringify({
+          event: 'grouped_message_flush_schedule_failed',
+          contactId,
+          error: error instanceof Error ? error.message : 'Unknown error',
+        }),
+      );
+    });
   }
 
   private async processAndDeliverMessage(
@@ -3765,6 +3769,9 @@ export class WhatsAppService implements OnModuleInit {
   ): string {
     const normalized = value?.trim();
     if (normalized) {
+      if (envName.toUpperCase().endsWith('_URL')) {
+        this.ensureCloudUrl(normalized, envName);
+      }
       return normalized;
     }
 
@@ -4091,6 +4098,10 @@ export class WhatsAppService implements OnModuleInit {
       );
     }
 
+    if (name === 'EVOLUTION_URL') {
+      this.ensureCloudUrl(value, name);
+    }
+
     return value;
   }
 
@@ -4149,11 +4160,39 @@ export class WhatsAppService implements OnModuleInit {
 
   private resolveManagedWebhookUrl(webhook?: string | null): string {
     const normalized = webhook?.trim() || '';
-    if (!normalized || normalized === WhatsAppService.LEGACY_N8N_WEBHOOK_URL) {
-      return WhatsAppService.AUTO_WEBHOOK_URL;
+    return normalized || this.getManagedWebhookUrl();
+  }
+
+  private getManagedWebhookUrl(): string {
+    const value = this.configService.get<string>('WEBHOOK_URL')?.trim() ?? '';
+    if (!value) {
+      throw new HttpException(
+        'Missing required environment variable WEBHOOK_URL for managed webhook',
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
     }
 
-    return normalized;
+    this.ensureCloudUrl(value, 'WEBHOOK_URL');
+    return value;
+  }
+
+  private ensureCloudUrl(value: string, label: string): void {
+    try {
+      const url = new URL(value);
+      const host = url.hostname.toLowerCase();
+      if (!url.protocol.startsWith('http')) {
+        throw new Error('Invalid protocol');
+      }
+      const isLocal = host === 'localhost' || host === '127.0.0.1' || host === '0.0.0.0';
+      if (isLocal) {
+        throw new Error('Localhost is not allowed');
+      }
+    } catch {
+      throw new HttpException(
+        `${label} must be a valid cloud URL (no localhost)`,
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
   }
 
   private async clearConfiguredInstanceIfMatches(instanceName: string): Promise<void> {

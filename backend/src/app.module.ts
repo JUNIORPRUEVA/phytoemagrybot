@@ -19,7 +19,10 @@ import { WhatsAppModule } from './whatsapp/whatsapp.module';
 
 @Module({
   imports: [
-    NestConfigModule.forRoot({ isGlobal: true }),
+    NestConfigModule.forRoot({
+      isGlobal: true,
+      ignoreEnvFile: process.env.NODE_ENV === 'production',
+    }),
     ScheduleModule.forRoot(),
     PrismaModule,
     RedisModule,

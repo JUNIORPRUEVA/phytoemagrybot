@@ -57,18 +57,44 @@ export class StorageService {
 
   private getClient(): S3Client {
     if (!this.client) {
+      const endpoint = this.getRequiredConfig('STORAGE_ENDPOINT');
+      this.enforceCloudEndpoint(endpoint);
+
       this.client = new S3Client({
         region: this.configService.get<string>('STORAGE_REGION')?.trim() || 'auto',
-        endpoint: this.getRequiredConfig('STORAGE_ENDPOINT'),
+        endpoint,
         forcePathStyle: true,
         credentials: {
           accessKeyId: this.getRequiredConfig('STORAGE_ACCESS_KEY'),
           secretAccessKey: this.getRequiredConfig('STORAGE_SECRET_KEY'),
         },
       });
+
+      const endpointHost = this.safeHost(endpoint);
+      this.logger.log(
+        `CLOUD STORAGE ACTIVE (endpointHost=${endpointHost ?? '?'}, bucket=${this.getBucketName()})`,
+      );
     }
 
     return this.client;
+  }
+
+  private enforceCloudEndpoint(endpoint: string): void {
+    const host = (this.safeHost(endpoint) || '').toLowerCase();
+    const isLocal = host === 'localhost' || host === '127.0.0.1' || host === '0.0.0.0';
+    if (isLocal) {
+      throw new InternalServerErrorException(
+        `Refusing to start with a local STORAGE_ENDPOINT (host=${host || '?'})`,
+      );
+    }
+  }
+
+  private safeHost(value: string): string | undefined {
+    try {
+      return new URL(value).hostname;
+    } catch {
+      return undefined;
+    }
   }
 
   private buildObjectKey(originalName: string): string {

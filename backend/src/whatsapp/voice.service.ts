@@ -1,10 +1,7 @@
-import { randomUUID } from 'node:crypto';
-import { createReadStream, promises as fs } from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
 import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
 import axios from 'axios';
 import OpenAI from 'openai';
+import { toFile } from 'openai/uploads';
 
 export interface GeneratedVoiceAudio {
   buffer: Buffer;
@@ -33,14 +30,11 @@ export class VoiceService {
       throw new HttpException('OpenAI API key is required', HttpStatus.INTERNAL_SERVER_ERROR);
     }
 
-    const tempPath = path.join(os.tmpdir(), `${randomUUID()}-${fileName}`);
-
-    await fs.writeFile(tempPath, audio);
-
     try {
       const openai = new OpenAI({ apiKey: openAiKey });
+      const file = await toFile(audio, fileName, { type: mimeType });
       const transcription = await openai.audio.transcriptions.create({
-        file: createReadStream(tempPath),
+        file,
         model: 'whisper-1',
         language: 'es',
         prompt: 'Transcribe en espanol latino, sin muletillas ni ruido.',
@@ -58,8 +52,6 @@ export class VoiceService {
       }
 
       throw new HttpException('Audio transcription failed', HttpStatus.BAD_GATEWAY);
-    } finally {
-      await fs.unlink(tempPath).catch(() => undefined);
     }
   }
 

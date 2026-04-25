@@ -5,46 +5,15 @@ services:
       context: ./backend
       dockerfile: dockerfile
     container_name: phytoemagrybot-backend
-    env_file:
-      - ./backend/.env
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_started
     environment:
+      NODE_ENV: production
       PORT: 3000
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/phytoemagry?schema=public
-      REDIS_HOST: redis
-      REDIS_PORT: 6379
+      # IMPORTANT: This must point to your CLOUD PostgreSQL.
+      # Provide it via host env vars or `docker compose --env-file ...`.
+      DATABASE_URL: ${DATABASE_URL?DATABASE_URL is required (cloud postgres url)}
+      # IMPORTANT: This must point to your CLOUD Redis.
+      # Example: rediss://default:password@your-redis-host:6380
+      REDIS_URL: ${REDIS_URL?REDIS_URL is required (cloud redis url)}
     ports:
       - '3000:3000'
     restart: unless-stopped
-
-  redis:
-    image: redis:7-alpine
-    container_name: phytoemagrybot-redis
-    ports:
-      - '6379:6379'
-    restart: unless-stopped
-
-  postgres:
-    image: postgres:16-alpine
-    container_name: phytoemagrybot-postgres
-    environment:
-      POSTGRES_DB: phytoemagry
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-    ports:
-      - '5432:5432'
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U postgres -d phytoemagry']
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    restart: unless-stopped
-
-volumes:
-  postgres_data:

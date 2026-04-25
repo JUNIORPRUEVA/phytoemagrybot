@@ -11,10 +11,6 @@ export class ClientConfigService {
   private static readonly KNOWLEDGE_CONTEXT_CACHE_KEY = 'bot:knowledge-context:v1';
 
   private static readonly CONFIG_ID = 1;
-  private static readonly DEFAULT_WHATSAPP_WEBHOOK_URL =
-    'https://ai-business-platform-phytoemagrybot-backend.onqyr1.easypanel.host/webhook/whatsapp';
-  private static readonly LEGACY_N8N_WEBHOOK_URL =
-    'https://n8n-n8n.gcdndd.easypanel.host/webhook/7e488a8b-fc78-4702-bbf4-8159f7ca094e';
   private static readonly DEFAULT_PROMPT =
     'Eres un asistente de ventas por WhatsApp. Hablas como una persona real dominicana, respondes corto y siempre guias al cliente hacia la compra de PHYTOEMAGRY.';
   private static readonly DEFAULT_AI_MODEL = 'gpt-4o-mini';
@@ -411,14 +407,6 @@ export class ClientConfigService {
 
   private normalizeWebhookUrl(value: string): string {
     const normalized = value.trim();
-    if (!normalized) {
-      return normalized;
-    }
-
-    if (normalized === ClientConfigService.LEGACY_N8N_WEBHOOK_URL) {
-      return ClientConfigService.DEFAULT_WHATSAPP_WEBHOOK_URL;
-    }
-
     return normalized;
   }
 
