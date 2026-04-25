@@ -1,5 +1,4 @@
-import { BadRequestException, Injectable, Logger } from '@nestjs/common';
-import { Cron, CronExpression } from '@nestjs/schedule';
+import { BadRequestException, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ClientMemory, ConversationSummary } from '@prisma/client';
 import OpenAI from 'openai';
 import { ClientConfigService } from '../config/config.service';
@@ -20,7 +19,7 @@ import {
 } from './memory.types';
 
 @Injectable()
-export class MemoryService {
+export class MemoryService implements OnModuleInit {
   private readonly logger = new Logger(MemoryService.name);
   private static readonly SHORT_MEMORY_LIMIT = 20;
   private static readonly SHORT_MEMORY_TTL_SECONDS = 60 * 60 * 24;
@@ -28,6 +27,52 @@ export class MemoryService {
   private static readonly LONG_MEMORY_TTL_SECONDS = 60 * 60 * 24 * 15;
   private static readonly SUMMARY_REFRESH_INTERVAL = 5;
   private static readonly MAX_SUMMARY_CHARS = 2048;
+  private cleanupInterval: ReturnType<typeof setInterval> | null = null;
+  private cleanupRunning = false;
+  private lastCleanupDay: string | null = null;
+
+  onModuleInit(): void {
+    if (this.cleanupInterval) {
+      return;
+    }
+
+    const tick = () => {
+      if (this.cleanupRunning) {
+        return;
+      }
+
+      const now = new Date();
+      const todayKey = now.toISOString().slice(0, 10);
+
+      if (now.getHours() !== 3) {
+        return;
+      }
+
+      if (this.lastCleanupDay === todayKey) {
+        return;
+      }
+
+      this.cleanupRunning = true;
+      void this.cleanupExpiredMemory()
+        .catch((error: unknown) => {
+          this.logger.warn(
+            JSON.stringify({
+              event: 'memory_cleanup_failed',
+              error: error instanceof Error ? error.message : 'Unknown error',
+            }),
+          );
+        })
+        .finally(() => {
+          this.lastCleanupDay = todayKey;
+          this.cleanupRunning = false;
+        });
+    };
+
+    this.cleanupInterval = setInterval(tick, 60 * 60 * 1000);
+    this.cleanupInterval.unref?.();
+
+    tick();
+  }
 
   constructor(
     private readonly prisma: PrismaService,
@@ -460,7 +505,6 @@ export class MemoryService {
     return this.toSummarySnapshot(normalizedContactId, summary);
   }
 
-  @Cron(CronExpression.EVERY_DAY_AT_3AM)
   async cleanupExpiredMemory(): Promise<void> {
     const now = new Date();
     const threshold = new Date(

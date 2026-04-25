@@ -1,5 +1,4 @@
-import { BadRequestException, Injectable, Logger } from '@nestjs/common';
-import { Cron, CronExpression } from '@nestjs/schedule';
+import { BadRequestException, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import axios from 'axios';
 import { ConversationFollowup } from '@prisma/client';
 import { AiService } from '../ai/ai.service';
@@ -28,9 +27,11 @@ type FollowupConfig = {
 };
 
 @Injectable()
-export class FollowupService {
+export class FollowupService implements OnModuleInit {
   private static readonly MAX_FOLLOWUP_REGENERATION_ATTEMPTS = 2;
   private readonly logger = new Logger(FollowupService.name);
+  private followupInterval: ReturnType<typeof setInterval> | null = null;
+  private followupRunning = false;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -41,6 +42,34 @@ export class FollowupService {
     private readonly memoryService: MemoryService,
     private readonly redisService: RedisService,
   ) {}
+
+  onModuleInit(): void {
+    if (this.followupInterval) {
+      return;
+    }
+
+    this.followupInterval = setInterval(() => {
+      if (this.followupRunning) {
+        return;
+      }
+
+      this.followupRunning = true;
+      void this.processDueFollowups()
+        .catch((error: unknown) => {
+          this.logger.warn(
+            JSON.stringify({
+              event: 'followup_poll_failed',
+              error: error instanceof Error ? error.message : 'Unknown error',
+            }),
+          );
+        })
+        .finally(() => {
+          this.followupRunning = false;
+        });
+    }, 60_000);
+
+    this.followupInterval.unref?.();
+  }
 
   async registerBotReply(params: {
     contactId: string;
@@ -199,7 +228,6 @@ export class FollowupService {
     };
   }
 
-  @Cron(CronExpression.EVERY_MINUTE)
   async processDueFollowups(): Promise<void> {
     const config = await this.getFollowupConfig();
     if (!config.enabled) {

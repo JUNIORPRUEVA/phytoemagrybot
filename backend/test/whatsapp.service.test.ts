@@ -9,10 +9,20 @@ function createService() {
     registerBotReply: async () => undefined,
   };
 
+  const configService = {
+    get: (key: string) => {
+      if (key === 'WEBHOOK_URL') {
+        return 'https://ai-business-platform-phytoemagrybot-backend.onqyr1.easypanel.host/webhook/whatsapp';
+      }
+
+      return undefined;
+    },
+  };
+
   return new WhatsAppService(
     {} as any,
     {} as any,
-    {} as any,
+    configService as any,
     followupService as any,
     {} as any,
     {} as any,
@@ -992,7 +1002,7 @@ test('enrichIncomingRecipientFromEvolution upgrades lid recipients with remoteJi
   assert.equal(result.outboundAddress, '18095551234@s.whatsapp.net');
 });
 
-test('processAndDeliverMessage skips replies when no valid jid is available', async () => {
+test('processAndDeliverMessage falls back to contactId when outbound jid is a lid', async () => {
   const { service, sentTexts } = createAudioFlowService();
 
   await service.processAndDeliverMessage(
@@ -1003,7 +1013,8 @@ test('processAndDeliverMessage skips replies when no valid jid is available', as
     { outboundAddress: '69132011749577@lid' },
   );
 
-  assert.equal(sentTexts.length, 0);
+  assert.equal(sentTexts.length, 1);
+  assert.equal(sentTexts[0]?.to, '18095551234@s.whatsapp.net');
 });
 
 test('enrichWebhookPayloadFromEvolution merges missing lid fields into the inbound webhook payload', async () => {
@@ -2870,20 +2881,23 @@ test('processAndDeliverMessage logs ordered delivery stages before sending to Ev
   ]);
 });
 
-test('scheduleGroupedTextFlush resets the timer for the latest text burst', async () => {
+test('scheduleGroupedTextFlush delegates scheduling to Redis', async () => {
   const service = createService();
-  const flushedContacts: string[] = [];
+  const calls: Array<{ contactId: string; windowMs: number }> = [];
 
-  service.flushGroupedTextMessage = async (contactId: string) => {
-    flushedContacts.push(contactId);
+  service.redisService = {
+    scheduleGroupedTextFlush: async (contactId: string, windowMs: number) => {
+      calls.push({ contactId, windowMs });
+    },
   };
 
   service.scheduleGroupedTextFlush('18095551234', 25);
   service.scheduleGroupedTextFlush('18095551234', 25);
 
-  await new Promise((resolve) => setTimeout(resolve, 80));
-
-  assert.deepEqual(flushedContacts, ['18095551234']);
+  assert.deepEqual(calls, [
+    { contactId: '18095551234', windowMs: 25 },
+    { contactId: '18095551234', windowMs: 25 },
+  ]);
 });
 
 test('processIncomingAudioMessage only remembers voice preference after success', async () => {

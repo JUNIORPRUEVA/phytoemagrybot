@@ -8,7 +8,6 @@ import {
 } from '@nestjs/common';
 import { createHash, randomUUID } from 'node:crypto';
 import { ConfigService } from '@nestjs/config';
-import { Interval } from '@nestjs/schedule';
 import { MediaFile, WhatsAppInstance } from '@prisma/client';
 import axios, { AxiosInstance } from 'axios';
 import { BotService } from '../bot/bot.service';
@@ -97,6 +96,8 @@ export class WhatsAppService implements OnModuleInit {
   ];
 
   private readonly logger = new Logger(WhatsAppService.name);
+  private groupedTextFlushInterval: ReturnType<typeof setInterval> | null = null;
+  private groupedTextFlushRunning = false;
 
   constructor(
     private readonly botService: BotService,
@@ -117,6 +118,30 @@ export class WhatsAppService implements OnModuleInit {
     );
 
     await this.syncConfiguredWebhookOnStartup();
+    this.startGroupedTextFlushPoller();
+  }
+
+  private startGroupedTextFlushPoller(): void {
+    if (this.groupedTextFlushInterval) {
+      return;
+    }
+
+    if (typeof (this.redisService as any)?.popDueGroupedTextFlushContacts !== 'function') {
+      return;
+    }
+
+    this.groupedTextFlushInterval = setInterval(() => {
+      if (this.groupedTextFlushRunning) {
+        return;
+      }
+
+      this.groupedTextFlushRunning = true;
+      void this.processDueGroupedTextFlushes().finally(() => {
+        this.groupedTextFlushRunning = false;
+      });
+    }, 750);
+
+    this.groupedTextFlushInterval.unref?.();
   }
 
   async acceptWebhook(
@@ -140,7 +165,6 @@ export class WhatsAppService implements OnModuleInit {
     return { ok: true, accepted: true, traceId: trace.traceId };
   }
 
-  @Interval(750)
   private async processDueGroupedTextFlushes(): Promise<void> {
     try {
       const dueContacts = await this.redisService.popDueGroupedTextFlushContacts(50);
@@ -813,27 +837,46 @@ export class WhatsAppService implements OnModuleInit {
       resolved.whatsapp.fallbackMessage ??
       'Ahora mismo estoy cargando la información, dame un momentico 🙏';
     const outboundAddress = options?.outboundAddress?.trim() || '';
+    const normalizedContactId = this.normalizeNumber(contactId);
+    const effectiveOutboundAddress =
+      !outboundAddress.includes('@s.whatsapp.net') && normalizedContactId
+        ? `${normalizedContactId}@s.whatsapp.net`
+        : outboundAddress;
+
+    if (effectiveOutboundAddress !== outboundAddress) {
+      this.logger.warn(
+        JSON.stringify({
+          event: 'whatsapp_reply_outbound_jid_fallback',
+          traceId: options?.diagnostic?.traceId ?? null,
+          contactId,
+          outboundAddress: outboundAddress || null,
+          effectiveOutboundAddress,
+        }),
+      );
+    }
+
     const diagnostic = this.mergeDeliveryDiagnosticContext(options?.diagnostic, {
       contactId,
       messageType,
-      recipientAddress: outboundAddress || options?.diagnostic?.recipientAddress || null,
+      recipientAddress:
+        effectiveOutboundAddress || options?.diagnostic?.recipientAddress || null,
       recipientNumber:
-        this.normalizeNumber(outboundAddress || '') ||
+        this.normalizeNumber(effectiveOutboundAddress || '') ||
         options?.diagnostic?.recipientNumber ||
         null,
     });
 
-    if (!outboundAddress.includes('@s.whatsapp.net')) {
+    if (!effectiveOutboundAddress.includes('@s.whatsapp.net')) {
       this.logDeliveryDiagnostic('delivery_validation_failed', diagnostic, {
-        outboundAddress: outboundAddress || null,
-        reasons: this.buildDeliveryDiagnosticReasons(diagnostic, outboundAddress),
+        outboundAddress: effectiveOutboundAddress || null,
+        reasons: this.buildDeliveryDiagnosticReasons(diagnostic, effectiveOutboundAddress),
       });
       this.logger.warn(
         JSON.stringify({
           event: 'whatsapp_reply_skipped_invalid_jid',
           traceId: diagnostic.traceId ?? null,
           contactId,
-          outboundAddress: outboundAddress || null,
+          outboundAddress: effectiveOutboundAddress || null,
         }),
       );
       console.log('❌ No hay JID válido, se cancela respuesta');
@@ -859,13 +902,13 @@ export class WhatsAppService implements OnModuleInit {
         error instanceof Error ? error.stack : undefined,
       );
 
-      await this.sendTextReliably(resolved, outboundAddress, fallbackMessage, diagnostic, {
+      await this.sendTextReliably(resolved, effectiveOutboundAddress, fallbackMessage, diagnostic, {
         contactId,
         reason: 'ai_processing_fallback',
       });
       await this.followupService.registerBotReply({
         contactId,
-        outboundAddress,
+        outboundAddress: effectiveOutboundAddress,
         reply: fallbackMessage,
       });
       return;
@@ -923,7 +966,7 @@ export class WhatsAppService implements OnModuleInit {
         sendAs,
       });
       try {
-        await this.sendTextReliably(resolved, outboundAddress, replyToSend, diagnostic, {
+        await this.sendTextReliably(resolved, effectiveOutboundAddress, replyToSend, diagnostic, {
           contactId,
           reason: 'primary_text_reply',
           fallbackText:
@@ -950,7 +993,7 @@ export class WhatsAppService implements OnModuleInit {
       try {
         await this.deliverMatchedMedia(
           resolved,
-          outboundAddress,
+          effectiveOutboundAddress,
           deliverableMediaFiles,
           replyToSend,
           diagnostic,
@@ -994,7 +1037,7 @@ export class WhatsAppService implements OnModuleInit {
         sendAs,
       });
       try {
-        await this.sendVoiceReply(resolved, outboundAddress, replyToSend, diagnostic, {
+        await this.sendVoiceReply(resolved, effectiveOutboundAddress, replyToSend, diagnostic, {
           contactId,
           fallbackText:
             replyToSend.trim() === fallbackMessage.trim() ? undefined : fallbackMessage,
@@ -1027,7 +1070,7 @@ export class WhatsAppService implements OnModuleInit {
     );
     await this.followupService.registerBotReply({
       contactId,
-      outboundAddress,
+      outboundAddress: effectiveOutboundAddress,
       reply: replyToSend,
     });
     console.log('ENVIADA:', {
@@ -3638,6 +3681,12 @@ export class WhatsAppService implements OnModuleInit {
       this.asString(messageKey.sender),
       this.asString(messageData.sender),
       this.asString(payload.sender),
+      this.asString(messageKey.previousRemoteJid),
+      this.asString(messageData.previousRemoteJid),
+      this.asString(payload.previousRemoteJid),
+      this.asString(messageKey.previousRemoteJidAlt),
+      this.asString(messageData.previousRemoteJidAlt),
+      this.asString(payload.previousRemoteJidAlt),
       this.asString(messageKey.remoteJidAlt),
       this.asString(messageData.remoteJidAlt),
       this.asString(payload.remoteJidAlt),
@@ -4160,7 +4209,21 @@ export class WhatsAppService implements OnModuleInit {
 
   private resolveManagedWebhookUrl(webhook?: string | null): string {
     const normalized = webhook?.trim() || '';
-    return normalized || this.getManagedWebhookUrl();
+    if (!normalized) {
+      return this.getManagedWebhookUrl();
+    }
+
+    try {
+      const url = new URL(normalized);
+      const host = url.hostname.toLowerCase();
+      if (host === 'n8n-n8n.gcdndd.easypanel.host') {
+        return this.getManagedWebhookUrl();
+      }
+    } catch {
+      // If it's not a valid URL, keep the raw value and let the caller decide.
+    }
+
+    return normalized;
   }
 
   private getManagedWebhookUrl(): string {

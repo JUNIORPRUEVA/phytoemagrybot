@@ -1,6 +1,5 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule as NestConfigModule } from '@nestjs/config';
-import { ScheduleModule } from '@nestjs/schedule';
 import { AiModule } from './ai/ai.module';
 import { AuthModule } from './auth/auth.module';
 import { BotModule } from './bot/bot.module';
@@ -23,7 +22,6 @@ import { WhatsAppModule } from './whatsapp/whatsapp.module';
       isGlobal: true,
       ignoreEnvFile: process.env.NODE_ENV === 'production',
     }),
-    ScheduleModule.forRoot(),
     PrismaModule,
     RedisModule,
     AuthModule,
