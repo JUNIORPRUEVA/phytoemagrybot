@@ -1960,6 +1960,45 @@ test('processIncomingAudioMessage sends text when bot replyType is text', async 
   assert.equal(sentAudios.length, 0);
 });
 
+test('processIncomingAudioMessage forces audio after two consecutive incoming audios', async () => {
+  const { service, sentTexts, sentAudios } = createAudioFlowService();
+
+  await service.processIncomingAudioMessage(createResolvedConfig(), {
+    number: '18095551234',
+    outboundAddress: '18095551234@s.whatsapp.net',
+    message: '[audio]',
+    type: 'audio',
+    messageId: 'audio-1',
+    audio: {
+      mimetype: 'audio/ogg; codecs=opus',
+      seconds: 5,
+      ptt: true,
+    },
+    rawPayload: {},
+  });
+
+  assert.equal(sentTexts.length, 1);
+  assert.equal(sentAudios.length, 0);
+
+  await service.processIncomingAudioMessage(createResolvedConfig(), {
+    number: '18095551234',
+    outboundAddress: '18095551234@s.whatsapp.net',
+    message: '[audio]',
+    type: 'audio',
+    messageId: 'audio-2',
+    audio: {
+      mimetype: 'audio/ogg; codecs=opus',
+      seconds: 6,
+      ptt: true,
+    },
+    rawPayload: {},
+  });
+
+  assert.equal(sentTexts.length, 1);
+  assert.equal(sentAudios.length, 1);
+  assert.equal(sentAudios[0]?.to, '18095551234@s.whatsapp.net');
+});
+
 test('processIncomingAudioMessage answers long audios with audio replies', async () => {
   const { service, sentTexts, sentAudios, botService } = createAudioFlowService();
 
@@ -2013,8 +2052,75 @@ test('processAndDeliverMessage keeps text delivery even when preferAudioReply is
   );
 
   assert.equal(sentTexts.length, 1);
-  assert.equal(sentTexts[0]?.text, 'Te ayudo ahora mismo');
+  assert.match(sentTexts[0]?.text ?? '', /Te ayudo ahora mismo/);
   assert.equal(sentAudios.length, 0);
+});
+
+test('processAndDeliverMessage forces text when emotion is frio even if bot replyType is audio', async () => {
+  const { service, sentTexts, sentAudios, botService } = createAudioFlowService();
+
+  botService.processIncomingMessage = async () => ({
+    reply: 'Te respondo por audio.',
+    replyType: 'audio',
+    mediaFiles: [],
+    intent: 'otro',
+    decisionIntent: 'curioso',
+    stage: 'curioso',
+    action: 'guiar',
+    purchaseIntentScore: 0,
+    hotLead: false,
+    cached: false,
+    usedGallery: false,
+    usedMemory: false,
+    source: 'ai',
+  });
+
+  await service.processAndDeliverMessage(
+    createResolvedConfig(),
+    '18095551234',
+    'ok',
+    'text',
+    {
+      outboundAddress: '18095551234@s.whatsapp.net',
+    },
+  );
+
+  assert.equal(sentTexts.length, 1);
+  assert.equal(sentAudios.length, 0);
+  assert.match(sentTexts[0]?.text ?? '', /Tranquilo, dime qué te gustaría saber\./);
+});
+
+test('processAndDeliverMessage recommends audio when emotion is dudoso', async () => {
+  const { service, sentTexts, sentAudios, botService } = createAudioFlowService();
+
+  botService.processIncomingMessage = async () => ({
+    reply: 'Sí funciona, y te explico por qué.',
+    replyType: 'text',
+    mediaFiles: [],
+    intent: 'otro',
+    decisionIntent: 'curioso',
+    stage: 'curioso',
+    action: 'guiar',
+    purchaseIntentScore: 0,
+    hotLead: false,
+    cached: false,
+    usedGallery: false,
+    usedMemory: false,
+    source: 'ai',
+  });
+
+  await service.processAndDeliverMessage(
+    createResolvedConfig(),
+    '18095551234',
+    'de verdad sirve?',
+    'text',
+    {
+      outboundAddress: '18095551234@s.whatsapp.net',
+    },
+  );
+
+  assert.equal(sentAudios.length, 1);
+  assert.equal(sentTexts.length, 0);
 });
 
 test('processAndDeliverMessage promotes a detailed text reply to audio when the contact prefers voice', async () => {
@@ -2041,6 +2147,23 @@ test('processAndDeliverMessage promotes a detailed text reply to audio when the 
     createResolvedConfig(),
     '18095551234',
     'quiero saber bien como funciona',
+    'text',
+    {
+      outboundAddress: '18095551234@s.whatsapp.net',
+    },
+  );
+
+  assert.equal(sentAudios.length, 1);
+  assert.equal(sentTexts.length, 0);
+});
+
+test('processAndDeliverMessage sends audio when user asks for an explanation (no prior preference)', async () => {
+  const { service, sentTexts, sentAudios } = createAudioFlowService();
+
+  await service.processAndDeliverMessage(
+    createResolvedConfig(),
+    '18095551234',
+    'explicame bien como funciona',
     'text',
     {
       outboundAddress: '18095551234@s.whatsapp.net',
@@ -2357,7 +2480,7 @@ test('processAndDeliverMessage falls back to text when media delivery fails', as
   );
 
   assert.equal(sentTexts.length, 1);
-  assert.equal(sentTexts[0]?.text, 'Te explico por aqui mientras te consigo las imagenes.');
+  assert.match(sentTexts[0]?.text ?? '', /Te explico por aqui mientras te consigo las imagenes\./);
   assert.equal(sentAudios.length, 0);
 });
 
@@ -2408,7 +2531,8 @@ test('processAndDeliverMessage blocks consecutive audio replies and sends text i
 
   assert.equal(sentAudios.length, 1);
   assert.equal(sentTexts.length, 1);
-  assert.equal(sentTexts[0]?.text, 'Claro, te explico bien como funciona. Si quieres, te ayudo.');
+  assert.match(sentTexts[0]?.text ?? '', /Claro, te explico bien como funciona\./);
+  assert.match(sentTexts[0]?.text ?? '', /Si quieres, te ayudo\./);
 });
 
 test('prepareReplyForVoice removes emojis and leaves spoken punctuation', () => {
@@ -2457,7 +2581,7 @@ test('processAndDeliverMessage rewrites the text before generating voice', async
     },
   );
 
-  assert.equal(preparedText, 'Te ayudo ahora mismo.');
+  assert.match(preparedText, /Te ayudo ahora mismo\./);
   assert.equal(sentAudios.length, 1);
 });
 
@@ -2556,7 +2680,7 @@ test('processAndDeliverMessage falls back to text when audio generation exceeds 
 
   assert.equal(sentAudios.length, 0);
   assert.equal(sentTexts.length, 1);
-  assert.equal(sentTexts[0]?.text, 'Claro, te explico bien como funciona.');
+  assert.match(sentTexts[0]?.text ?? '', /Claro, te explico bien como funciona\./);
 });
 
 test('processAndDeliverMessage retries text delivery after a transient send failure', async () => {
@@ -2585,7 +2709,7 @@ test('processAndDeliverMessage retries text delivery after a transient send fail
 
   assert.equal(attempts, 2);
   assert.equal(sentTexts.length, 1);
-  assert.equal(sentTexts[0]?.text, 'Te ayudo ahora mismo');
+  assert.match(sentTexts[0]?.text ?? '', /Te ayudo ahora mismo/);
 });
 
 test('processIncomingAudioMessage rejects audios longer than 60 seconds', async () => {

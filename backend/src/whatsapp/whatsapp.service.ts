@@ -65,6 +65,11 @@ export class WhatsAppService implements OnModuleInit {
   private static readonly AUDIO_REPLY_MAX_WORDS = 90;
   private static readonly AUDIO_TRANSCRIPT_CACHE_TTL_SECONDS = 60 * 60 * 6;
   private static readonly VOICE_PREFERENCE_TTL_SECONDS = 60 * 60 * 24;
+  private static readonly INCOMING_AUDIO_STREAK_TTL_SECONDS = 60 * 60 * 4;
+  private static readonly INCOMING_AUDIO_STREAK_MAX = 8;
+  private static readonly EMOTION_CONTEXT_TTL_SECONDS = 60 * 60 * 4;
+  private static readonly INCOMING_COLD_STREAK_TTL_SECONDS = 60 * 60 * 4;
+  private static readonly INCOMING_COLD_STREAK_MAX = 8;
   private static readonly CONVERSATION_SEND_STATE_TTL_SECONDS = 60 * 60 * 24;
   private static readonly MAX_SENT_MESSAGES_MEMORY = 20;
   private static readonly MAX_SENT_VIDEOS_MEMORY = 20;
@@ -884,6 +889,8 @@ export class WhatsAppService implements OnModuleInit {
     }
 
     this.logDeliveryStage('ai_processing_started', diagnostic);
+    const incomingAudioStreak = await this.updateIncomingAudioStreak(contactId, messageType);
+    const incomingColdStreak = await this.updateIncomingColdStreak(contactId, message);
     let botReply: Awaited<ReturnType<BotService['processIncomingMessage']>>;
     try {
       botReply = await this.botService.processIncomingMessage(contactId, message, {
@@ -941,22 +948,41 @@ export class WhatsAppService implements OnModuleInit {
     );
 
     const explicitVoiceRequest = this.detectExplicitVoicePreference(message);
+    const hasVoicePreference =
+      options?.preferAudioReply === true || (await this.hasVoiceReplyPreference(contactId));
+    const wasLastBotAudio = await this.wasLastBotReplyAudio(contactId);
 
-    const sendAs = await this.shouldSendAudioReply(
-      resolved,
+    const emotion = this.detectEmotion(message, {
+      inputType: messageType,
+      incomingColdStreak,
+      botReply,
+    });
+    await this.rememberLastDetectedEmotion(contactId, emotion);
+    const tonedReplyToSend = this.applyEmotionPersonalityToReply(emotion, replyToSend);
+
+    const sendAs = this.determineSendMode({
       contactId,
-      botReply.replyType,
-      {
-        voicePreferred:
-          options?.preferAudioReply === true ||
-          explicitVoiceRequest ||
-          (await this.hasVoiceReplyPreference(contactId)),
-        incomingMessage: message,
-        reply: replyToSend,
-      },
-    )
-      ? 'audio'
-      : 'text';
+      emotion,
+      inputType: messageType,
+      incomingMessage: message,
+      incomingAudioStreak,
+      botReply,
+      reply: tonedReplyToSend,
+      explicitVoiceRequest,
+      hasVoicePreference,
+      wasLastBotAudio,
+      allowAudioReplies: resolved.config.botSettings?.allowAudioReplies !== false,
+    });
+
+    this.logger.log(
+      JSON.stringify({
+        event: 'EMOTION_DETECTED',
+        contactId,
+        emotion,
+        message: this.truncateForLogs(message, 160),
+        decision: sendAs,
+      }),
+    );
     let usedGallery = false;
     let mediaDelivered = false;
 
@@ -965,13 +991,13 @@ export class WhatsAppService implements OnModuleInit {
       console.log({
         replyType: botReply.replyType,
         sendAs,
-        message: replyToSend,
+        message: tonedReplyToSend,
       });
       this.logDeliveryStage('evolution_send_attempt', diagnostic, {
         sendAs,
       });
       try {
-        await this.sendTextReliably(resolved, effectiveOutboundAddress, replyToSend, diagnostic, {
+        await this.sendTextReliably(resolved, effectiveOutboundAddress, tonedReplyToSend, diagnostic, {
           contactId,
           reason: 'primary_text_reply',
           fallbackText:
@@ -987,7 +1013,7 @@ export class WhatsAppService implements OnModuleInit {
         sendAs,
       });
       await this.rememberLastBotReplyModality(contactId, 'text');
-      await this.rememberSentMessage(contactId, conversationSendState.topic, replyToSend);
+      await this.rememberSentMessage(contactId, conversationSendState.topic, tonedReplyToSend);
     }
 
     if (deliverableMediaFiles.length > 0) {
@@ -1000,7 +1026,7 @@ export class WhatsAppService implements OnModuleInit {
           resolved,
           effectiveOutboundAddress,
           deliverableMediaFiles,
-          replyToSend,
+          tonedReplyToSend,
           diagnostic,
           {
             textAlreadySent: sendAs === 'text',
@@ -1036,13 +1062,13 @@ export class WhatsAppService implements OnModuleInit {
       console.log({
         replyType: botReply.replyType,
         sendAs,
-        message: replyToSend,
+        message: tonedReplyToSend,
       });
       this.logDeliveryStage('evolution_send_attempt', diagnostic, {
         sendAs,
       });
       try {
-        await this.sendVoiceReply(resolved, effectiveOutboundAddress, replyToSend, diagnostic, {
+        await this.sendVoiceReply(resolved, effectiveOutboundAddress, tonedReplyToSend, diagnostic, {
           contactId,
           fallbackText:
             replyToSend.trim() === fallbackMessage.trim() ? undefined : fallbackMessage,
@@ -1060,7 +1086,7 @@ export class WhatsAppService implements OnModuleInit {
       if (options?.preferAudioReply === true || this.detectExplicitVoicePreference(message)) {
         await this.rememberVoiceReplyPreference(contactId);
       }
-      await this.rememberSentMessage(contactId, conversationSendState.topic, replyToSend);
+      await this.rememberSentMessage(contactId, conversationSendState.topic, tonedReplyToSend);
     }
     this.logger.log(
       JSON.stringify({
@@ -1076,10 +1102,10 @@ export class WhatsAppService implements OnModuleInit {
     await this.followupService.registerBotReply({
       contactId,
       outboundAddress: effectiveOutboundAddress,
-      reply: replyToSend,
+      reply: tonedReplyToSend,
     });
     console.log('ENVIADA:', {
-      text: replyToSend,
+      text: tonedReplyToSend,
       mediaIds: deliverableMediaFiles.map((file) => file.fileUrl),
     });
   }
@@ -1713,6 +1739,394 @@ export class WhatsAppService implements OnModuleInit {
     }
 
     return this.wasLastBotReplyAudio(contactId).then((wasAudio) => !wasAudio);
+  }
+
+  private getIncomingAudioStreakKey(contactId: string): string {
+    return `incoming-audio-streak:${contactId}`;
+  }
+
+  private getIncomingColdStreakKey(contactId: string): string {
+    return `incoming-cold-streak:${contactId}`;
+  }
+
+  private getLastEmotionKey(contactId: string): string {
+    return `emotion:last:${contactId}`;
+  }
+
+  private async updateIncomingAudioStreak(
+    contactId: string,
+    messageType: 'text' | 'image' | 'audio',
+  ): Promise<number> {
+    const key = this.getIncomingAudioStreakKey(contactId);
+
+    if (messageType !== 'audio') {
+      await this.redisService.set(
+        key,
+        0,
+        WhatsAppService.INCOMING_AUDIO_STREAK_TTL_SECONDS,
+      );
+      return 0;
+    }
+
+    const current = Number((await this.redisService.get<number>(key)) ?? 0);
+    const next = Math.min(
+      Math.max(0, current) + 1,
+      WhatsAppService.INCOMING_AUDIO_STREAK_MAX,
+    );
+
+    await this.redisService.set(
+      key,
+      next,
+      WhatsAppService.INCOMING_AUDIO_STREAK_TTL_SECONDS,
+    );
+
+    return next;
+  }
+
+  private async updateIncomingColdStreak(contactId: string, message: string): Promise<number> {
+    const key = this.getIncomingColdStreakKey(contactId);
+    const normalized = this.normalizeTextForVoiceDecision(message);
+    const chars = normalized.length;
+    const words = normalized.split(' ').filter(Boolean);
+    const isShort = chars <= 8 || words.length <= 2;
+    const isColdToken = ['ok', 'gracias'].includes(normalized);
+    const shouldIncrement = Boolean(normalized) && (isShort || isColdToken);
+
+    if (!shouldIncrement) {
+      await this.redisService.set(
+        key,
+        0,
+        WhatsAppService.INCOMING_COLD_STREAK_TTL_SECONDS,
+      );
+      return 0;
+    }
+
+    const current = Number((await this.redisService.get<number>(key)) ?? 0);
+    const next = Math.min(
+      Math.max(0, current) + 1,
+      WhatsAppService.INCOMING_COLD_STREAK_MAX,
+    );
+
+    await this.redisService.set(
+      key,
+      next,
+      WhatsAppService.INCOMING_COLD_STREAK_TTL_SECONDS,
+    );
+
+    return next;
+  }
+
+  private async rememberLastDetectedEmotion(
+    contactId: string,
+    emotion: 'interesado' | 'curioso' | 'confundido' | 'apresurado' | 'frio' | 'caliente' | 'dudoso',
+  ): Promise<void> {
+    await this.redisService.set(
+      this.getLastEmotionKey(contactId),
+      emotion,
+      WhatsAppService.EMOTION_CONTEXT_TTL_SECONDS,
+    );
+  }
+
+  private detectEmotion(
+    message: string,
+    context: {
+      inputType: 'text' | 'image' | 'audio';
+      incomingColdStreak: number;
+      botReply: Awaited<ReturnType<BotService['processIncomingMessage']>>;
+    },
+  ): 'interesado' | 'curioso' | 'confundido' | 'apresurado' | 'frio' | 'caliente' | 'dudoso' {
+    const normalized = this.normalizeTextForVoiceDecision(message);
+    const chars = normalized.length;
+    const words = normalized.split(' ').filter(Boolean);
+    const isShort = chars <= 8 || words.length <= 2;
+
+    const includesAny = (keywords: string[]) => keywords.some((k) => normalized.includes(this.normalizeTextForVoiceDecision(k)));
+
+    if (includesAny(['lo quiero', 'me interesa', 'envialo', 'enviamelo', 'envíamelo', 'lo compro', 'como pago', 'cómo pago'])) {
+      return 'caliente';
+    }
+
+    if (includesAny(['no entiendo', 'como funciona', 'cómo funciona', 'explicame', 'explícame'])) {
+      return 'confundido';
+    }
+
+    if (includesAny(['de verdad sirve', 'realmente sirve', 'sirve?', 'funciona?', 'es verdad?', 'es seguro?'])) {
+      return 'dudoso';
+    }
+
+    if (includesAny(['rapido', 'rápido', 'ya', 'ahora'])) {
+      return 'apresurado';
+    }
+
+    if (includesAny(['cuanto cuesta', 'cuánto cuesta', 'como compro', 'cómo compro', 'donde', 'dónde', 'precio'])) {
+      return 'interesado';
+    }
+
+    if ((isShort || includesAny(['ok', 'gracias'])) && context.incomingColdStreak >= 1) {
+      return 'frio';
+    }
+
+    if (
+      normalized.includes('?') ||
+      includesAny(['que es', 'qué es', 'para que', 'para qué', 'info', 'informacion', 'información'])
+    ) {
+      return 'curioso';
+    }
+
+    return isShort ? 'frio' : 'curioso';
+  }
+
+  private applyEmotionPersonalityToReply(
+    emotion: 'interesado' | 'curioso' | 'confundido' | 'apresurado' | 'frio' | 'caliente' | 'dudoso',
+    reply: string,
+  ): string {
+    const trimmed = reply.trim();
+    if (!trimmed) {
+      return reply;
+    }
+
+    const startsWith = (prefix: string) => trimmed.toLowerCase().startsWith(prefix.toLowerCase());
+
+    if (emotion === 'confundido') {
+      return startsWith('mira, te explico') ? trimmed : `Mira, te explico bien: ${trimmed}`;
+    }
+
+    if (emotion === 'dudoso') {
+      return startsWith('te digo') ? trimmed : `Te digo algo claro: ${trimmed}`;
+    }
+
+    if (emotion === 'caliente') {
+      return startsWith('perfecto') ? trimmed : `Perfecto, te lo preparo ahora mismo. ${trimmed}`;
+    }
+
+    if (emotion === 'frio') {
+      return startsWith('tranquilo') ? trimmed : `Tranquilo, dime qué te gustaría saber. ${trimmed}`;
+    }
+
+    return trimmed;
+  }
+
+  private truncateForLogs(value: string, max: number): string {
+    const text = `${value ?? ''}`;
+    return text.length <= max ? text : `${text.slice(0, Math.max(0, max - 1))}…`;
+  }
+
+  private determineSendMode(context: {
+    contactId: string;
+    emotion: 'interesado' | 'curioso' | 'confundido' | 'apresurado' | 'frio' | 'caliente' | 'dudoso';
+    inputType: 'text' | 'image' | 'audio';
+    incomingMessage: string;
+    incomingAudioStreak: number;
+    botReply: Awaited<ReturnType<BotService['processIncomingMessage']>>;
+    reply: string;
+    explicitVoiceRequest: boolean;
+    hasVoicePreference: boolean;
+    wasLastBotAudio: boolean;
+    allowAudioReplies: boolean;
+  }): 'text' | 'audio' {
+    const normalizedIncoming = this.normalizeTextForVoiceDecision(context.incomingMessage);
+    const incomingChars = normalizedIncoming.length;
+    const replyChars = context.reply.trim().length;
+
+    const isClosing = context.botReply.action === 'cerrar' || context.botReply.intent === 'cierre';
+    const isConfirmation = ['ok', 'dale', 'perfecto', 'listo', 'confirmado'].includes(normalizedIncoming);
+
+    const asksQuickPriceOrAvailability =
+      ['precio', 'cuanto', 'cuánto', 'vale', 'disponible', 'hay', 'tienes'].some((k) =>
+        normalizedIncoming.includes(k),
+      );
+    const isShortMessage = incomingChars <= 14 || ['hola', 'buenas'].includes(normalizedIncoming);
+
+    const explanationKeywords = [
+      'explicame',
+      'como funciona',
+      'cómo funciona',
+      'no entendi',
+      'no entend',
+      'dime bien',
+      'detallame',
+      'detállame',
+    ];
+    const asksForExplanation = explanationKeywords.some((k) => normalizedIncoming.includes(k));
+
+    const replyIsLong = this.isLongVoiceFriendlyReply(context.reply) || replyChars >= 140;
+
+    let scoreAudio = 0;
+    const reasons: string[] = [];
+
+    if (!context.allowAudioReplies) {
+      this.logger.log(
+        JSON.stringify({
+          event: 'VOICE_DECISION',
+          contactId: context.contactId,
+          inputType: context.inputType,
+          emotion: context.emotion,
+          incomingAudioStreak: context.incomingAudioStreak,
+          incomingChars,
+          replyChars,
+          scoreAudio: 0,
+          decision: 'text',
+          reasons: ['audio_disabled'],
+        }),
+      );
+      return 'text';
+    }
+
+    if (isClosing || isConfirmation) {
+      this.logger.log(
+        JSON.stringify({
+          event: 'VOICE_DECISION',
+          contactId: context.contactId,
+          inputType: context.inputType,
+          emotion: context.emotion,
+          incomingAudioStreak: context.incomingAudioStreak,
+          incomingChars,
+          replyChars,
+          scoreAudio: 0,
+          decision: 'text',
+          botIntent: context.botReply.intent,
+          botAction: context.botReply.action,
+          reasons: [isClosing ? 'closing' : 'confirmation'],
+        }),
+      );
+      return 'text';
+    }
+
+    if (context.incomingAudioStreak >= 2) {
+      const decision: 'text' | 'audio' = context.wasLastBotAudio ? 'text' : 'audio';
+      const reasons = ['multiple_incoming_audios_forced'];
+      if (context.wasLastBotAudio) {
+        reasons.push('avoid_consecutive_audio');
+      }
+
+      this.logger.log(
+        JSON.stringify({
+          event: 'VOICE_DECISION',
+          contactId: context.contactId,
+          inputType: context.inputType,
+          emotion: context.emotion,
+          incomingAudioStreak: context.incomingAudioStreak,
+          incomingChars,
+          replyChars,
+          scoreAudio: 4,
+          decision,
+          botIntent: context.botReply.intent,
+          botAction: context.botReply.action,
+          replyType: context.botReply.replyType,
+          reasons,
+        }),
+      );
+
+      return decision;
+    }
+
+    if (
+      (context.emotion === 'frio' || context.emotion === 'apresurado') &&
+      !context.explicitVoiceRequest
+    ) {
+      this.logger.log(
+        JSON.stringify({
+          event: 'VOICE_DECISION',
+          contactId: context.contactId,
+          inputType: context.inputType,
+          emotion: context.emotion,
+          incomingAudioStreak: context.incomingAudioStreak,
+          incomingChars,
+          replyChars,
+          scoreAudio: 0,
+          decision: 'text',
+          botIntent: context.botReply.intent,
+          botAction: context.botReply.action,
+          replyType: context.botReply.replyType,
+          reasons: [`emotion_${context.emotion}`],
+        }),
+      );
+
+      return 'text';
+    }
+
+    if (context.inputType === 'audio') {
+      scoreAudio += 2;
+      reasons.push('incoming_audio');
+    }
+
+    if (asksForExplanation) {
+      scoreAudio = Math.max(scoreAudio, 3);
+      reasons.push('asks_for_explanation');
+    }
+
+    if (context.emotion === 'confundido') {
+      scoreAudio = Math.max(scoreAudio, 3);
+      reasons.push('emotion_confundido');
+    }
+
+    if (context.emotion === 'dudoso') {
+      scoreAudio = Math.max(scoreAudio, 3);
+      reasons.push('emotion_dudoso');
+    }
+
+    if (incomingChars >= 120) {
+      scoreAudio += 1;
+      reasons.push('long_incoming_message');
+    }
+
+    if (replyIsLong) {
+      scoreAudio = Math.max(scoreAudio, 3);
+      reasons.push('long_reply');
+    }
+
+    if (context.hasVoicePreference || context.inputType === 'audio' || context.incomingAudioStreak >= 1) {
+      scoreAudio += 1;
+      reasons.push('voice_history');
+    }
+
+    if (context.explicitVoiceRequest) {
+      scoreAudio = Math.max(scoreAudio, 3);
+      reasons.push('explicit_voice_request');
+    }
+
+    if (context.botReply.replyType === 'audio') {
+      scoreAudio = Math.max(scoreAudio, 3);
+      reasons.push('bot_replyType_audio');
+    }
+
+    if (
+      (isShortMessage || asksQuickPriceOrAvailability) &&
+      !asksForExplanation &&
+      !context.explicitVoiceRequest &&
+      !replyIsLong &&
+      context.botReply.replyType !== 'audio'
+    ) {
+      scoreAudio = Math.min(scoreAudio, 1);
+      reasons.push('short_quick_message');
+    }
+
+    let decision: 'text' | 'audio' = scoreAudio >= 3 ? 'audio' : 'text';
+
+    if (decision === 'audio' && context.wasLastBotAudio) {
+      decision = 'text';
+      reasons.push('avoid_consecutive_audio');
+    }
+
+    this.logger.log(
+      JSON.stringify({
+        event: 'VOICE_DECISION',
+        contactId: context.contactId,
+        inputType: context.inputType,
+        emotion: context.emotion,
+        incomingAudioStreak: context.incomingAudioStreak,
+        incomingChars,
+        replyChars,
+        botIntent: context.botReply.intent,
+        botAction: context.botReply.action,
+        replyType: context.botReply.replyType,
+        scoreAudio,
+        decision,
+        reasons,
+      }),
+    );
+
+    return decision;
   }
 
   private shouldPromoteTextReplyToVoice(message: string, reply: string): boolean {
