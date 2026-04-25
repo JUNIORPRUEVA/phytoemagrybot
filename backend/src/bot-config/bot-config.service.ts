@@ -13,6 +13,7 @@ import {
 export class BotConfigService implements OnModuleInit {
   private static readonly CONFIG_ID = 1;
   private static readonly KNOWLEDGE_CONTEXT_CACHE_KEY = 'bot:knowledge-context:v1';
+  private static readonly LEGACY_KNOWLEDGE_CONTEXT_CACHE_KEY = 'bot:knowledge-context:v2';
 
   constructor(
     private readonly prisma: PrismaService,
@@ -47,7 +48,10 @@ export class BotConfigService implements OnModuleInit {
       },
     });
 
-    await this.redisService.del(BotConfigService.KNOWLEDGE_CONTEXT_CACHE_KEY);
+    await this.redisService.deleteMany([
+      BotConfigService.KNOWLEDGE_CONTEXT_CACHE_KEY,
+      BotConfigService.LEGACY_KNOWLEDGE_CONTEXT_CACHE_KEY,
+    ]);
     return config;
   }
 
@@ -79,7 +83,10 @@ export class BotConfigService implements OnModuleInit {
       },
     });
 
-    await this.redisService.del(BotConfigService.KNOWLEDGE_CONTEXT_CACHE_KEY);
+    await this.redisService.deleteMany([
+      BotConfigService.KNOWLEDGE_CONTEXT_CACHE_KEY,
+      BotConfigService.LEGACY_KNOWLEDGE_CONTEXT_CACHE_KEY,
+    ]);
     return synced;
   }
 

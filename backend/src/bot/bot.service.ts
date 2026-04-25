@@ -131,7 +131,7 @@ type MicroIntentResolution = {
 
 @Injectable()
 export class BotService {
-  private static readonly KNOWLEDGE_CONTEXT_CACHE_KEY = 'bot:knowledge-context:v2';
+  private static readonly KNOWLEDGE_CONTEXT_CACHE_KEY = 'bot:knowledge-context:v1';
   private static readonly COMPANY_RULES_CACHE_KEY = 'company_rules';
   private static readonly SENT_MEDIA_CACHE_KEY_PREFIX = 'bot:sent-media:';
   private static readonly GREETING_TTL_SECONDS = 60 * 60 * 24;

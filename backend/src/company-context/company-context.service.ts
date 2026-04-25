@@ -15,6 +15,7 @@ import {
 export class CompanyContextService implements OnModuleInit {
   private static readonly CONTEXT_ID = 1;
   private static readonly KNOWLEDGE_CONTEXT_CACHE_KEY = 'bot:knowledge-context:v1';
+  private static readonly LEGACY_KNOWLEDGE_CONTEXT_CACHE_KEY = 'bot:knowledge-context:v2';
 
   constructor(
     private readonly prisma: PrismaService,
@@ -28,7 +29,10 @@ export class CompanyContextService implements OnModuleInit {
   async getContext(): Promise<CompanyContextRecord> {
     const record = await this.ensureContext();
     const mapped = this.mapRecord(record);
-    await this.redisService.del(CompanyContextService.KNOWLEDGE_CONTEXT_CACHE_KEY);
+    await this.redisService.deleteMany([
+      CompanyContextService.KNOWLEDGE_CONTEXT_CACHE_KEY,
+      CompanyContextService.LEGACY_KNOWLEDGE_CONTEXT_CACHE_KEY,
+    ]);
     return mapped;
   }
 

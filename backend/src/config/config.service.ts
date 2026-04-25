@@ -9,6 +9,7 @@ import { AppConfigRecord } from './config.types';
 @Injectable()
 export class ClientConfigService {
   private static readonly KNOWLEDGE_CONTEXT_CACHE_KEY = 'bot:knowledge-context:v1';
+  private static readonly LEGACY_KNOWLEDGE_CONTEXT_CACHE_KEY = 'bot:knowledge-context:v2';
 
   private static readonly CONFIG_ID = 1;
   private static readonly DEFAULT_PROMPT =
@@ -79,7 +80,10 @@ export class ClientConfigService {
     });
 
     const syncedConfig = await this.syncStructuredSettings(config, mergedConfigurations);
-    await this.redisService.del(ClientConfigService.KNOWLEDGE_CONTEXT_CACHE_KEY);
+    await this.redisService.deleteMany([
+      ClientConfigService.KNOWLEDGE_CONTEXT_CACHE_KEY,
+      ClientConfigService.LEGACY_KNOWLEDGE_CONTEXT_CACHE_KEY,
+    ]);
     return this.applyEnvironmentFallbacks(syncedConfig);
   }
 
