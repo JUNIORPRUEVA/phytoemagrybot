@@ -2476,6 +2476,66 @@ test('processAndDeliverMessage can send media and then one audio reply', async (
   assert.equal(sentAudios[0]?.to, '18095551234@s.whatsapp.net');
 });
 
+test('processAndDeliverMessage does not duplicate full reply in media caption when sending audio (fallback safe)', async () => {
+  const { service, sentTexts, sentAudios, botService, voiceService } = createAudioFlowService();
+  const imageCaptions: string[] = [];
+
+  botService.processIncomingMessage = async () => ({
+    reply: 'Te mando la foto y te explico bien como usarla.',
+    replyType: 'audio',
+    mediaFiles: [
+      {
+        id: 1,
+        title: 'producto-1',
+        description: null,
+        fileUrl: 'https://example.com/producto-1.jpg',
+        fileType: 'image',
+        createdAt: new Date(),
+      },
+    ],
+    intent: 'catalogo',
+    decisionIntent: 'info',
+    stage: 'interesado',
+    action: 'guiar',
+    purchaseIntentScore: 40,
+    hotLead: false,
+    cached: false,
+    usedGallery: true,
+    usedMemory: false,
+    source: 'ai',
+  });
+
+  service.sendImage = async (
+    _resolved: unknown,
+    _to: string,
+    _url: string,
+    caption: string,
+  ) => {
+    imageCaptions.push(caption);
+  };
+
+  voiceService.prepareSpokenReply = async () => {
+    throw new Error('tts failed');
+  };
+
+  await service.processAndDeliverMessage(
+    createResolvedConfig(),
+    '18095551234',
+    'mandame fotos y explicamelo por audio',
+    'audio',
+    {
+      preferAudioReply: true,
+      outboundAddress: '18095551234@s.whatsapp.net',
+    },
+  );
+
+  assert.equal(imageCaptions.length, 1);
+  assert.match(imageCaptions[0] ?? '', /^mira/);
+  assert.equal(sentAudios.length, 0);
+  assert.equal(sentTexts.length, 1);
+  assert.match(sentTexts[0]?.text ?? '', /Te mando la foto y te explico/);
+});
+
 test('processAndDeliverMessage omits an already sent video and rewrites duplicate text', async () => {
   const { service, sentTexts, botService } = createAudioFlowService();
   const deliveredMedia: string[] = [];

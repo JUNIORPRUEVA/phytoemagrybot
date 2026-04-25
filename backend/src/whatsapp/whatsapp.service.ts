@@ -1038,7 +1038,7 @@ export class WhatsAppService implements OnModuleInit {
           replyToSend,
           diagnostic,
           {
-            textAlreadySent: sendAs === 'text',
+            textAlreadySent: sendAs !== 'text',
           },
         );
         mediaDelivered = true;
