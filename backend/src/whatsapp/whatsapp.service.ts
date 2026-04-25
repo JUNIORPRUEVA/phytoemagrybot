@@ -11,6 +11,7 @@ import { ConfigService } from '@nestjs/config';
 import { MediaFile, WhatsAppInstance } from '@prisma/client';
 import axios, { AxiosInstance } from 'axios';
 import { BotService } from '../bot/bot.service';
+import { composeFinalMessage } from '../bot/response-composer';
 import { ClientConfigService } from '../config/config.service';
 import { FollowupService } from '../followup/followup.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -949,16 +950,23 @@ export class WhatsAppService implements OnModuleInit {
       conversationSendState.sentMessages,
     );
 
-    const replyToSend =
+    const replyToSendRaw =
       uniqueCandidateReplyToSend ??
       (baseDuplicateRecoveryQuestion
         ? this.applyEmotionPersonalityToReply(emotion, baseDuplicateRecoveryQuestion)
         : null);
 
-    if (!replyToSend) {
+    if (!replyToSendRaw) {
       console.log('MENSAJE OMITIDO: duplicado detectado');
       return;
     }
+
+    const composedReply = composeFinalMessage(replyToSendRaw) || replyToSendRaw;
+    const uniqueComposedReply = this.resolveUniqueOutgoingMessage(
+      composedReply,
+      conversationSendState.sentMessages,
+    );
+    const replyToSend = uniqueComposedReply ?? replyToSendRaw;
 
     const deliverableMediaFiles = this.filterDeliverableMediaFiles(
       botReply.mediaFiles,
@@ -977,7 +985,7 @@ export class WhatsAppService implements OnModuleInit {
       incomingMessage: message,
       incomingAudioStreak,
       botReply,
-      reply: replyToSend,
+      reply: replyToSendRaw,
       explicitVoiceRequest,
       hasVoicePreference,
       wasLastBotAudio,
@@ -1039,7 +1047,7 @@ export class WhatsAppService implements OnModuleInit {
           replyToSend,
           diagnostic,
           {
-            textAlreadySent: sendAs !== 'text',
+            textAlreadySent: sendAs === 'text' || sendAs === 'audio',
           },
         );
         mediaDelivered = true;

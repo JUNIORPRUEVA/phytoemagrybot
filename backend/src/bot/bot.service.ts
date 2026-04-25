@@ -44,6 +44,7 @@ import {
   CompanyRuleCheck,
   validateCompanyRuleResponse,
 } from './company-rule-engine';
+import { composeFinalMessage, selectBestResponse } from './response-composer';
 
 type MediaIntent = 'IMAGEN' | 'VIDEO' | 'MEDIA' | null;
 
@@ -1125,7 +1126,10 @@ export class BotService {
     mediaFiles: MediaFile[];
     source: BotReplyResult['source'];
   } | null {
-    for (const candidate of candidates) {
+    const discarded: Array<{ index: number; reason: string }> = [];
+    const valid: Array<{ index: number; candidate: AssistantResponseCandidate; mediaFiles: MediaFile[] }> = [];
+
+    for (const [index, candidate] of candidates.entries()) {
       const selectedMediaFiles = this.resolveCandidateMediaFiles(candidate, candidateMediaFiles);
       const validation = validateResponseCandidate(
         {
@@ -1139,21 +1143,55 @@ export class BotService {
       );
 
       if (!validation.valid) {
-        console.log('RESPUESTA RECHAZADA:', validation.reason ?? 'no_new_content');
+        const reason = validation.reason ?? 'no_new_content';
+        discarded.push({ index, reason: `validation_failed:${reason}` });
+        console.log('RESPUESTA RECHAZADA:', reason);
         continue;
       }
 
-      return {
-        reply: {
-          type: candidate.type === 'audio' ? 'audio' : 'text',
-          content: candidate.text,
-        },
-        mediaFiles: selectedMediaFiles,
-        source: 'ai',
-      };
+      valid.push({ index, candidate, mediaFiles: selectedMediaFiles });
     }
 
-    return null;
+    if (valid.length === 0) {
+      this.logger.log(
+        JSON.stringify({
+          event: 'RESPONSE_COMPOSER',
+          total_respuestas: candidates.length,
+          seleccionada: null,
+          descartadas: discarded,
+        }),
+      );
+      return null;
+    }
+
+    const selection = selectBestResponse(valid.map((item) => item.candidate.text));
+    const picked = valid[Math.max(0, Math.min(selection.selectedIndex, valid.length - 1))];
+    const finalText = composeFinalMessage(picked.candidate.text) || picked.candidate.text.trim();
+
+    for (const item of valid) {
+      if (item.index === picked.index) {
+        continue;
+      }
+      discarded.push({ index: item.index, reason: 'lower_score' });
+    }
+
+    this.logger.log(
+      JSON.stringify({
+        event: 'RESPONSE_COMPOSER',
+        total_respuestas: candidates.length,
+        seleccionada: picked.index,
+        descartadas: discarded,
+      }),
+    );
+
+    return {
+      reply: {
+        type: picked.candidate.type === 'audio' ? 'audio' : 'text',
+        content: finalText,
+      },
+      mediaFiles: picked.mediaFiles,
+      source: 'ai',
+    };
   }
 
   private getLastCandidateRejectionReason(
