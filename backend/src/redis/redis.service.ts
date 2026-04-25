@@ -12,11 +12,7 @@ export class RedisService implements OnModuleDestroy {
   private readonly client: Redis;
 
   constructor(private readonly configService: ConfigService) {
-    const redisUrl = this.configService.get<string>('REDIS_URL')?.trim() ?? '';
-
-    if (!redisUrl) {
-      throw new Error('Missing required environment variable REDIS_URL');
-    }
+    const redisUrl = this.resolveRedisUrl();
 
     const info = this.getRedisInfo(redisUrl);
     if (this.isLocalHost(info.host)) {
@@ -39,6 +35,46 @@ export class RedisService implements OnModuleDestroy {
     this.client.on('error', (error) => {
       this.logger.error('Redis connection error', error.stack);
     });
+  }
+
+  private resolveRedisUrl(): string {
+    const explicitUrl = this.configService.get<string>('REDIS_URL')?.trim() ?? '';
+    if (explicitUrl) {
+      return explicitUrl;
+    }
+
+    const host =
+      this.configService.get<string>('REDIS_HOST')?.trim() ||
+      this.configService.get<string>('REDIS_HOSTNAME')?.trim() ||
+      '';
+
+    if (!host) {
+      throw new Error(
+        'Missing required environment variable REDIS_URL (or provide REDIS_HOST + optional REDIS_PORT/REDIS_PASSWORD/REDIS_TLS)',
+      );
+    }
+
+    const portRaw = this.configService.get<string>('REDIS_PORT')?.trim() ?? '';
+    const port = Number.parseInt(portRaw, 10);
+    const resolvedPort = Number.isFinite(port) && port > 0 ? port : 6379;
+
+    const username = this.configService.get<string>('REDIS_USERNAME')?.trim() ?? '';
+    const password = this.configService.get<string>('REDIS_PASSWORD')?.trim() ?? '';
+
+    const tlsRaw =
+      this.configService.get<string>('REDIS_TLS')?.trim() ||
+      this.configService.get<string>('REDIS_SSL')?.trim() ||
+      '';
+    const tlsEnabled = ['1', 'true', 'yes', 'on'].includes(tlsRaw.toLowerCase());
+
+    const protocol = tlsEnabled ? 'rediss' : 'redis';
+
+    const hasUserInfo = Boolean(username || password);
+    const userInfo = !hasUserInfo
+      ? ''
+      : `${encodeURIComponent(username)}${password ? `:${encodeURIComponent(password)}` : ''}@`;
+
+    return `${protocol}://${userInfo}${host}:${resolvedPort}`;
   }
 
   async set(key: string, value: unknown, ttl?: number): Promise<void> {

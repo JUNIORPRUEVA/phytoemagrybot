@@ -15,13 +15,43 @@ function parseUrlInfo(url: string): { host?: string; protocol?: string } {
   }
 }
 
+function buildRedisUrlFromEnv(): string {
+  const explicit = process.env.REDIS_URL?.trim() ?? '';
+  if (explicit) {
+    return explicit;
+  }
+
+  const host = (process.env.REDIS_HOST || process.env.REDIS_HOSTNAME || '').trim();
+  if (!host) {
+    return '';
+  }
+
+  const portRaw = (process.env.REDIS_PORT || '').trim();
+  const port = Number.parseInt(portRaw, 10);
+  const resolvedPort = Number.isFinite(port) && port > 0 ? port : 6379;
+
+  const username = (process.env.REDIS_USERNAME || '').trim();
+  const password = (process.env.REDIS_PASSWORD || '').trim();
+
+  const tlsRaw = (process.env.REDIS_TLS || process.env.REDIS_SSL || '').trim().toLowerCase();
+  const tlsEnabled = ['1', 'true', 'yes', 'on'].includes(tlsRaw);
+  const protocol = tlsEnabled ? 'rediss' : 'redis';
+
+  const hasUserInfo = Boolean(username || password);
+  const userInfo = !hasUserInfo
+    ? ''
+    : `${encodeURIComponent(username)}${password ? `:${encodeURIComponent(password)}` : ''}@`;
+
+  return `${protocol}://${userInfo}${host}:${resolvedPort}`;
+}
+
 async function main() {
   const databaseUrl = process.env.DATABASE_URL?.trim() ?? '';
-  const redisUrl = process.env.REDIS_URL?.trim() ?? '';
+  const redisUrl = buildRedisUrlFromEnv();
   const storageEndpoint = process.env.STORAGE_ENDPOINT?.trim() ?? '';
 
   if (!databaseUrl) throw new Error('DATABASE_URL is required');
-  if (!redisUrl) throw new Error('REDIS_URL is required');
+  if (!redisUrl) throw new Error('REDIS_URL is required (or provide REDIS_HOST)');
   if (!storageEndpoint) throw new Error('STORAGE_ENDPOINT is required');
 
   const dbInfo = parseUrlInfo(databaseUrl);
