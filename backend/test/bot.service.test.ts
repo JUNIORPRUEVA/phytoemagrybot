@@ -915,6 +915,49 @@ test('closure phrases stop the sale before AI and persist conversation_end in Re
   assert.equal((service as any).redisService.store.get('conversation_end:18095550001'), true);
 });
 
+test('todo bien is treated as a status acknowledgement (not conversation end)', async () => {
+  let aiCalled = false;
+  const service = createService({
+    onGenerateReply: () => {
+      aiCalled = true;
+    },
+  });
+
+  const result = await service.processIncomingMessage('18095550002', 'Todo bien');
+
+  assert.equal(result.source, 'micro');
+  assert.equal(aiCalled, false);
+  assert.match(result.reply.toLowerCase(), /que bueno|en que te puedo ayudar/);
+  assert.equal((service as any).redisService.store.get('conversation_end:18095550002'), undefined);
+});
+
+test('dominican status phrases are handled as micro status (no AI, no conversation_end)', async () => {
+  const samples = [
+    'To bien y tu?',
+    'Bien gracias',
+    'Nítido y usted',
+    'Heavy',
+    'Todo heavy y ustedes',
+  ];
+
+  for (const [index, sample] of samples.entries()) {
+    let aiCalled = false;
+    const contactId = `1809555100${index}`;
+    const service = createService({
+      onGenerateReply: () => {
+        aiCalled = true;
+      },
+    });
+
+    const result = await service.processIncomingMessage(contactId, sample);
+
+    assert.equal(result.source, 'micro');
+    assert.equal(aiCalled, false);
+    assert.match(result.reply.toLowerCase(), /que bueno|en que te puedo ayudar|quieres precio/);
+    assert.equal((service as any).redisService.store.get(`conversation_end:${contactId}`), undefined);
+  }
+});
+
 test('micro intent yes uses previous sales context to advance naturally without AI', async () => {
   let aiCalled = false;
   const service = createService();

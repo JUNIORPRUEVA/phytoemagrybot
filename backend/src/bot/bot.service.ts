@@ -121,7 +121,7 @@ interface MediaCacheEntry {
   updatedAt: number;
 }
 
-type MicroIntentKind = 'yes' | 'no' | 'soft' | 'thanks';
+type MicroIntentKind = 'yes' | 'no' | 'soft' | 'thanks' | 'status';
 
 type MicroIntentResolution = {
   reply: string;
@@ -2607,8 +2607,6 @@ export class BotService {
       'lo dejamos asi',
       'dejalo asi',
       'ok gracias',
-      'esta bien',
-      'todo bien',
       'perfecto gracias',
       'listo gracias',
     ].some((keyword) => normalized.includes(keyword));
@@ -2709,11 +2707,13 @@ export class BotService {
       ?? this.findLatestAssistantQuestion(params.memoryContext.messages)
       ?? null;
     const hasPriorContext = Boolean((lastIntent ?? '').trim() || (lastQuestion ?? '').trim());
-    if (!hasPriorContext) {
+    if (!hasPriorContext && microIntent !== 'status') {
       return null;
     }
 
-    const salesActive = this.isSalesContextActive(lastIntent, lastQuestion);
+    const salesActive = hasPriorContext
+      ? this.isSalesContextActive(lastIntent, lastQuestion)
+      : false;
     const coldConversation = !salesActive && !params.usedMemory;
 
     if (microIntent === 'soft' && !salesActive && !lastQuestion) {
@@ -2751,7 +2751,25 @@ export class BotService {
     }
 
     const words = normalized.split(' ').filter((word) => word.length > 0);
-    if (words.length === 0 || words.length > 3) {
+    if (words.length === 0) {
+      return null;
+    }
+
+    if (words.length <= 6) {
+      const statusTail = '(?:\\s+(?:y|e)\\s+(?:tu|usted|ustedes))?';
+      const statusThanks = '(?:\\s+gracias)?';
+      const statusCore = '(?:bien|nitido|heavy)';
+      const statusPrefix = '(?:todo|to|toy|tamo|ta)';
+      const statusPattern = new RegExp(
+        `^(?:${statusCore}|${statusPrefix}\\s+${statusCore})${statusThanks}${statusTail}$`,
+      );
+
+      if (statusPattern.test(normalized)) {
+        return 'status';
+      }
+    }
+
+    if (words.length > 3) {
       return null;
     }
 
@@ -2780,6 +2798,19 @@ export class BotService {
     coldConversation: boolean,
     conversationMemory: ConversationMemoryState,
   ): string {
+    if (microIntent === 'status') {
+      return this.pickFirstUnsentMessage(
+        salesActive
+          ? [
+              'Que bueno 🙌 entonces dime, ¿quieres precio, como se usa o como pedirlo?'
+            ]
+          : [
+              'Que bueno 🙌 dime, ¿en que te puedo ayudar hoy?'
+            ],
+        conversationMemory.sentMessages,
+      );
+    }
+
     if (microIntent === 'yes') {
       return this.pickFirstUnsentMessage(
         salesActive
@@ -2840,6 +2871,20 @@ export class BotService {
     salesActive: boolean,
   ): BotDecisionState {
     const normalized = this.normalizeTextForMatch(message);
+
+    if (microIntent === 'status') {
+      return {
+        intent: salesActive ? 'interesado' : 'otro',
+        classificationSource: 'rules',
+        stage: salesActive ? 'interesado' : 'curioso',
+        action: 'guiar',
+        purchaseIntentScore: salesActive ? 15 : 5,
+        currentIntent: 'micro_status',
+        summaryText: 'Micro intent status/ack handled before thinking.',
+        keyFacts: { microIntent: 'status', salesActive },
+        lastMessageId: `micro_status:${contactId}:${this.hashValue(normalized || 'empty')}`,
+      };
+    }
 
     if (microIntent === 'yes') {
       return {
