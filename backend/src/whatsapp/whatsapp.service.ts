@@ -89,6 +89,7 @@ export class WhatsAppService implements OnModuleInit {
   ];
 
   private readonly logger = new Logger(WhatsAppService.name);
+  private readonly groupedTextFlushTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
   constructor(
     private readonly botService: BotService,
@@ -713,27 +714,14 @@ export class WhatsAppService implements OnModuleInit {
     const spamGroupWindowMs = resolved.config.botSettings?.spamGroupWindowMs ?? 2000;
 
     if (incoming.type === 'text') {
-      const shouldScheduleFlush = await this.redisService.appendGroupedMessage(
+      await this.redisService.appendGroupedMessage(
         incoming.number,
         incoming.message,
         spamGroupWindowMs,
         incoming.outboundAddress,
       );
 
-      if (shouldScheduleFlush) {
-        setTimeout(() => {
-          void this.flushGroupedTextMessage(incoming.number).catch((error: unknown) => {
-            this.logger.error(
-              JSON.stringify({
-                event: 'grouped_message_flush_failed',
-                contactId: incoming.number,
-                error: error instanceof Error ? error.message : 'Unknown error',
-              }),
-              error instanceof Error ? error.stack : undefined,
-            );
-          });
-        }, spamGroupWindowMs);
-      }
+      this.scheduleGroupedTextFlush(incoming.number, spamGroupWindowMs);
 
       return;
     }
@@ -760,6 +748,29 @@ export class WhatsAppService implements OnModuleInit {
     await this.processAndDeliverMessage(resolved, contactId, groupedMessage.message, 'text', {
       outboundAddress: groupedMessage.outboundAddress || undefined,
     });
+  }
+
+  private scheduleGroupedTextFlush(contactId: string, windowMs: number): void {
+    const existingTimer = this.groupedTextFlushTimers.get(contactId);
+    if (existingTimer) {
+      clearTimeout(existingTimer);
+    }
+
+    const timer = setTimeout(() => {
+      this.groupedTextFlushTimers.delete(contactId);
+      void this.flushGroupedTextMessage(contactId).catch((error: unknown) => {
+        this.logger.error(
+          JSON.stringify({
+            event: 'grouped_message_flush_failed',
+            contactId,
+            error: error instanceof Error ? error.message : 'Unknown error',
+          }),
+          error instanceof Error ? error.stack : undefined,
+        );
+      });
+    }, Math.max(windowMs, 0));
+
+    this.groupedTextFlushTimers.set(contactId, timer);
   }
 
   private async processAndDeliverMessage(

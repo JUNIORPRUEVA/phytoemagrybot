@@ -60,15 +60,6 @@ export class BotService {
       throw new BadRequestException('message is required');
     }
 
-    const config = await this.clientConfigService.getConfig();
-    const botConfig = await this.botConfigService.getConfig();
-    const memoryWindow = config.aiSettings?.memoryWindow ?? 6;
-    const knowledgeContext = await this.getRequiredKnowledgeContext(
-      config,
-      botConfig,
-      normalizedMessage,
-    );
-
     this.logger.log(
       JSON.stringify({
         event: 'bot_message_received',
@@ -79,86 +70,106 @@ export class BotService {
     console.log('NUMERO:', normalizedContactId);
     console.log('MENSAJE:', normalizedMessage);
 
-    await this.memoryService.saveMessage({
-      contactId: normalizedContactId,
-      role: 'user',
-      content: normalizedMessage,
-    });
+    try {
+      const config = await this.clientConfigService.getConfig();
+      const botConfig = await this.botConfigService.getConfig();
+      const memoryWindow = config.aiSettings?.memoryWindow ?? 6;
+      const knowledgeContext = await this.getRequiredKnowledgeContext(
+        config,
+        botConfig,
+        normalizedMessage,
+      );
 
-    const memoryContext = await this.memoryService.getConversationContext(
-      normalizedContactId,
-      memoryWindow,
-    );
-    const history = this.excludeCurrentUserMessage(
-      memoryContext.messages,
-      normalizedMessage,
-    );
-    const decision = await this.runDecisionEngine({
-      contactId: normalizedContactId,
-      message: normalizedMessage,
-      history,
-      memoryContext,
-      config,
-    });
-    const intent = this.mapDecisionIntentToBotIntent(decision.intent, normalizedMessage);
-    const hotLead = this.shouldTreatAsHotLead(
-      normalizedMessage,
-      intent,
-      memoryContext.clientMemory.lastIntent,
-    ) || decision.stage === 'listo';
-    const preferredReplyType = this.resolvePreferredReplyType(normalizedMessage);
-    const responseStyle = this.resolveResponseStyleFromDecision(decision, normalizedMessage, intent);
-    const leadStage = this.mapDecisionStageToLeadStage(decision.stage, hotLead);
-    const replyObjective = this.mapDecisionActionToReplyObjective(decision.action);
-    const usedMemory = this.hasUsefulMemory(memoryContext, history.length);
-    const galleryMediaFiles = await this.selectMedia(normalizedMessage, intent);
+      await this.memoryService.saveMessage({
+        contactId: normalizedContactId,
+        role: 'user',
+        content: normalizedMessage,
+      });
 
-    const reply = await this.aiService.generateReply({
-      config,
-      fullPrompt: this.botConfigService.getFullPrompt(botConfig),
-      companyContext: knowledgeContext,
-      contactId: normalizedContactId,
-      message: normalizedMessage,
-      history,
-      context: this.buildCombinedConversationContext(knowledgeContext, memoryContext),
-      classifiedIntent: decision.intent,
-      decisionAction: decision.action,
-      purchaseIntentScore: decision.purchaseIntentScore,
-      responseStyle,
-      leadStage,
-      replyObjective,
-    });
+      const memoryContext = await this.memoryService.getConversationContext(
+        normalizedContactId,
+        memoryWindow,
+      );
+      const history = this.excludeCurrentUserMessage(
+        memoryContext.messages,
+        normalizedMessage,
+      );
+      const decision = await this.runDecisionEngine({
+        contactId: normalizedContactId,
+        message: normalizedMessage,
+        history,
+        memoryContext,
+        config,
+      });
+      const intent = this.mapDecisionIntentToBotIntent(decision.intent, normalizedMessage);
+      const hotLead = this.shouldTreatAsHotLead(
+        normalizedMessage,
+        intent,
+        memoryContext.clientMemory.lastIntent,
+      ) || decision.stage === 'listo';
+      const preferredReplyType = this.resolvePreferredReplyType(normalizedMessage);
+      const responseStyle = this.resolveResponseStyleFromDecision(decision, normalizedMessage, intent);
+      const leadStage = this.mapDecisionStageToLeadStage(decision.stage, hotLead);
+      const replyObjective = this.mapDecisionActionToReplyObjective(decision.action);
+      const usedMemory = this.hasUsefulMemory(memoryContext, history.length);
+      const galleryMediaFiles = await this.selectMedia(normalizedMessage, intent);
 
-    const mediaFiles = this.shouldAttachMediaToAiReply(normalizedMessage, intent)
-      ? galleryMediaFiles
-      : [];
+      const reply = await this.aiService.generateReply({
+        config,
+        fullPrompt: this.botConfigService.getFullPrompt(botConfig),
+        companyContext: knowledgeContext,
+        contactId: normalizedContactId,
+        message: normalizedMessage,
+        history,
+        context: this.buildCombinedConversationContext(knowledgeContext, memoryContext),
+        classifiedIntent: decision.intent,
+        decisionAction: decision.action,
+        purchaseIntentScore: decision.purchaseIntentScore,
+        responseStyle,
+        leadStage,
+        replyObjective,
+      });
 
-    await this.memoryService.saveMessage({
-      contactId: normalizedContactId,
-      role: 'assistant',
-      content: reply.content,
-    });
+      const mediaFiles = this.shouldAttachMediaToAiReply(normalizedMessage, intent)
+        ? galleryMediaFiles
+        : [];
 
-    const result: BotReplyResult = {
-      reply: reply.content,
-      replyType: preferredReplyType === 'audio' ? 'audio' : reply.type,
-      mediaFiles,
-      intent,
-      decisionIntent: decision.intent,
-      stage: decision.stage,
-      action: decision.action,
-      purchaseIntentScore: decision.purchaseIntentScore,
-      hotLead,
-      cached: false,
-      usedGallery: mediaFiles.length > 0,
-      usedMemory,
-      source: 'ai',
-    };
+      await this.memoryService.saveMessage({
+        contactId: normalizedContactId,
+        role: 'assistant',
+        content: reply.content,
+      });
 
-    await this.markBotResponseInDecisionState(normalizedContactId, reply.content, decision);
-    console.log('RESPUESTA:', result.reply);
-    this.logReply(normalizedContactId, result);
-    return result;
+      const result: BotReplyResult = {
+        reply: reply.content,
+        replyType: preferredReplyType === 'audio' ? 'audio' : reply.type,
+        mediaFiles,
+        intent,
+        decisionIntent: decision.intent,
+        stage: decision.stage,
+        action: decision.action,
+        purchaseIntentScore: decision.purchaseIntentScore,
+        hotLead,
+        cached: false,
+        usedGallery: mediaFiles.length > 0,
+        usedMemory,
+        source: 'ai',
+      };
+
+      await this.markBotResponseInDecisionState(normalizedContactId, reply.content, decision);
+      console.log('RESPUESTA:', result.reply);
+      this.logReply(normalizedContactId, result);
+      return result;
+    } catch (error) {
+      const fallbackResult = await this.buildResilientFallbackResult(
+        normalizedContactId,
+        normalizedMessage,
+        error,
+      );
+      console.log('RESPUESTA:', fallbackResult.reply);
+      this.logReply(normalizedContactId, fallbackResult);
+      return fallbackResult;
+    }
   }
 
   async runBotTests(): Promise<BotTestReport> {
@@ -673,6 +684,148 @@ export class BotService {
       usedMemory,
       source,
     };
+  }
+
+  private async buildResilientFallbackResult(
+    contactId: string,
+    message: string,
+    error: unknown,
+  ): Promise<BotReplyResult> {
+    const decision = this.buildFallbackDecisionState(message);
+    const intent = this.mapDecisionIntentToBotIntent(decision.intent, message);
+    const hotLead = intent === 'hot' || decision.stage === 'listo';
+    const reply = this.buildResilientFallbackReply(message, intent);
+    const replyType = this.resolvePreferredReplyType(message) === 'audio' ? 'audio' : 'text';
+
+    this.logger.warn(
+      JSON.stringify({
+        event: 'bot_resilient_fallback_used',
+        contactId,
+        intent,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      }),
+      error instanceof Error ? error.stack : undefined,
+    );
+
+    await this.tryPersistFallbackConversation(contactId, message, reply);
+
+    return {
+      reply,
+      replyType,
+      mediaFiles: [],
+      intent,
+      decisionIntent: decision.intent,
+      stage: decision.stage,
+      action: decision.action,
+      purchaseIntentScore: decision.purchaseIntentScore,
+      hotLead,
+      cached: false,
+      usedGallery: false,
+      usedMemory: false,
+      source: 'fallback',
+    };
+  }
+
+  private buildFallbackDecisionState(message: string): BotDecisionState {
+    const normalized = message.trim().toLowerCase();
+
+    if (['precio', 'cuánto', 'cuanto', 'vale', 'me interesa', 'quiero'].some((keyword) => normalized.includes(keyword))) {
+      return {
+        intent: 'precio',
+        classificationSource: 'heuristic_fallback',
+        stage: 'interesado',
+        action: 'cerrar',
+        purchaseIntentScore: 78,
+        currentIntent: 'precio',
+        summaryText: 'Fallback de precio o interes.',
+        keyFacts: {},
+        lastMessageId: this.buildSyntheticMessageId('fallback', message),
+      };
+    }
+
+    if (['funciona', 'sirve', 'resultado', 'resultados', 'como', 'cómo'].some((keyword) => normalized.includes(keyword))) {
+      return {
+        intent: 'duda',
+        classificationSource: 'heuristic_fallback',
+        stage: 'dudoso',
+        action: 'persuadir',
+        purchaseIntentScore: 52,
+        currentIntent: 'duda',
+        summaryText: 'Fallback de objecion o duda.',
+        keyFacts: {},
+        lastMessageId: this.buildSyntheticMessageId('fallback', message),
+      };
+    }
+
+    if (this.detectHotLead(normalized)) {
+      return {
+        intent: 'compra',
+        classificationSource: 'heuristic_fallback',
+        stage: 'listo',
+        action: 'cerrar',
+        purchaseIntentScore: 92,
+        currentIntent: 'compra',
+        summaryText: 'Fallback de cierre directo.',
+        keyFacts: {},
+        lastMessageId: this.buildSyntheticMessageId('fallback', message),
+      };
+    }
+
+    return {
+      intent: 'curioso',
+      classificationSource: 'heuristic_fallback',
+      stage: 'curioso',
+      action: 'guiar',
+      purchaseIntentScore: 28,
+      currentIntent: 'curioso',
+      summaryText: 'Fallback general.',
+      keyFacts: {},
+      lastMessageId: this.buildSyntheticMessageId('fallback', message),
+    };
+  }
+
+  private buildResilientFallbackReply(message: string, intent: BotIntent): string {
+    const normalized = message.trim().toLowerCase();
+
+    if (intent === 'hot' || intent === 'compra' || ['me interesa', 'precio', 'quiero'].some((keyword) => normalized.includes(keyword))) {
+      return 'Perfecto, PHYTOEMAGRY te ayuda a bajar de peso y controlar el apetito. Pasame tu nombre, direccion y telefono para enviartelo hoy.';
+    }
+
+    if (intent === 'duda') {
+      return 'Claro, PHYTOEMAGRY ayuda a bajar de peso, acelerar el metabolismo y controlar el apetito. La mayoria empieza a notar cambios rapido. Quieres probarlo?';
+    }
+
+    if (intent === 'catalogo') {
+      return 'Claro, te explico: PHYTOEMAGRY es un suplemento natural para bajar de peso y controlar el apetito. Si quieres pedirlo, te digo ahora mismo como hacerlo.';
+    }
+
+    return 'Claro, PHYTOEMAGRY es un suplemento natural para bajar de peso sin dieta estricta. Se toma 1 capsula diaria despues del desayuno. Quieres que te explique como pedirlo?';
+  }
+
+  private async tryPersistFallbackConversation(
+    contactId: string,
+    message: string,
+    reply: string,
+  ): Promise<void> {
+    try {
+      await this.memoryService.saveMessage({
+        contactId,
+        role: 'user',
+        content: message,
+      });
+    } catch {
+      // Ignore persistence errors in resilient fallback mode.
+    }
+
+    try {
+      await this.memoryService.saveMessage({
+        contactId,
+        role: 'assistant',
+        content: reply,
+      });
+    } catch {
+      // Ignore persistence errors in resilient fallback mode.
+    }
   }
 
   private resolvePreferredReplyType(message: string): BotReplyResult['replyType'] {

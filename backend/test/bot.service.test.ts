@@ -300,7 +300,7 @@ test('always injects the mandatory combined knowledge context before replying', 
   assert.match(companyContext, /Phyto Emagry/);
 });
 
-test('throws configuration error when mandatory knowledge sources are incomplete', async () => {
+test('falls back to a resilient sales reply when mandatory knowledge sources are incomplete', async () => {
   const service = createService({
     configConfigurations: {
       instructions: {
@@ -313,10 +313,24 @@ test('throws configuration error when mandatory knowledge sources are incomplete
     companyContextText: '',
   });
 
-  await assert.rejects(
-    () => service.processIncomingMessage('18095551234', 'hola'),
-    /Configuracion incompleta del bot/i,
-  );
+  const result = await service.processIncomingMessage('18095551234', 'hola');
+
+  assert.equal(result.source, 'fallback');
+  assert.match(result.reply, /PHYTOEMAGRY|capsula|pedirlo/i);
+});
+
+test('falls back to a deterministic sales reply when AI generation fails', async () => {
+  const service = createService({
+    generateReply: async () => {
+      throw new Error('OpenAI down');
+    },
+  });
+
+  const result = await service.processIncomingMessage('18095551234', 'precio');
+
+  assert.equal(result.source, 'fallback');
+  assert.equal(result.intent, 'interes');
+  assert.match(result.reply, /pasame tu nombre, direccion y telefono|enviartelo hoy/i);
 });
 
 test('location question injects only location business context', async () => {

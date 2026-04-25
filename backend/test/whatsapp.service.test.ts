@@ -2503,6 +2503,22 @@ test('processAndDeliverMessage logs ordered delivery stages before sending to Ev
   ]);
 });
 
+test('scheduleGroupedTextFlush resets the timer for the latest text burst', async () => {
+  const service = createService();
+  const flushedContacts: string[] = [];
+
+  service.flushGroupedTextMessage = async (contactId: string) => {
+    flushedContacts.push(contactId);
+  };
+
+  service.scheduleGroupedTextFlush('18095551234', 25);
+  service.scheduleGroupedTextFlush('18095551234', 25);
+
+  await new Promise((resolve) => setTimeout(resolve, 80));
+
+  assert.deepEqual(flushedContacts, ['18095551234']);
+});
+
 test('processIncomingAudioMessage only remembers voice preference after success', async () => {
   const { service, voiceService, getRememberedVoicePreferences } = createAudioFlowService();
 
