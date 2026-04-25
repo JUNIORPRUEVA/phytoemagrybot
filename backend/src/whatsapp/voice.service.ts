@@ -2,11 +2,14 @@ import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
 import axios from 'axios';
 import OpenAI from 'openai';
 import { toFile } from 'openai/uploads';
+import { spawn } from 'node:child_process';
 
 export interface GeneratedVoiceAudio {
   buffer: Buffer;
   fileName: string;
   mimetype: string;
+  provider?: 'elevenlabs' | 'openai';
+  sourceMimetype?: string;
 }
 
 export interface PrepareSpokenReplyParams {
@@ -14,8 +17,76 @@ export interface PrepareSpokenReplyParams {
   openAiKey?: string;
 }
 
+export interface ProbeAudioDurationParams {
+  buffer: Buffer;
+  mimetype?: string;
+  fileName?: string;
+}
+
 @Injectable()
 export class VoiceService {
+  async getDurationSeconds(params: ProbeAudioDurationParams): Promise<number> {
+    if (!Buffer.isBuffer(params.buffer) || params.buffer.length === 0) {
+      throw new HttpException('Audio buffer is required', HttpStatus.BAD_REQUEST);
+    }
+
+    const mimetype = params.mimetype?.toLowerCase() ?? '';
+    const isOgg = mimetype.includes('audio/ogg') || (params.fileName ?? '').toLowerCase().endsWith('.ogg');
+
+    const args = [
+      '-hide_banner',
+      '-loglevel',
+      'error',
+      '-show_entries',
+      'format=duration',
+      '-of',
+      'default=noprint_wrappers=1:nokey=1',
+    ];
+
+    if (isOgg) {
+      args.push('-f', 'ogg');
+    }
+
+    args.push('-i', 'pipe:0');
+
+    return new Promise<number>((resolve, reject) => {
+      const process = spawn('ffprobe', args, { stdio: ['pipe', 'pipe', 'pipe'] });
+
+      const stdoutChunks: Buffer[] = [];
+      const stderrChunks: Buffer[] = [];
+
+      process.stdout.on('data', (chunk: Buffer) => stdoutChunks.push(chunk));
+      process.stderr.on('data', (chunk: Buffer) => stderrChunks.push(chunk));
+      process.on('error', (error) => {
+        reject(new HttpException(`ffprobe failed: ${error.message}`, HttpStatus.BAD_GATEWAY));
+      });
+
+      process.on('close', (code) => {
+        if (code !== 0) {
+          const details = Buffer.concat(stderrChunks).toString('utf8').trim();
+          reject(
+            new HttpException(
+              `ffprobe failed (code ${code ?? 'unknown'}): ${details || 'unknown error'}`,
+              HttpStatus.BAD_GATEWAY,
+            ),
+          );
+          return;
+        }
+
+        const raw = Buffer.concat(stdoutChunks).toString('utf8').trim();
+        const duration = Number.parseFloat(raw);
+        if (!Number.isFinite(duration) || duration <= 0) {
+          reject(new HttpException(`ffprobe returned invalid duration: ${raw || 'empty'}`, HttpStatus.BAD_GATEWAY));
+          return;
+        }
+
+        resolve(duration);
+      });
+
+      process.stdin.end(params.buffer);
+    });
+  }
+
   async transcribeAudio(
     audio: Buffer,
     openAiKey: string,
@@ -72,26 +143,33 @@ export class VoiceService {
     const openAiKey = params.openAiKey?.trim();
 
     if (elevenLabsKey && voiceId) {
-      const buffer = await this.generateWithElevenLabs(
+      const rawBuffer = await this.generateWithElevenLabs(
         text,
         elevenLabsKey,
         voiceId,
         params.baseUrl,
       );
 
+      const oggBuffer = await this.convertMp3ToOggOpus(rawBuffer);
+
       return {
-        buffer,
-        fileName: 'reply.mp3',
-        mimetype: 'audio/mpeg',
+        buffer: oggBuffer,
+        fileName: 'reply.ogg',
+        mimetype: 'audio/ogg; codecs=opus',
+        provider: 'elevenlabs',
+        sourceMimetype: 'audio/mpeg',
       };
     }
 
     if (openAiKey) {
-      const buffer = await this.generateWithOpenAi(text, openAiKey);
+      const rawBuffer = await this.generateWithOpenAi(text, openAiKey);
+      const oggBuffer = await this.convertMp3ToOggOpus(rawBuffer);
       return {
-        buffer,
-        fileName: 'reply.mp3',
-        mimetype: 'audio/mpeg',
+        buffer: oggBuffer,
+        fileName: 'reply.ogg',
+        mimetype: 'audio/ogg; codecs=opus',
+        provider: 'openai',
+        sourceMimetype: 'audio/mpeg',
       };
     }
 
@@ -182,6 +260,64 @@ export class VoiceService {
     } catch {
       throw new HttpException('Audio generation failed', HttpStatus.BAD_GATEWAY);
     }
+  }
+
+  private async convertMp3ToOggOpus(input: Buffer): Promise<Buffer> {
+    if (!Buffer.isBuffer(input) || input.length === 0) {
+      throw new HttpException('Audio conversion input is required', HttpStatus.BAD_REQUEST);
+    }
+
+    return new Promise<Buffer>((resolve, reject) => {
+      const process = spawn(
+        'ffmpeg',
+        [
+          '-hide_banner',
+          '-loglevel',
+          'error',
+          '-i',
+          'pipe:0',
+          '-c:a',
+          'libopus',
+          '-b:a',
+          '128k',
+          '-f',
+          'ogg',
+          'pipe:1',
+        ],
+        { stdio: ['pipe', 'pipe', 'pipe'] },
+      );
+
+      const stdoutChunks: Buffer[] = [];
+      const stderrChunks: Buffer[] = [];
+
+      process.stdout.on('data', (chunk: Buffer) => stdoutChunks.push(chunk));
+      process.stderr.on('data', (chunk: Buffer) => stderrChunks.push(chunk));
+      process.on('error', (error) => {
+        reject(new HttpException(`ffmpeg conversion failed: ${error.message}`, HttpStatus.BAD_GATEWAY));
+      });
+
+      process.on('close', (code) => {
+        if (code === 0) {
+          const output = Buffer.concat(stdoutChunks);
+          if (output.length === 0) {
+            reject(new HttpException('ffmpeg returned empty audio output', HttpStatus.BAD_GATEWAY));
+            return;
+          }
+          resolve(output);
+          return;
+        }
+
+        const details = Buffer.concat(stderrChunks).toString('utf8').trim();
+        reject(
+          new HttpException(
+            `ffmpeg conversion failed (code ${code ?? 'unknown'}): ${details || 'unknown error'}`,
+            HttpStatus.BAD_GATEWAY,
+          ),
+        );
+      });
+
+      process.stdin.end(input);
+    });
   }
 
   private normalizeTranscript(value: string): string {

@@ -61,8 +61,9 @@ export class WhatsAppService implements OnModuleInit {
   private static readonly AUTO_WEBHOOK_EVENTS = ['messages.upsert'];
   private static readonly SHORT_AUDIO_MAX_SECONDS = 12;
   private static readonly MAX_AUDIO_DURATION_SECONDS = 60;
-  private static readonly AUDIO_REPLY_TIMEOUT_MS = 3000;
-  private static readonly AUDIO_REPLY_MAX_WORDS = 90;
+  private static readonly MIN_OUTBOUND_AUDIO_BYTES = 12_000;
+  private static readonly MIN_OUTBOUND_AUDIO_DURATION_SECONDS = 2;
+  private static readonly OUTBOUND_AUDIO_MAX_ATTEMPTS = 2;
   private static readonly AUDIO_TRANSCRIPT_CACHE_TTL_SECONDS = 60 * 60 * 6;
   private static readonly VOICE_PREFERENCE_TTL_SECONDS = 60 * 60 * 24;
   private static readonly INCOMING_AUDIO_STREAK_TTL_SECONDS = 60 * 60 * 4;
@@ -2261,13 +2262,124 @@ export class WhatsAppService implements OnModuleInit {
     return /[.!?]$/.test(spoken) ? spoken : `${spoken}.`;
   }
 
-  private limitVoiceReplyLength(reply: string): string {
-    const words = reply.trim().split(/\s+/).filter((word) => word.length > 0);
-    if (words.length <= WhatsAppService.AUDIO_REPLY_MAX_WORDS) {
-      return reply.trim();
+  private logAudioDebug(payload: Record<string, unknown>): void {
+    this.logger.log(
+      JSON.stringify({
+        event: 'AUDIO_DEBUG',
+        ...payload,
+      }),
+    );
+  }
+
+  private async buildVoiceReply(resolved: ResolvedWhatsAppClient, reply: string): Promise<{
+    buffer: Buffer;
+    fileName: string;
+    mimetype: string;
+    provider?: string;
+    sourceMimetype?: string;
+    spokenReply: string;
+  }> {
+    const spokenReply = await this.voiceService.prepareSpokenReply({
+      text: reply,
+      openAiKey: resolved.config.openaiKey ?? undefined,
+    });
+
+    const audio = await this.voiceService.generateVoice({
+      text: spokenReply,
+      openAiKey: resolved.config.openaiKey ?? undefined,
+      elevenLabsKey: resolved.config.elevenlabsKey ?? undefined,
+      voiceId: resolved.whatsapp.audioVoiceId ?? undefined,
+      baseUrl: resolved.whatsapp.elevenLabsBaseUrl ?? undefined,
+    });
+
+    return {
+      ...audio,
+      spokenReply,
+    };
+  }
+
+  private async validateOutboundAudio(audio: {
+    buffer: Buffer;
+    fileName?: string;
+    mimetype?: string;
+  }): Promise<{ durationSeconds: number | null; bytes: number; durationOk: boolean; bytesOk: boolean }> {
+    const bytes = audio.buffer.length;
+    const bytesOk = bytes >= WhatsAppService.MIN_OUTBOUND_AUDIO_BYTES;
+
+    let durationSeconds: number | null = null;
+    let durationOk = true;
+
+    const durationProbe = (this.voiceService as any).getDurationSeconds;
+    if (typeof durationProbe === 'function') {
+      const probedDurationSeconds: number = await durationProbe.call(this.voiceService, {
+        buffer: audio.buffer,
+        mimetype: audio.mimetype,
+        fileName: audio.fileName,
+      });
+      durationSeconds = probedDurationSeconds;
+      durationOk = probedDurationSeconds >= WhatsAppService.MIN_OUTBOUND_AUDIO_DURATION_SECONDS;
     }
 
-    return `${words.slice(0, WhatsAppService.AUDIO_REPLY_MAX_WORDS).join(' ')}.`;
+    return { durationSeconds, bytes, durationOk, bytesOk };
+  }
+
+  private async buildValidatedVoiceReply(
+    resolved: ResolvedWhatsAppClient,
+    reply: string,
+    diagnostic?: DeliveryDiagnosticContext,
+    options?: { contactId?: string },
+  ): Promise<{ buffer: Buffer; fileName: string; mimetype: string }> {
+    const prepared = this.prepareReplyForVoice(reply);
+
+    for (let attempt = 1; attempt <= WhatsAppService.OUTBOUND_AUDIO_MAX_ATTEMPTS; attempt += 1) {
+      this.logAudioDebug({
+        traceId: diagnostic?.traceId ?? null,
+        contactId: options?.contactId ?? null,
+        stage: 'generate_start',
+        attempt,
+      });
+
+      const built = await this.buildVoiceReply(resolved, prepared);
+      const validation = await this.validateOutboundAudio(built);
+
+      this.logAudioDebug({
+        traceId: diagnostic?.traceId ?? null,
+        contactId: options?.contactId ?? null,
+        stage: 'generated',
+        attempt,
+        provider: built.provider ?? null,
+        fileName: built.fileName,
+        mimetype: built.mimetype,
+        sourceMimetype: built.sourceMimetype ?? null,
+        bytes: validation.bytes,
+        durationSeconds: validation.durationSeconds,
+        minBytes: WhatsAppService.MIN_OUTBOUND_AUDIO_BYTES,
+        minDurationSeconds: WhatsAppService.MIN_OUTBOUND_AUDIO_DURATION_SECONDS,
+        bytesOk: validation.bytesOk,
+        durationOk: validation.durationOk,
+      });
+
+      if (validation.bytesOk && validation.durationOk) {
+        return built;
+      }
+
+      if (attempt < WhatsAppService.OUTBOUND_AUDIO_MAX_ATTEMPTS) {
+        this.logAudioDebug({
+          traceId: diagnostic?.traceId ?? null,
+          contactId: options?.contactId ?? null,
+          stage: 'generate_retry',
+          attempt,
+          reason: 'audio_validation_failed',
+        });
+        continue;
+      }
+
+      throw new Error(
+        `Audio validation failed (bytesOk=${validation.bytesOk}, durationOk=${validation.durationOk}, bytes=${validation.bytes}, durationSeconds=${validation.durationSeconds ?? 'unknown'})`,
+      );
+    }
+
+    throw new Error('Audio validation failed');
   }
 
   private async sendVoiceReply(
@@ -2280,10 +2392,21 @@ export class WhatsAppService implements OnModuleInit {
       fallbackText?: string;
     },
   ): Promise<void> {
-    const prepared = this.prepareReplyForVoice(reply);
-
     try {
-      const audio = await this.buildVoiceReplyWithTimeout(resolved, prepared);
+      const audio = await this.buildValidatedVoiceReply(resolved, reply, diagnostic, {
+        contactId: options?.contactId,
+      });
+
+      this.logAudioDebug({
+        traceId: diagnostic?.traceId ?? null,
+        contactId: options?.contactId ?? null,
+        stage: 'send_start',
+        to,
+        fileName: audio.fileName,
+        mimetype: audio.mimetype,
+        bytes: audio.buffer.length,
+      });
+
       await this.sendAudioWithRetry(
         resolved,
         to,
@@ -2295,8 +2418,22 @@ export class WhatsAppService implements OnModuleInit {
         },
         diagnostic,
       );
+
+      this.logAudioDebug({
+        traceId: diagnostic?.traceId ?? null,
+        contactId: options?.contactId ?? null,
+        stage: 'send_success',
+        to,
+      });
       return;
     } catch (error) {
+      this.logAudioDebug({
+        traceId: diagnostic?.traceId ?? null,
+        contactId: options?.contactId ?? null,
+        stage: 'fallback_to_text',
+        to,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
       this.logger.warn(
         JSON.stringify({
           event: 'whatsapp_audio_reply_fallback_to_text',
@@ -2312,41 +2449,6 @@ export class WhatsAppService implements OnModuleInit {
       reason: 'audio_reply_fallback_to_text',
       fallbackText: options?.fallbackText,
     });
-  }
-
-  private async buildVoiceReplyWithTimeout(
-    resolved: ResolvedWhatsAppClient,
-    reply: string,
-  ): Promise<{ buffer: Buffer; fileName: string; mimetype: string }> {
-    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
-
-    try {
-      return await Promise.race([
-        (async () => {
-          const spokenReply = await this.voiceService.prepareSpokenReply({
-            text: this.limitVoiceReplyLength(reply),
-            openAiKey: resolved.config.openaiKey ?? undefined,
-          });
-
-          return this.voiceService.generateVoice({
-            text: this.limitVoiceReplyLength(spokenReply),
-            openAiKey: resolved.config.openaiKey ?? undefined,
-            elevenLabsKey: resolved.config.elevenlabsKey ?? undefined,
-            voiceId: resolved.whatsapp.audioVoiceId ?? undefined,
-            baseUrl: resolved.whatsapp.elevenLabsBaseUrl ?? undefined,
-          });
-        })(),
-        new Promise<never>((_, reject) => {
-          timeoutHandle = setTimeout(() => {
-            reject(new Error('Audio reply generation exceeded 3 seconds'));
-          }, WhatsAppService.AUDIO_REPLY_TIMEOUT_MS);
-        }),
-      ]);
-    } finally {
-      if (timeoutHandle) {
-        clearTimeout(timeoutHandle);
-      }
-    }
   }
 
   private async sendAudioWithRetry(

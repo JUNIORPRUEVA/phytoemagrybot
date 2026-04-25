@@ -64,10 +64,11 @@ function createAudioFlowService() {
     transcribeAudio: async () => 'quiero precio',
     prepareSpokenReply: async ({ text }: { text: string }) => text,
     generateVoice: async () => ({
-      buffer: Buffer.from('audio'),
-      fileName: 'reply.mp3',
-      mimetype: 'audio/mpeg',
+      buffer: Buffer.alloc(25_000, 1),
+      fileName: 'reply.ogg',
+      mimetype: 'audio/ogg; codecs=opus',
     }),
+    getDurationSeconds: async () => 3,
   };
 
   const followupService = {
@@ -2900,7 +2901,7 @@ test('processIncomingAudioMessage remembers voice preference after a successful 
   assert.equal(getRememberedVoicePreferences(), 1);
 });
 
-test('processAndDeliverMessage falls back to text when audio generation exceeds 3 seconds', async () => {
+test('processAndDeliverMessage falls back to text when generated audio is too short', async () => {
   const { service, voiceService, botService, sentTexts, sentAudios } = createAudioFlowService();
 
   botService.processIncomingMessage = async () => ({
@@ -2919,15 +2920,16 @@ test('processAndDeliverMessage falls back to text when audio generation exceeds 
     source: 'ai',
   });
 
-  voiceService.generateVoice = async () => new Promise((resolve) => {
-    setTimeout(() => {
-      resolve({
-        buffer: Buffer.from('late-audio'),
-        fileName: 'reply.mp3',
-        mimetype: 'audio/mpeg',
-      });
-    }, 3100);
-  });
+  let attempts = 0;
+  voiceService.generateVoice = async () => {
+    attempts += 1;
+    return {
+      buffer: Buffer.alloc(2000, 1),
+      fileName: 'reply.ogg',
+      mimetype: 'audio/ogg; codecs=opus',
+    };
+  };
+  voiceService.getDurationSeconds = async () => 1.2;
 
   await service.processAndDeliverMessage(
     createResolvedConfig(),
@@ -2942,6 +2944,7 @@ test('processAndDeliverMessage falls back to text when audio generation exceeds 
   assert.equal(sentAudios.length, 0);
   assert.equal(sentTexts.length, 1);
   assert.match(sentTexts[0]?.text ?? '', /Claro, te explico bien como funciona\./);
+  assert.equal(attempts, 2);
 });
 
 test('processAndDeliverMessage retries text delivery after a transient send failure', async () => {
@@ -3140,10 +3143,11 @@ test('acceptWebhook ignores group reaction payloads without triggering bot repli
     {
       transcribeAudio: async () => 'irrelevante',
       generateVoice: async () => ({
-        buffer: Buffer.from('audio'),
-        fileName: 'reply.mp3',
-        mimetype: 'audio/mpeg',
+        buffer: Buffer.alloc(25_000, 1),
+        fileName: 'reply.ogg',
+        mimetype: 'audio/ogg; codecs=opus',
       }),
+      getDurationSeconds: async () => 3,
     } as any,
   ) as any;
 
