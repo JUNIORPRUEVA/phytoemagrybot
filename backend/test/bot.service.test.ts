@@ -242,6 +242,13 @@ function createService(options?: {
       async set(key: string, value: BotReplyResult) {
         this.store.set(key, value);
       },
+      async setIfAbsent(key: string, value: BotReplyResult) {
+        if (this.store.has(key)) {
+          return false;
+        }
+        this.store.set(key, value);
+        return true;
+      },
       async del(key: string) {
         this.store.delete(key);
       },
@@ -282,6 +289,29 @@ function createService(options?: {
   );
 
   return service;
+}
+
+function getGreetingDayKey(): string {
+  try {
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/Santo_Domingo',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(new Date());
+  } catch {
+    return new Date().toISOString().slice(0, 10);
+  }
+}
+
+function findGreetingKey(store: Map<string, unknown>, contactId: string): string | null {
+  const prefix = `greeted:${contactId}:`;
+  for (const key of store.keys()) {
+    if (key.startsWith(prefix)) {
+      return key;
+    }
+  }
+  return null;
 }
 
 test('price message uses ai with a brief answer style', async () => {
@@ -959,7 +989,9 @@ test('new contact with a pure greeting gets a human greeting without running AI'
   assert.equal(aiCalled, false);
   assert.match(result.reply.toLowerCase(), /hola|hey|saludos/);
   assert.doesNotMatch(result.reply.toLowerCase(), /precio|producto|catalogo|catálogo/);
-  assert.equal((service as any).redisService.store.get('greeted:18095550005'), true);
+  const key = findGreetingKey((service as any).redisService.store, '18095550005');
+  assert.ok(key);
+  assert.equal((service as any).redisService.store.get(key as string), true);
 });
 
 test('a contact greeted in Redis does not receive the greeting shortcut again', async () => {
@@ -971,12 +1003,14 @@ test('a contact greeted in Redis does not receive the greeting shortcut again', 
     },
   });
 
-  await (service as any).redisService.set('greeted:18095550006', true);
+  const dayKey = getGreetingDayKey();
+  await (service as any).redisService.set(`greeted:18095550006:${dayKey}`, true);
 
   const result = await service.processIncomingMessage('18095550006', 'hola');
 
-  assert.equal(result.source, 'ai');
-  assert.equal(aiCalls, 1);
+  assert.equal(result.source, 'greeting');
+  assert.equal(aiCalls, 0);
+  assert.doesNotMatch(result.reply.toLowerCase(), /hola|hey|saludos/);
 });
 
 test('a closed conversation stays closed for generic messages until interest returns', async () => {

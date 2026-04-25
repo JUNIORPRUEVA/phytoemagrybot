@@ -135,6 +135,7 @@ export class BotService {
   private static readonly COMPANY_RULES_CACHE_KEY = 'company_rules';
   private static readonly SENT_MEDIA_CACHE_KEY_PREFIX = 'bot:sent-media:';
   private static readonly GREETING_TTL_SECONDS = 60 * 60 * 24;
+  private static readonly GREETING_DAY_KEY_TTL_SECONDS = 60 * 60 * 24 * 4;
   private static readonly CONVERSATION_MEMORY_TTL_SECONDS = 60 * 60 * 24;
   private static readonly CONVERSATION_END_TTL_SECONDS = 60 * 60 * 2;
   private static readonly INTENT_CACHE_TTL_SECONDS = 60 * 60;
@@ -205,8 +206,9 @@ export class BotService {
     console.log('MENSAJE:', normalizedMessage);
 
     try {
-      if (await this.shouldHandleGreeting(normalizedContactId, normalizedMessage)) {
-        console.log('GREETING ACTIVADO:', normalizedContactId);
+      const greetingOutcome = await this.getGreetingOutcome(normalizedContactId, normalizedMessage);
+      if (greetingOutcome !== 'none') {
+        console.log('GREETING ACTIVADO:', normalizedContactId, greetingOutcome);
 
         await this.memoryService.saveMessage({
           contactId: normalizedContactId,
@@ -216,7 +218,10 @@ export class BotService {
         userMessageStored = true;
 
         const conversationMemory = await this.getConversationMemory(normalizedContactId, []);
-        const greetingReply = this.buildGreetingReply(normalizedContactId, conversationMemory);
+        const greetingReply =
+          greetingOutcome === 'first'
+            ? this.buildGreetingReply(normalizedContactId, conversationMemory)
+            : this.buildGreetingNudgeReply(normalizedContactId, conversationMemory);
         const greetingDecision = this.buildGreetingDecision(normalizedMessage);
 
         await this.memoryService.saveMessage({
@@ -233,11 +238,6 @@ export class BotService {
             lastSentHadVideo: false,
             cooldownMediaUntil: null,
           }),
-        );
-        await this.redisService.set(
-          this.getGreetingKey(normalizedContactId),
-          true,
-          BotService.GREETING_TTL_SECONDS,
         );
 
         const greetingResult = this.createResult(
@@ -2084,7 +2084,7 @@ export class BotService {
   }
 
   private getGreetingKey(contactId: string): string {
-    return `greeted:${contactId}`;
+    return `greeted:${contactId}:${this.getBusinessDayKey()}`;
   }
 
   private getConversationEndKey(contactId: string): string {
@@ -2472,16 +2472,40 @@ export class BotService {
     return ['hola', 'hola!', 'buenas', 'buenos dias', 'buenos dias!', 'buenas tardes', 'buenas noches'].includes(message);
   }
 
-  private async shouldHandleGreeting(contactId: string, message: string): Promise<boolean> {
+  private async getGreetingOutcome(
+    contactId: string,
+    message: string,
+  ): Promise<'none' | 'first' | 'repeat'> {
     if (!this.isGreetingOnlyMessage(message)) {
-      return false;
+      return 'none';
     }
 
     if (await this.readRedisCache<boolean>(this.getConversationEndKey(contactId))) {
-      return false;
+      return 'none';
     }
 
-    return (await this.readRedisCache<boolean>(this.getGreetingKey(contactId))) !== true;
+    const greetingKey = this.getGreetingKey(contactId);
+
+    try {
+      const acquired = await this.redisService.setIfAbsent(
+        greetingKey,
+        true,
+        BotService.GREETING_DAY_KEY_TTL_SECONDS,
+      );
+      return acquired ? 'first' : 'repeat';
+    } catch {
+      const alreadyGreeted = (await this.readRedisCache<boolean>(greetingKey)) === true;
+      if (alreadyGreeted) {
+        return 'repeat';
+      }
+
+      await this.redisService.set(
+        greetingKey,
+        true,
+        BotService.GREETING_DAY_KEY_TTL_SECONDS,
+      );
+      return 'first';
+    }
   }
 
   private isGreetingOnlyMessage(message: string): boolean {
@@ -2517,6 +2541,36 @@ export class BotService {
     const orderedVariants = variants.slice(offset).concat(variants.slice(0, offset));
 
     return this.pickFirstUnsentMessage(orderedVariants, conversationMemory.sentMessages);
+  }
+
+  private buildGreetingNudgeReply(
+    contactId: string,
+    conversationMemory: ConversationMemoryState,
+  ): string {
+    const variants = [
+      'Dime, en que te puedo ayudar?',
+      'Dale, que necesitas saber?',
+      'Perfecto, que te gustaria saber o comprar?',
+      'Cuéntame, que buscas y te ayudo.',
+    ];
+
+    const offset = parseInt(this.hashValue(contactId).slice(0, 2), 16) % variants.length;
+    const orderedVariants = variants.slice(offset).concat(variants.slice(0, offset));
+
+    return this.pickFirstUnsentMessage(orderedVariants, conversationMemory.sentMessages);
+  }
+
+  private getBusinessDayKey(now = new Date()): string {
+    try {
+      return new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'America/Santo_Domingo',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+      }).format(now);
+    } catch {
+      return now.toISOString().slice(0, 10);
+    }
   }
 
   private buildGreetingDecision(message: string): BotDecisionState {
