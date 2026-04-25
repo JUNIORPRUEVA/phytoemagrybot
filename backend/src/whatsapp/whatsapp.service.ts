@@ -929,13 +929,30 @@ export class WhatsAppService implements OnModuleInit {
     });
 
     const conversationSendState = await this.getConversationSendState(contactId, message);
-    const uniqueReply = this.resolveUniqueOutgoingMessage(
-      botReply.reply,
+
+    const emotion = this.detectEmotion(message, {
+      inputType: messageType,
+      incomingColdStreak,
+      botReply,
+    });
+    await this.rememberLastDetectedEmotion(contactId, emotion);
+
+    const candidateReplyToSend = this.applyEmotionPersonalityToReply(emotion, botReply.reply);
+    const uniqueCandidateReplyToSend = this.resolveUniqueOutgoingMessage(
+      candidateReplyToSend,
       conversationSendState.sentMessages,
     );
 
-    const replyToSend = uniqueReply
-      ?? this.buildDuplicateRecoveryQuestion(botReply.intent, conversationSendState.sentMessages);
+    const baseDuplicateRecoveryQuestion = this.buildDuplicateRecoveryQuestion(
+      botReply.intent,
+      conversationSendState.sentMessages,
+    );
+
+    const replyToSend =
+      uniqueCandidateReplyToSend ??
+      (baseDuplicateRecoveryQuestion
+        ? this.applyEmotionPersonalityToReply(emotion, baseDuplicateRecoveryQuestion)
+        : null);
 
     if (!replyToSend) {
       console.log('MENSAJE OMITIDO: duplicado detectado');
@@ -952,14 +969,6 @@ export class WhatsAppService implements OnModuleInit {
       options?.preferAudioReply === true || (await this.hasVoiceReplyPreference(contactId));
     const wasLastBotAudio = await this.wasLastBotReplyAudio(contactId);
 
-    const emotion = this.detectEmotion(message, {
-      inputType: messageType,
-      incomingColdStreak,
-      botReply,
-    });
-    await this.rememberLastDetectedEmotion(contactId, emotion);
-    const tonedReplyToSend = this.applyEmotionPersonalityToReply(emotion, replyToSend);
-
     const sendAs = this.determineSendMode({
       contactId,
       emotion,
@@ -967,7 +976,7 @@ export class WhatsAppService implements OnModuleInit {
       incomingMessage: message,
       incomingAudioStreak,
       botReply,
-      reply: tonedReplyToSend,
+      reply: replyToSend,
       explicitVoiceRequest,
       hasVoicePreference,
       wasLastBotAudio,
@@ -991,13 +1000,13 @@ export class WhatsAppService implements OnModuleInit {
       console.log({
         replyType: botReply.replyType,
         sendAs,
-        message: tonedReplyToSend,
+        message: replyToSend,
       });
       this.logDeliveryStage('evolution_send_attempt', diagnostic, {
         sendAs,
       });
       try {
-        await this.sendTextReliably(resolved, effectiveOutboundAddress, tonedReplyToSend, diagnostic, {
+        await this.sendTextReliably(resolved, effectiveOutboundAddress, replyToSend, diagnostic, {
           contactId,
           reason: 'primary_text_reply',
           fallbackText:
@@ -1013,7 +1022,7 @@ export class WhatsAppService implements OnModuleInit {
         sendAs,
       });
       await this.rememberLastBotReplyModality(contactId, 'text');
-      await this.rememberSentMessage(contactId, conversationSendState.topic, tonedReplyToSend);
+      await this.rememberSentMessage(contactId, conversationSendState.topic, replyToSend);
     }
 
     if (deliverableMediaFiles.length > 0) {
@@ -1026,7 +1035,7 @@ export class WhatsAppService implements OnModuleInit {
           resolved,
           effectiveOutboundAddress,
           deliverableMediaFiles,
-          tonedReplyToSend,
+          replyToSend,
           diagnostic,
           {
             textAlreadySent: sendAs === 'text',
@@ -1062,13 +1071,13 @@ export class WhatsAppService implements OnModuleInit {
       console.log({
         replyType: botReply.replyType,
         sendAs,
-        message: tonedReplyToSend,
+        message: replyToSend,
       });
       this.logDeliveryStage('evolution_send_attempt', diagnostic, {
         sendAs,
       });
       try {
-        await this.sendVoiceReply(resolved, effectiveOutboundAddress, tonedReplyToSend, diagnostic, {
+        await this.sendVoiceReply(resolved, effectiveOutboundAddress, replyToSend, diagnostic, {
           contactId,
           fallbackText:
             replyToSend.trim() === fallbackMessage.trim() ? undefined : fallbackMessage,
@@ -1086,7 +1095,7 @@ export class WhatsAppService implements OnModuleInit {
       if (options?.preferAudioReply === true || this.detectExplicitVoicePreference(message)) {
         await this.rememberVoiceReplyPreference(contactId);
       }
-      await this.rememberSentMessage(contactId, conversationSendState.topic, tonedReplyToSend);
+      await this.rememberSentMessage(contactId, conversationSendState.topic, replyToSend);
     }
     this.logger.log(
       JSON.stringify({
@@ -1102,10 +1111,10 @@ export class WhatsAppService implements OnModuleInit {
     await this.followupService.registerBotReply({
       contactId,
       outboundAddress: effectiveOutboundAddress,
-      reply: tonedReplyToSend,
+      reply: replyToSend,
     });
     console.log('ENVIADA:', {
-      text: tonedReplyToSend,
+      text: replyToSend,
       mediaIds: deliverableMediaFiles.map((file) => file.fileUrl),
     });
   }
@@ -1840,17 +1849,35 @@ export class WhatsAppService implements OnModuleInit {
     const words = normalized.split(' ').filter(Boolean);
     const isShort = chars <= 8 || words.length <= 2;
 
-    const includesAny = (keywords: string[]) => keywords.some((k) => normalized.includes(this.normalizeTextForVoiceDecision(k)));
+    const includesAny = (keywords: string[]) =>
+      keywords.some((k) => normalized.includes(this.normalizeTextForVoiceDecision(k)));
 
-    if (includesAny(['lo quiero', 'me interesa', 'envialo', 'enviamelo', 'envíamelo', 'lo compro', 'como pago', 'cómo pago'])) {
+    const isQuestion = message.includes('?');
+    const isColdToken = ['ok', 'gracias'].includes(normalized);
+
+    if (includesAny(['lo quiero', 'envialo', 'enviamelo', 'envíamelo', 'lo compro', 'como pago', 'cómo pago'])) {
       return 'caliente';
     }
 
-    if (includesAny(['no entiendo', 'como funciona', 'cómo funciona', 'explicame', 'explícame'])) {
+    if (includesAny(['me interesa', 'me interesa mucho', 'quiero precio', 'quiero informacion', 'quiero información'])) {
+      return 'interesado';
+    }
+
+    if (includesAny(['no entiendo', 'no entendi', 'no entendí', 'no me queda claro', 'como funciona', 'cómo funciona', 'explicame', 'explícame'])) {
       return 'confundido';
     }
 
-    if (includesAny(['de verdad sirve', 'realmente sirve', 'sirve?', 'funciona?', 'es verdad?', 'es seguro?'])) {
+    if (
+      includesAny(['es verdad', 'es cierto', 'es seguro', 'tiene riesgos']) &&
+      (isQuestion || includesAny(['de verdad', 'realmente', 'en serio']))
+    ) {
+      return 'dudoso';
+    }
+
+    if (
+      /\b(funciona|sirve)\b/.test(normalized) &&
+      (isQuestion || includesAny(['de verdad', 'realmente', 'en serio', 'o no']))
+    ) {
       return 'dudoso';
     }
 
@@ -1862,7 +1889,11 @@ export class WhatsAppService implements OnModuleInit {
       return 'interesado';
     }
 
-    if ((isShort || includesAny(['ok', 'gracias'])) && context.incomingColdStreak >= 1) {
+    if (isColdToken) {
+      return 'frio';
+    }
+
+    if (isShort && context.incomingColdStreak >= 2) {
       return 'frio';
     }
 
@@ -1941,6 +1972,7 @@ export class WhatsAppService implements OnModuleInit {
       'explicame',
       'como funciona',
       'cómo funciona',
+      'no entiendo',
       'no entendi',
       'no entend',
       'dime bien',
@@ -2065,7 +2097,10 @@ export class WhatsAppService implements OnModuleInit {
       reasons.push('emotion_dudoso');
     }
 
-    if (incomingChars >= 120) {
+    if (incomingChars >= 220) {
+      scoreAudio = Math.max(scoreAudio, 3);
+      reasons.push('long_incoming_message');
+    } else if (incomingChars >= 120) {
       scoreAudio += 1;
       reasons.push('long_incoming_message');
     }
@@ -2090,9 +2125,12 @@ export class WhatsAppService implements OnModuleInit {
       reasons.push('bot_replyType_audio');
     }
 
+    const emotionDemandsAudio = context.emotion === 'confundido' || context.emotion === 'dudoso';
+
     if (
       (isShortMessage || asksQuickPriceOrAvailability) &&
       !asksForExplanation &&
+      !emotionDemandsAudio &&
       !context.explicitVoiceRequest &&
       !replyIsLong &&
       context.botReply.replyType !== 'audio'

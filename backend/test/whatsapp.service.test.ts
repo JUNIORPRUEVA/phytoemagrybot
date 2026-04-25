@@ -2157,6 +2157,197 @@ test('processAndDeliverMessage promotes a detailed text reply to audio when the 
   assert.equal(sentTexts.length, 0);
 });
 
+test('emotion+voice: "no entiendo" => confundido + audio + explains tone', async () => {
+  const { service, sentTexts, sentAudios, botService, voiceService } = createAudioFlowService();
+  const emotionEvents: Array<{ emotion: string; decision: string }> = [];
+  let preparedText = '';
+
+  service.logger.log = (value: string) => {
+    try {
+      const parsed = JSON.parse(value);
+      if (parsed?.event === 'EMOTION_DETECTED') {
+        emotionEvents.push({ emotion: parsed.emotion, decision: parsed.decision });
+      }
+    } catch {
+      // ignore
+    }
+  };
+
+  botService.processIncomingMessage = async () => ({
+    reply: 'Claro, te explico bien como funciona.',
+    replyType: 'text',
+    mediaFiles: [],
+    intent: 'otro',
+    decisionIntent: 'curioso',
+    stage: 'curioso',
+    action: 'guiar',
+    purchaseIntentScore: 0,
+    hotLead: false,
+    cached: false,
+    usedGallery: false,
+    usedMemory: false,
+    source: 'ai',
+  });
+
+  voiceService.prepareSpokenReply = async ({ text }: { text: string }) => {
+    preparedText = text;
+    return text;
+  };
+
+  await service.processAndDeliverMessage(
+    createResolvedConfig(),
+    '18095551234',
+    'no entiendo',
+    'text',
+    {
+      outboundAddress: '18095551234@s.whatsapp.net',
+    },
+  );
+
+  assert.equal(sentAudios.length, 1);
+  assert.equal(sentTexts.length, 0);
+  assert.equal(emotionEvents.at(-1)?.emotion, 'confundido');
+  assert.equal(emotionEvents.at(-1)?.decision, 'audio');
+  assert.match(preparedText, /^Mira, te explico bien:/);
+});
+
+test('emotion+voice: "eso funciona?" => dudoso + audio + convincing tone', async () => {
+  const { service, sentTexts, sentAudios, botService, voiceService } = createAudioFlowService();
+  const emotionEvents: Array<{ emotion: string; decision: string }> = [];
+  let preparedText = '';
+
+  service.logger.log = (value: string) => {
+    try {
+      const parsed = JSON.parse(value);
+      if (parsed?.event === 'EMOTION_DETECTED') {
+        emotionEvents.push({ emotion: parsed.emotion, decision: parsed.decision });
+      }
+    } catch {
+      // ignore
+    }
+  };
+
+  botService.processIncomingMessage = async () => ({
+    reply: 'Sí funciona, y te explico por qué.',
+    replyType: 'text',
+    mediaFiles: [],
+    intent: 'otro',
+    decisionIntent: 'curioso',
+    stage: 'curioso',
+    action: 'guiar',
+    purchaseIntentScore: 0,
+    hotLead: false,
+    cached: false,
+    usedGallery: false,
+    usedMemory: false,
+    source: 'ai',
+  });
+
+  voiceService.prepareSpokenReply = async ({ text }: { text: string }) => {
+    preparedText = text;
+    return text;
+  };
+
+  await service.processAndDeliverMessage(
+    createResolvedConfig(),
+    '18095551234',
+    'eso funciona?',
+    'text',
+    {
+      outboundAddress: '18095551234@s.whatsapp.net',
+    },
+  );
+
+  assert.equal(sentAudios.length, 1);
+  assert.equal(sentTexts.length, 0);
+  assert.equal(emotionEvents.at(-1)?.emotion, 'dudoso');
+  assert.equal(emotionEvents.at(-1)?.decision, 'audio');
+  assert.match(preparedText, /^Te digo algo claro:/);
+});
+
+test('emotion+voice: "cuanto cuesta" => interesado + text', async () => {
+  const { service, sentTexts, sentAudios, botService } = createAudioFlowService();
+  const emotionEvents: Array<{ emotion: string; decision: string }> = [];
+
+  service.logger.log = (value: string) => {
+    try {
+      const parsed = JSON.parse(value);
+      if (parsed?.event === 'EMOTION_DETECTED') {
+        emotionEvents.push({ emotion: parsed.emotion, decision: parsed.decision });
+      }
+    } catch {
+      // ignore
+    }
+  };
+
+  botService.processIncomingMessage = async () => ({
+    reply: 'Cuesta 29,90€. ¿Te digo cómo pedirlo?',
+    replyType: 'text',
+    mediaFiles: [],
+    intent: 'interes',
+    decisionIntent: 'info',
+    stage: 'interesado',
+    action: 'guiar',
+    purchaseIntentScore: 20,
+    hotLead: false,
+    cached: false,
+    usedGallery: false,
+    usedMemory: false,
+    source: 'ai',
+  });
+
+  await service.processAndDeliverMessage(
+    createResolvedConfig(),
+    '18095551234',
+    'cuanto cuesta',
+    'text',
+    {
+      outboundAddress: '18095551234@s.whatsapp.net',
+    },
+  );
+
+  assert.equal(sentAudios.length, 0);
+  assert.equal(sentTexts.length, 1);
+  assert.equal(emotionEvents.at(-1)?.emotion, 'interesado');
+  assert.equal(emotionEvents.at(-1)?.decision, 'text');
+});
+
+test('voice rule: long incoming message triggers audio', async () => {
+  const { service, sentTexts, sentAudios, botService } = createAudioFlowService();
+  const longIncoming =
+    'Hola, te cuento mi caso con detalle porque tengo dudas. '.repeat(8) +
+    'Quiero entender bien si esto me sirve y cómo se usa.';
+
+  botService.processIncomingMessage = async () => ({
+    reply: 'Claro, te explico los puntos clave.',
+    replyType: 'text',
+    mediaFiles: [],
+    intent: 'otro',
+    decisionIntent: 'curioso',
+    stage: 'curioso',
+    action: 'guiar',
+    purchaseIntentScore: 0,
+    hotLead: false,
+    cached: false,
+    usedGallery: false,
+    usedMemory: false,
+    source: 'ai',
+  });
+
+  await service.processAndDeliverMessage(
+    createResolvedConfig(),
+    '18095551234',
+    longIncoming,
+    'text',
+    {
+      outboundAddress: '18095551234@s.whatsapp.net',
+    },
+  );
+
+  assert.equal(sentAudios.length, 1);
+  assert.equal(sentTexts.length, 0);
+});
+
 test('processAndDeliverMessage sends audio when user asks for an explanation (no prior preference)', async () => {
   const { service, sentTexts, sentAudios } = createAudioFlowService();
 
@@ -2485,8 +2676,9 @@ test('processAndDeliverMessage falls back to text when media delivery fails', as
 });
 
 test('processAndDeliverMessage blocks consecutive audio replies and sends text instead', async () => {
-  const { service, sentTexts, sentAudios, botService, redisService } = createAudioFlowService();
+  const { service, sentTexts, sentAudios, botService, redisService, voiceService } = createAudioFlowService();
   const redisStore = new Map<string, unknown>();
+  let firstAudioPreparedText = '';
 
   redisService.get = async (key: string) => redisStore.get(key) ?? null;
   redisService.set = async (key: string, value: unknown) => {
@@ -2508,6 +2700,14 @@ test('processAndDeliverMessage blocks consecutive audio replies and sends text i
     usedMemory: false,
     source: 'ai',
   });
+
+  voiceService.prepareSpokenReply = async ({ text }: { text: string }) => {
+    if (!firstAudioPreparedText) {
+      firstAudioPreparedText = text;
+    }
+
+    return text;
+  };
 
   await service.processAndDeliverMessage(
     createResolvedConfig(),
@@ -2532,7 +2732,8 @@ test('processAndDeliverMessage blocks consecutive audio replies and sends text i
   assert.equal(sentAudios.length, 1);
   assert.equal(sentTexts.length, 1);
   assert.match(sentTexts[0]?.text ?? '', /Claro, te explico bien como funciona\./);
-  assert.match(sentTexts[0]?.text ?? '', /Si quieres, te ayudo\./);
+  assert.notEqual(firstAudioPreparedText.trim().length, 0);
+  assert.notEqual(sentTexts[0]?.text?.trim() ?? '', firstAudioPreparedText.trim());
 });
 
 test('prepareReplyForVoice removes emojis and leaves spoken punctuation', () => {
