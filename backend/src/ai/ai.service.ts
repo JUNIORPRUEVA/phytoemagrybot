@@ -9,6 +9,7 @@ import { AppConfigRecord } from '../config/config.types';
 import { StoredMessage } from '../memory/memory.types';
 import {
   AssistantReply,
+  AssistantResponseCandidate,
   AssistantLeadStage,
   AssistantReplyObjective,
   AssistantResponseStyle,
@@ -20,7 +21,7 @@ export class AiService {
   private static readonly MIN_REPLY_MAX_TOKENS = 420;
   private static readonly RETRY_REPLY_MAX_TOKENS = 720;
 
-  async generateReply(params: GenerateReplyParams): Promise<AssistantReply> {
+  async generateResponses(params: GenerateReplyParams): Promise<AssistantResponseCandidate[]> {
     const {
       config,
       fullPrompt,
@@ -35,6 +36,8 @@ export class AiService {
       responseStyle,
       leadStage,
       replyObjective,
+      regenerationInstruction,
+      candidateCount,
     } = params;
     const aiSettings = config.aiSettings;
     const modelName = process.env.OPENAI_MODEL?.trim() || aiSettings?.modelName || 'gpt-4o-mini';
@@ -44,7 +47,6 @@ export class AiService {
       configuredMaxCompletionTokens,
       AiService.MIN_REPLY_MAX_TOKENS,
     );
-    const memoryWindow = aiSettings?.memoryWindow ?? 6;
 
     if (!config.openaiKey.trim()) {
       throw new InternalServerErrorException('OpenAI API key is not configured');
@@ -52,47 +54,23 @@ export class AiService {
 
     try {
       const openai = new OpenAI({ apiKey: config.openaiKey });
-
-      const messages = [
-        {
-          role: 'system' as const,
-          content: this.buildSystemPromptFromConfig({
-            fullPrompt,
-            contactId,
-            config,
-            classifiedIntent,
-            decisionAction,
-            purchaseIntentScore,
-            responseStyle,
-            leadStage,
-            replyObjective,
-          }),
-        },
-        ...(companyContext.trim()
-          ? [
-              {
-                role: 'system' as const,
-                content: companyContext,
-              },
-            ]
-          : []),
-        ...(context.trim()
-          ? [
-              {
-                role: 'system' as const,
-                content: context,
-              },
-            ]
-          : []),
-        ...history.slice(-memoryWindow).map((item) => ({
-          role: item.role,
-          content: item.content.slice(0, 500),
-        })),
-        {
-          role: 'user' as const,
-          content: message.slice(0, 500),
-        },
-      ];
+      const messages = this.buildReplyMessages({
+        config,
+        fullPrompt,
+        companyContext,
+        contactId,
+        history,
+        message,
+        context,
+        classifiedIntent,
+        decisionAction,
+        purchaseIntentScore,
+        responseStyle,
+        leadStage,
+        replyObjective,
+        regenerationInstruction,
+        candidateCount,
+      });
 
       let completion = await openai.chat.completions.create({
         model: modelName,
@@ -125,7 +103,7 @@ export class AiService {
         throw new InternalServerErrorException('OpenAI returned an empty response');
       }
 
-      return this.parseAssistantReply(response);
+      return this.parseAssistantResponses(response, Math.max(candidateCount ?? 3, 2));
     } catch (error) {
       if (error instanceof InternalServerErrorException) {
         throw error;
@@ -133,6 +111,88 @@ export class AiService {
 
       throw new BadGatewayException('OpenAI request failed');
     }
+  }
+
+  async generateReply(params: GenerateReplyParams): Promise<AssistantReply> {
+    const candidates = await this.generateResponses({
+      ...params,
+      candidateCount: 3,
+    });
+    const first = candidates[0];
+
+    return {
+      type: first?.type === 'audio' ? 'audio' : 'text',
+      content: this.normalizeReplyContent(first?.text ?? '', first?.type === 'audio' ? 'audio' : 'text'),
+    };
+  }
+
+  private buildReplyMessages(params: GenerateReplyParams) {
+    const memoryWindow = params.config.aiSettings?.memoryWindow ?? 6;
+    const requestedCandidates = Math.max(params.candidateCount ?? 3, 2);
+
+    return [
+      {
+        role: 'system' as const,
+        content: this.buildSystemPromptFromConfig({
+          fullPrompt: params.fullPrompt,
+          contactId: params.contactId,
+          config: params.config,
+          classifiedIntent: params.classifiedIntent,
+          decisionAction: params.decisionAction,
+          purchaseIntentScore: params.purchaseIntentScore,
+          responseStyle: params.responseStyle,
+          leadStage: params.leadStage,
+          replyObjective: params.replyObjective,
+        }),
+      },
+      ...(params.companyContext.trim()
+        ? [
+            {
+              role: 'system' as const,
+              content: params.companyContext,
+            },
+          ]
+        : []),
+      ...(params.context.trim()
+        ? [
+            {
+              role: 'system' as const,
+              content: params.context,
+            },
+          ]
+        : []),
+      ...(params.regenerationInstruction?.trim()
+        ? [
+            {
+              role: 'system' as const,
+              content: [
+                'REGENERACION OBLIGATORIA:',
+                params.regenerationInstruction.trim(),
+              ].join('\n'),
+            },
+          ]
+        : []),
+      {
+        role: 'system' as const,
+        content: [
+          `Genera ${requestedCandidates} opciones distintas.` ,
+          'Devuelve JSON valido con la clave "responses".',
+          '"responses" debe ser un array de 2 o 3 objetos con las claves: "text", "videoId", "imageId" y "type".',
+          'Usa "type" = "text" normalmente. Usa "audio" solo si de verdad corresponde responder por voz.',
+          'Si no vas a usar media, omite videoId e imageId.',
+          'No inventes IDs de media: si eliges media, usa solo IDs o URLs disponibles en el contexto.',
+          'Cada opcion debe sonar diferente, no solo con comas o muletillas cambiadas.',
+        ].join('\n'),
+      },
+      ...params.history.slice(-memoryWindow).map((item) => ({
+        role: item.role,
+        content: item.content.slice(0, 500),
+      })),
+      {
+        role: 'user' as const,
+        content: params.message.slice(0, 500),
+      },
+    ];
   }
   private buildSystemPromptFromConfig(params: {
     fullPrompt: string;
@@ -167,9 +227,7 @@ export class AiService {
       'Habla como una persona dominicana natural: cercana, breve y humana, sin sonar robotico.',
       this.buildResponseStyleInstruction(params.responseStyle),
       this.buildFinalValidationInstruction(),
-      'Devuelve siempre un JSON valido con las claves "type" y "content".',
-      'Usa type="text" para respuestas normales.',
-      'Usa type="audio" solo cuando el usuario pida explicitamente una respuesta en audio o voz.',
+      'El backend valida todo antes de enviar, asi que devuelve opciones útiles y distintas, no variantes casi iguales.',
     ].join('\n\n');
   }
 
@@ -303,6 +361,7 @@ export class AiService {
     return [
       'No repitas literalmente frases, cierres ni ideas que ya aparezcan en el historial, salvo que sea estrictamente necesario.',
       'Si necesitas retomar algo dicho antes, dilo con otras palabras y solo si ayuda a avanzar la venta.',
+      'Cada opcion propuesta debe ser realmente diferente de las otras opciones.',
     ].join('\n');
   }
 
@@ -489,24 +548,83 @@ export class AiService {
   }
 
   private parseAssistantReply(response: string): AssistantReply {
-    try {
-      const parsed = JSON.parse(response) as Partial<AssistantReply>;
+    const candidates = this.parseAssistantResponses(response, 1);
+    const first = candidates[0];
 
-      if (typeof parsed.content === 'string' && parsed.content.trim()) {
-        const replyType = parsed.type === 'audio' ? 'audio' : 'text';
-        return {
-          type: replyType,
-          content: this.normalizeReplyContent(parsed.content, replyType),
-        };
-      }
-    } catch {
+    if (first) {
       return {
-        type: 'text',
-        content: this.normalizeReplyContent(response, 'text'),
+        type: first.type === 'audio' ? 'audio' : 'text',
+        content: this.normalizeReplyContent(first.text, first.type === 'audio' ? 'audio' : 'text'),
       };
     }
 
     throw new InternalServerErrorException('OpenAI returned an invalid response payload');
+  }
+
+  private parseAssistantResponses(
+    response: string,
+    minimumCount: number,
+  ): AssistantResponseCandidate[] {
+    try {
+      const parsed = JSON.parse(response) as {
+        responses?: Array<Partial<AssistantResponseCandidate>>;
+        type?: AssistantReply['type'];
+        content?: string;
+      };
+
+      if (Array.isArray(parsed.responses)) {
+        const candidates = parsed.responses
+          .map((candidate) => this.normalizeResponseCandidate(candidate))
+          .filter((candidate): candidate is AssistantResponseCandidate => candidate !== null);
+
+        if (candidates.length >= Math.min(minimumCount, 2)) {
+          return candidates.slice(0, 3);
+        }
+      }
+
+      if (typeof parsed.content === 'string' && parsed.content.trim()) {
+        const replyType = parsed.type === 'audio' ? 'audio' : 'text';
+        return [{
+          type: replyType,
+          text: this.normalizeReplyContent(parsed.content, replyType),
+        }];
+      }
+    } catch {
+      return [{
+        type: 'text',
+        text: this.normalizeReplyContent(response, 'text'),
+      }];
+    }
+
+    throw new InternalServerErrorException('OpenAI returned an invalid response payload');
+  }
+
+  private normalizeResponseCandidate(
+    candidate: Partial<AssistantResponseCandidate>,
+  ): AssistantResponseCandidate | null {
+    if (typeof candidate.text !== 'string' || candidate.text.trim().length === 0) {
+      return null;
+    }
+
+    const text = this.normalizeReplyContent(candidate.text, candidate.type === 'audio' ? 'audio' : 'text');
+    if (!text) {
+      return null;
+    }
+
+    const normalized: AssistantResponseCandidate = {
+      text,
+      type: candidate.type === 'audio' ? 'audio' : 'text',
+    };
+
+    if (typeof candidate.videoId === 'string' && candidate.videoId.trim()) {
+      normalized.videoId = candidate.videoId.trim();
+    }
+
+    if (typeof candidate.imageId === 'string' && candidate.imageId.trim()) {
+      normalized.imageId = candidate.imageId.trim();
+    }
+
+    return normalized;
   }
 
   private normalizeReplyContent(

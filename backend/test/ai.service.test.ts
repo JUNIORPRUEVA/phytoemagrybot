@@ -179,3 +179,25 @@ test('parseAssistantReply keeps full text content without truncating lines or wo
   assert.equal(parsed.type, 'text');
   assert.equal(parsed.content, content);
 });
+
+test('parseAssistantResponses supports multi-candidate JSON payloads', () => {
+  const service = new AiService() as any;
+  const parsed = service.parseAssistantResponses(JSON.stringify({
+    responses: [
+      {
+        text: 'Te explico rapido como funciona.',
+        imageId: 'https://example.com/imagen-1.jpg',
+        type: 'text',
+      },
+      {
+        text: 'Si quieres, te mando un video para que lo veas mejor.',
+        videoId: 'https://example.com/video-1.mp4',
+        type: 'text',
+      },
+    ],
+  }), 2);
+
+  assert.equal(parsed.length, 2);
+  assert.equal(parsed[0]?.imageId, 'https://example.com/imagen-1.jpg');
+  assert.equal(parsed[1]?.videoId, 'https://example.com/video-1.mp4');
+});

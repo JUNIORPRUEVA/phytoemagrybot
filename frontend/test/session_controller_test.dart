@@ -1,6 +1,7 @@
 import 'package:dashboard_pwa/services/auth_service.dart';
 import 'package:dashboard_pwa/services/api_client.dart';
 import 'package:dashboard_pwa/services/api_service.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
@@ -66,11 +67,58 @@ class _MemoryStorage extends FlutterSecureStorage {
   }
 }
 
+class _ThrowingStorage extends FlutterSecureStorage {
+  _ThrowingStorage();
+
+  @override
+  Future<void> write({
+    required String key,
+    String? value,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    WindowsOptions? wOptions,
+    AppleOptions? mOptions,
+  }) async {
+    throw MissingPluginException('write missing');
+  }
+
+  @override
+  Future<String?> read({
+    required String key,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    WindowsOptions? wOptions,
+    AppleOptions? mOptions,
+  }) async {
+    throw MissingPluginException('read missing');
+  }
+
+  @override
+  Future<void> delete({
+    required String key,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    WindowsOptions? wOptions,
+    AppleOptions? mOptions,
+  }) async {
+    throw MissingPluginException('delete missing');
+  }
+}
+
 class _FakeAuthService extends AuthService {
   _FakeAuthService({required this.storage})
     : super(
         baseUrl: 'https://example.com',
-        apiClient: ApiClient(baseUrl: 'https://example.com', client: _NoopClient()),
+        apiClient: ApiClient(
+          baseUrl: 'https://example.com',
+          client: _NoopClient(),
+        ),
         storage: storage,
       );
 
@@ -129,7 +177,10 @@ class _SpyApiService extends ApiService {
   _SpyApiService()
     : super(
         baseUrl: 'https://example.com',
-        apiClient: ApiClient(baseUrl: 'https://example.com', client: _NoopClient()),
+        apiClient: ApiClient(
+          baseUrl: 'https://example.com',
+          client: _NoopClient(),
+        ),
       );
 
   String? lastAppliedToken;
@@ -150,65 +201,101 @@ class _SpyApiService extends ApiService {
 }
 
 void main() {
-  test('session controller logs in, persists token, and shares it with API clients', () async {
-    final storage = _MemoryStorage();
-    final authService = _FakeAuthService(storage: storage);
-    final apiService = _SpyApiService();
-    final controller = SessionController(
-      apiService: apiService,
-      authService: authService,
-    );
+  test(
+    'session controller logs in, persists token, and shares it with API clients',
+    () async {
+      final storage = _MemoryStorage();
+      final authService = _FakeAuthService(storage: storage);
+      final apiService = _SpyApiService();
+      final controller = SessionController(
+        apiService: apiService,
+        authService: authService,
+      );
 
-    await controller.login(identifier: 'admin@phyto.com', password: 'SuperSecreta1');
+      await controller.login(
+        identifier: 'admin@phyto.com',
+        password: 'SuperSecreta1',
+      );
 
-    expect(controller.isAuthenticated, isTrue);
-    expect(controller.currentUser?.email, 'admin@phyto.com');
-    expect(await storage.read(key: 'session_token'), 'jwt-token-123');
-    expect(authService.lastAppliedToken, 'jwt-token-123');
-    expect(apiService.lastAppliedToken, 'jwt-token-123');
-  });
+      expect(controller.isAuthenticated, isTrue);
+      expect(controller.currentUser?.email, 'admin@phyto.com');
+      expect(await storage.read(key: 'session_token'), 'jwt-token-123');
+      expect(authService.lastAppliedToken, 'jwt-token-123');
+      expect(apiService.lastAppliedToken, 'jwt-token-123');
+    },
+  );
 
-  test('session controller restores persisted session on app restart', () async {
-    final storage = _MemoryStorage();
-    await storage.write(key: 'session_token', value: 'jwt-token-123');
-    final authService = _FakeAuthService(storage: storage);
-    final apiService = _SpyApiService();
-    final controller = SessionController(
-      apiService: apiService,
-      authService: authService,
-    );
+  test(
+    'session controller restores persisted session on app restart',
+    () async {
+      final storage = _MemoryStorage();
+      await storage.write(key: 'session_token', value: 'jwt-token-123');
+      final authService = _FakeAuthService(storage: storage);
+      final apiService = _SpyApiService();
+      final controller = SessionController(
+        apiService: apiService,
+        authService: authService,
+      );
 
-    await controller.restoreSession();
+      await controller.restoreSession();
 
-    expect(controller.status, SessionStatus.authenticated);
-    expect(controller.currentUser?.id, 'user-1');
-    expect(authService.lastAppliedToken, 'jwt-token-123');
-    expect(apiService.lastAppliedToken, 'jwt-token-123');
-  });
+      expect(controller.status, SessionStatus.authenticated);
+      expect(controller.currentUser?.id, 'user-1');
+      expect(authService.lastAppliedToken, 'jwt-token-123');
+      expect(apiService.lastAppliedToken, 'jwt-token-123');
+    },
+  );
 
-  test('session controller clears invalid persisted sessions and logs out locally', () async {
-    final storage = _MemoryStorage();
-    await storage.write(key: 'session_token', value: 'expired-token');
-    final authService = _FakeAuthService(storage: storage)..failGetUser = true;
-    final apiService = _SpyApiService();
-    final controller = SessionController(
-      apiService: apiService,
-      authService: authService,
-    );
+  test(
+    'session controller clears invalid persisted sessions and logs out locally',
+    () async {
+      final storage = _MemoryStorage();
+      await storage.write(key: 'session_token', value: 'expired-token');
+      final authService = _FakeAuthService(storage: storage)
+        ..failGetUser = true;
+      final apiService = _SpyApiService();
+      final controller = SessionController(
+        apiService: apiService,
+        authService: authService,
+      );
 
-    await controller.restoreSession();
+      await controller.restoreSession();
 
-    expect(controller.status, SessionStatus.unauthenticated);
-    expect(controller.currentUser, isNull);
-    expect(await storage.read(key: 'session_token'), isNull);
-    expect(apiService.cleared, isTrue);
+      expect(controller.status, SessionStatus.unauthenticated);
+      expect(controller.currentUser, isNull);
+      expect(await storage.read(key: 'session_token'), isNull);
+      expect(apiService.cleared, isTrue);
 
-    await controller.login(identifier: 'admin@phyto.com', password: 'SuperSecreta1');
-    await controller.logout();
+      await controller.login(
+        identifier: 'admin@phyto.com',
+        password: 'SuperSecreta1',
+      );
+      await controller.logout();
 
-    expect(controller.status, SessionStatus.unauthenticated);
-    expect(authService.logoutCalled, isTrue);
-    expect(await storage.read(key: 'session_token'), isNull);
-    expect(apiService.cleared, isTrue);
-  });
+      expect(controller.status, SessionStatus.unauthenticated);
+      expect(authService.logoutCalled, isTrue);
+      expect(await storage.read(key: 'session_token'), isNull);
+      expect(apiService.cleared, isTrue);
+    },
+  );
+
+  test(
+    'auth service falls back gracefully when secure storage plugin is unavailable',
+    () async {
+      final authService = AuthService(
+        baseUrl: 'https://example.com',
+        apiClient: ApiClient(
+          baseUrl: 'https://example.com',
+          client: _NoopClient(),
+        ),
+        storage: _ThrowingStorage(),
+      );
+
+      await authService.persistToken('fallback-token');
+      expect(await authService.readPersistedToken(), 'fallback-token');
+
+      await authService.clearPersistedToken();
+      expect(await authService.readPersistedToken(), isNull);
+    },
+  );
 }

@@ -6,13 +6,11 @@ class LoginPage extends StatefulWidget {
     required this.isBusy,
     required this.errorMessage,
     required this.onSubmit,
-    required this.onShowRegister,
   });
 
   final bool isBusy;
   final String? errorMessage;
   final Future<void> Function({required String identifier, required String password}) onSubmit;
-  final VoidCallback onShowRegister;
 
   @override
   State<LoginPage> createState() => _LoginPageState();
@@ -46,18 +44,7 @@ class _LoginPageState extends State<LoginPage> {
     return AuthScaffold(
       eyebrow: 'Acceso seguro',
       title: 'Inicia sesión',
-      subtitle:
-          'Entra con tu correo o teléfono para administrar el bot, los productos y la configuración.',
-      footer: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: <Widget>[
-          const Text('¿No tienes cuenta?'),
-          TextButton(
-            onPressed: widget.isBusy ? null : widget.onShowRegister,
-            child: const Text('Crear cuenta'),
-          ),
-        ],
-      ),
+      subtitle: null,
       child: Form(
         key: _formKey,
         child: Column(
@@ -70,8 +57,8 @@ class _LoginPageState extends State<LoginPage> {
             TextFormField(
               controller: _identifierController,
               decoration: const InputDecoration(
-                labelText: 'Correo o teléfono',
-                hintText: 'ejemplo@correo.com o 8090000000',
+                hintText: 'Correo o teléfono',
+                prefixIcon: Icon(Icons.alternate_email_rounded),
               ),
               textInputAction: TextInputAction.next,
               validator: (value) {
@@ -85,8 +72,8 @@ class _LoginPageState extends State<LoginPage> {
             TextFormField(
               controller: _passwordController,
               decoration: const InputDecoration(
-                labelText: 'Contraseña',
-                hintText: 'Mínimo 8 caracteres',
+                hintText: 'Contraseña',
+                prefixIcon: Icon(Icons.lock_outline_rounded),
               ),
               obscureText: true,
               onFieldSubmitted: (_) => _submit(),
@@ -124,14 +111,14 @@ class AuthScaffold extends StatelessWidget {
     required this.title,
     required this.subtitle,
     required this.child,
-    required this.footer,
+    this.footer,
   });
 
   final String eyebrow;
   final String title;
-  final String subtitle;
+  final String? subtitle;
   final Widget child;
-  final Widget footer;
+  final Widget? footer;
 
   @override
   Widget build(BuildContext context) {
@@ -139,45 +126,75 @@ class AuthScaffold extends StatelessWidget {
       body: Container(
         decoration: const BoxDecoration(
           gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: <Color>[Color(0xFFF8FAFC), Color(0xFFE0F2FE)],
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: <Color>[Color(0xFFF7FAFE), Color(0xFFEAF3FF)],
           ),
         ),
         child: Center(
           child: SingleChildScrollView(
             padding: const EdgeInsets.all(24),
             child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 460),
-              child: Card(
+              constraints: const BoxConstraints(maxWidth: 430),
+              child: Container(
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(30),
+                  border: Border.all(color: const Color(0xFFDCE7F5)),
+                  boxShadow: const <BoxShadow>[
+                    BoxShadow(
+                      color: Color(0x140F172A),
+                      blurRadius: 36,
+                      offset: Offset(0, 20),
+                    ),
+                  ],
+                ),
                 child: Padding(
-                  padding: const EdgeInsets.fromLTRB(28, 28, 28, 24),
+                  padding: const EdgeInsets.fromLTRB(34, 42, 34, 34),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: <Widget>[
-                      Text(
-                        eyebrow.toUpperCase(),
-                        style: const TextStyle(
-                          color: Color(0xFF2563EB),
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: 1.1,
-                          fontSize: 12,
-                        ),
+                      Column(
+                        children: <Widget>[
+                          Text(
+                            eyebrow.toUpperCase(),
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              color: Color(0xFF2563EB),
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 1.2,
+                              fontSize: 12,
+                            ),
+                          ),
+                          const SizedBox(height: 14),
+                          Text(
+                            title,
+                            textAlign: TextAlign.center,
+                            style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                              fontSize: 38,
+                              fontWeight: FontWeight.w700,
+                              color: const Color(0xFF1E2235),
+                            ),
+                          ),
+                          if (subtitle?.trim().isNotEmpty ?? false) ...<Widget>[
+                            const SizedBox(height: 14),
+                            Text(
+                              subtitle!,
+                              textAlign: TextAlign.center,
+                              style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                                color: const Color(0xFF5B6476),
+                                height: 1.6,
+                              ),
+                            ),
+                          ],
+                        ],
                       ),
-                      const SizedBox(height: 10),
-                      Text(
-                        title,
-                        style: Theme.of(context).textTheme.headlineMedium,
-                      ),
-                      const SizedBox(height: 10),
-                      Text(
-                        subtitle,
-                        style: Theme.of(context).textTheme.bodyLarge,
-                      ),
-                      const SizedBox(height: 24),
+                      const SizedBox(height: 34),
                       child,
-                      const SizedBox(height: 12),
-                      footer,
+                      if (footer != null) ...<Widget>[
+                        const SizedBox(height: 14),
+                        footer!,
+                      ],
                     ],
                   ),
                 ),

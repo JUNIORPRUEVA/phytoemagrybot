@@ -16,6 +16,13 @@ export interface AssistantReply {
   content: string;
 }
 
+export interface AssistantResponseCandidate {
+  text: string;
+  videoId?: string;
+  imageId?: string;
+  type?: AssistantReplyType;
+}
+
 export interface GenerateReplyParams {
   config: AppConfigRecord;
   fullPrompt: string;
@@ -30,4 +37,6 @@ export interface GenerateReplyParams {
   responseStyle: AssistantResponseStyle;
   leadStage: AssistantLeadStage;
   replyObjective: AssistantReplyObjective;
+  regenerationInstruction?: string;
+  candidateCount?: number;
 }

@@ -4,6 +4,7 @@ import { AiService } from '../ai/ai.service';
 import {
   AssistantLeadStage,
   AssistantReplyObjective,
+  AssistantResponseCandidate,
   AssistantResponseStyle,
 } from '../ai/ai.types';
 import { BotConfigService } from '../bot-config/bot-config.service';
@@ -26,6 +27,15 @@ import {
   BotTestReport,
   BotTestStepResult,
 } from './bot.types';
+import {
+  buildConversationMemoryContext,
+  ConversationMemoryState,
+  getConversationMemoryKey,
+  normalizeConversationMemory,
+  recordConversationDelivery,
+  ResponseValidationReason,
+  validateResponseCandidate,
+} from './conversation-memory';
 
 type MediaIntent = 'IMAGEN' | 'VIDEO' | 'MEDIA' | null;
 
@@ -49,6 +59,9 @@ interface SentMediaState {
 export class BotService {
   private static readonly KNOWLEDGE_CONTEXT_CACHE_KEY = 'bot:knowledge-context:v2';
   private static readonly SENT_MEDIA_CACHE_KEY_PREFIX = 'bot:sent-media:';
+  private static readonly CONVERSATION_MEMORY_TTL_SECONDS = 60 * 60 * 24;
+  private static readonly MAX_REPLY_REGENERATION_ATTEMPTS = 2;
+  private static readonly MEDIA_COOLDOWN_MS = 10 * 60 * 1000;
   private static readonly SHORT_TEXT_MESSAGE_MAX_CHARS = 40;
   private static readonly LONG_AUDIO_TRANSCRIPT_MIN_CHARS = 80;
   private static readonly LONG_REPLY_MIN_CHARS = 160;
@@ -83,6 +96,7 @@ export class BotService {
   ): Promise<BotReplyResult> {
     const normalizedContactId = contactId.trim();
     const normalizedMessage = message.trim();
+    let userMessageStored = false;
 
     if (!normalizedContactId) {
       throw new BadRequestException('contactId is required');
@@ -106,129 +120,181 @@ export class BotService {
     console.log('NUMERO:', normalizedContactId);
     console.log('MENSAJE:', normalizedMessage);
 
-    const config = await this.clientConfigService.getConfig();
-    const botConfig = await this.botConfigService.getConfig();
-    const memoryWindow = config.aiSettings?.memoryWindow ?? 6;
-    const allProducts = this.getProductsFromConfig(config);
-    const relevantProducts = this.filterRelevantProducts(allProducts, normalizedMessage);
-    console.log('PRODUCTOS:', allProducts);
-    console.log('PRODUCTOS_RELEVANTES:', relevantProducts);
-    const sentMediaState = await this.getSentMediaState(normalizedContactId);
-    const knowledgeContext = await this.getRequiredKnowledgeContext(
-      config,
-      botConfig,
-      normalizedMessage,
-      relevantProducts,
-    );
+    try {
+      const config = await this.clientConfigService.getConfig();
+      const botConfig = await this.botConfigService.getConfig();
+      const memoryWindow = config.aiSettings?.memoryWindow ?? 6;
+      const allProducts = this.getProductsFromConfig(config);
+      const relevantProducts = this.filterRelevantProducts(allProducts, normalizedMessage);
+      console.log('PRODUCTOS:', allProducts);
+      console.log('PRODUCTOS_RELEVANTES:', relevantProducts);
+      const sentMediaState = await this.getSentMediaState(normalizedContactId);
+      const knowledgeContext = await this.getRequiredKnowledgeContext(
+        config,
+        botConfig,
+        normalizedMessage,
+        relevantProducts,
+      );
 
-    await this.memoryService.saveMessage({
-      contactId: normalizedContactId,
-      role: 'user',
-      content: normalizedMessage,
-    });
+      await this.memoryService.saveMessage({
+        contactId: normalizedContactId,
+        role: 'user',
+        content: normalizedMessage,
+      });
+      userMessageStored = true;
 
-    const memoryContext = await this.memoryService.getConversationContext(
-      normalizedContactId,
-      memoryWindow,
-    );
-    const history = this.excludeCurrentUserMessage(
-      memoryContext.messages,
-      normalizedMessage,
-    );
-    const decision = await this.runDecisionEngine({
-      contactId: normalizedContactId,
-      message: normalizedMessage,
-      history,
-      memoryContext,
-      config,
-    });
-    const intent = this.mapDecisionIntentToBotIntent(decision.intent, normalizedMessage);
-    const hotLead = this.shouldTreatAsHotLead(
-      normalizedMessage,
-      intent,
-      memoryContext.clientMemory.lastIntent,
-    ) || decision.stage === 'listo';
-    const responseStyle = this.resolveResponseStyleFromDecision(decision, normalizedMessage, intent);
-    const leadStage = this.mapDecisionStageToLeadStage(decision.stage, hotLead);
-    const replyObjective = this.mapDecisionActionToReplyObjective(decision.action);
-    const usedMemory = this.hasUsefulMemory(memoryContext, history.length);
-    const mediaIntent = this.detectMediaIntent(normalizedMessage);
-    const productMediaCandidates = relevantProducts.length > 0
-      ? relevantProducts
-      : allProducts;
-    const productMediaFiles = this.selectProductMedia(
-      productMediaCandidates,
-      mediaIntent,
-      decision.action,
-    );
-    const galleryMediaFiles = productMediaFiles.length > 0
-      ? productMediaFiles
-      : await this.selectMedia(normalizedMessage, intent);
+      const memoryContext = await this.memoryService.getConversationContext(
+        normalizedContactId,
+        memoryWindow,
+      );
+      const history = this.excludeCurrentUserMessage(
+        memoryContext.messages,
+        normalizedMessage,
+      );
+      const conversationMemory = await this.getConversationMemory(normalizedContactId, history);
+      const decision = await this.runDecisionEngine({
+        contactId: normalizedContactId,
+        message: normalizedMessage,
+        history,
+        memoryContext,
+        config,
+      });
+      const intent = this.mapDecisionIntentToBotIntent(decision.intent, normalizedMessage);
+      const hotLead = this.shouldTreatAsHotLead(
+        normalizedMessage,
+        intent,
+        memoryContext.clientMemory.lastIntent,
+      ) || decision.stage === 'listo';
+      const responseStyle = this.resolveResponseStyleFromDecision(decision, normalizedMessage, intent);
+      const leadStage = this.mapDecisionStageToLeadStage(decision.stage, hotLead);
+      const replyObjective = this.mapDecisionActionToReplyObjective(decision.action);
+      const usedMemory = this.hasUsefulMemory(memoryContext, history.length) || conversationMemory.lastMessages.length > 0;
+      const mediaIntent = this.detectMediaIntent(normalizedMessage);
+      const productMediaCandidates = relevantProducts.length > 0
+        ? relevantProducts
+        : allProducts;
+      const productMediaFiles = this.selectProductMedia(
+        productMediaCandidates,
+        mediaIntent,
+        decision.action,
+      );
+      const galleryMediaFiles = productMediaFiles.length > 0
+        ? productMediaFiles
+        : await this.selectMedia(normalizedMessage, intent);
 
-    console.log('USANDO IA:', true);
-    console.log('CONTEXTO LENGTH:', knowledgeContext.length);
-    console.log('EMPRESA CONTEXTO:', knowledgeContext);
+      console.log('USANDO IA:', true);
+      console.log('CONTEXTO LENGTH:', knowledgeContext.length);
+      console.log('EMPRESA CONTEXTO:', knowledgeContext);
 
-    const reply = await this.aiService.generateReply({
-      config,
-      fullPrompt: this.botConfigService.getFullPrompt(botConfig),
-      companyContext: knowledgeContext,
-      contactId: normalizedContactId,
-      message: normalizedMessage,
-      history,
-      context: this.buildCombinedConversationContext(knowledgeContext, memoryContext),
-      classifiedIntent: decision.intent,
-      decisionAction: decision.action,
-      purchaseIntentScore: decision.purchaseIntentScore,
-      responseStyle,
-      leadStage,
-      replyObjective,
-    });
+      const validatedReply = await this.generateValidatedReply({
+        config,
+        fullPrompt: this.botConfigService.getFullPrompt(botConfig),
+        companyContext: knowledgeContext,
+        contactId: normalizedContactId,
+        message: normalizedMessage,
+        history,
+        context: this.buildCombinedConversationContext(knowledgeContext, memoryContext),
+        classifiedIntent: decision.intent,
+        decisionAction: decision.action,
+        purchaseIntentScore: decision.purchaseIntentScore,
+        responseStyle,
+        leadStage,
+        replyObjective,
+        conversationMemory,
+        candidateMediaFiles: this.shouldAttachMediaToAiReply(
+          normalizedMessage,
+          intent,
+          mediaIntent,
+          decision.action,
+          allProducts.length > 0,
+          relevantProducts.length > 0,
+        )
+          ? this.filterConversationMediaFiles(
+              this.limitOutgoingMediaFiles(galleryMediaFiles, mediaIntent, sentMediaState),
+              conversationMemory,
+            )
+          : [],
+        intent,
+      });
+      const preferredReplyType = this.resolvePreferredReplyType({
+        message: normalizedMessage,
+        reply: validatedReply.reply.content,
+        intent,
+        action: decision.action,
+        metadata,
+      });
 
-    const mediaFiles = this.shouldAttachMediaToAiReply(
-      normalizedMessage,
-      intent,
-      mediaIntent,
-      decision.action,
-      allProducts.length > 0,
-      relevantProducts.length > 0,
-    )
-      ? this.limitOutgoingMediaFiles(galleryMediaFiles, mediaIntent, sentMediaState)
-      : [];
-    const preferredReplyType = this.resolvePreferredReplyType({
-      message: normalizedMessage,
-      reply: reply.content,
-      intent,
-      action: decision.action,
-      metadata,
-    });
+      await this.memoryService.saveMessage({
+        contactId: normalizedContactId,
+        role: 'assistant',
+        content: validatedReply.reply.content,
+      });
+      await this.saveConversationMemory(
+        recordConversationDelivery(conversationMemory, {
+          messageText: validatedReply.reply.content,
+          mediaIds: validatedReply.mediaFiles.map((file) => file.fileUrl),
+          lastMessages: [normalizedMessage, validatedReply.reply.content],
+          lastIntent: decision.intent,
+          lastSentHadVideo: validatedReply.mediaFiles.some((file) => file.fileType === 'video'),
+          cooldownMediaUntil:
+            validatedReply.mediaFiles.length > 0
+              ? Date.now() + BotService.MEDIA_COOLDOWN_MS
+              : null,
+        }),
+      );
 
-    await this.memoryService.saveMessage({
-      contactId: normalizedContactId,
-      role: 'assistant',
-      content: reply.content,
-    });
+      const result = this.createResult(
+        validatedReply.reply.content,
+        validatedReply.source,
+        intent,
+        decision,
+        hotLead,
+        validatedReply.mediaFiles,
+        preferredReplyType,
+        usedMemory,
+      );
 
-    const result: BotReplyResult = {
-      reply: reply.content,
-      replyType: preferredReplyType,
-      mediaFiles,
-      intent,
-      decisionIntent: decision.intent,
-      stage: decision.stage,
-      action: decision.action,
-      purchaseIntentScore: decision.purchaseIntentScore,
-      hotLead,
-      cached: false,
-      usedGallery: mediaFiles.length > 0,
-      usedMemory,
-      source: 'ai',
-    };
+      await this.markBotResponseInDecisionState(
+        normalizedContactId,
+        validatedReply.reply.content,
+        decision,
+        validatedReply.mediaFiles,
+      );
+      console.log('RESPUESTA FINAL:', {
+        text: result.reply,
+        mediaIds: result.mediaFiles.map((file) => file.fileUrl),
+        source: result.source,
+      });
+      console.log('ENVIADA:', {
+        text: result.reply,
+        mediaIds: result.mediaFiles.map((file) => file.fileUrl),
+      });
+      this.logReply(normalizedContactId, result);
+      return result;
+    } catch (error) {
+      this.logger.error(
+        JSON.stringify({
+          event: 'bot_process_failed',
+          contactId: normalizedContactId,
+          error: error instanceof Error ? error.message : 'Unknown error',
+        }),
+        error instanceof Error ? error.stack : undefined,
+      );
 
-    await this.markBotResponseInDecisionState(normalizedContactId, reply.content, decision, mediaFiles);
-    console.log('RESPUESTA:', result.reply);
-    this.logReply(normalizedContactId, result);
-    return result;
+      if (!userMessageStored) {
+        try {
+          await this.memoryService.saveMessage({
+            contactId: normalizedContactId,
+            role: 'user',
+            content: normalizedMessage,
+          });
+        } catch {
+          // Ignore fallback persistence failures.
+        }
+      }
+
+      return this.buildFallbackResult(normalizedContactId, normalizedMessage);
+    }
   }
 
   async runBotTests(): Promise<BotTestReport> {
@@ -435,6 +501,451 @@ export class BotService {
     );
 
     return sections.join('\n\n');
+  }
+
+  private async getConversationMemory(
+    contactId: string,
+    history: StoredMessage[],
+  ): Promise<ConversationMemoryState> {
+    const stored = await this.redisService.get<ConversationMemoryState>(
+      getConversationMemoryKey(contactId),
+    );
+
+    return normalizeConversationMemory(contactId, stored, {
+      sentMessages: history
+        .filter((item) => item.role === 'assistant')
+        .map((item) => item.content),
+      lastMessages: history.map((item) => item.content),
+    });
+  }
+
+  private async saveConversationMemory(memory: ConversationMemoryState): Promise<void> {
+    await this.redisService.set(
+      getConversationMemoryKey(memory.contactId),
+      memory,
+      BotService.CONVERSATION_MEMORY_TTL_SECONDS,
+    );
+  }
+
+  private filterConversationMediaFiles(
+    mediaFiles: MediaFile[],
+    conversationMemory: ConversationMemoryState,
+  ): MediaFile[] {
+    let videoCount = 0;
+
+    return mediaFiles.filter((file) => {
+      const mediaId = file.fileUrl.trim();
+      if (!mediaId || conversationMemory.sentMedia.includes(mediaId)) {
+        return false;
+      }
+
+      if (file.fileType !== 'video') {
+        return true;
+      }
+
+      if (videoCount >= 1) {
+        return false;
+      }
+
+      videoCount += 1;
+      return true;
+    });
+  }
+
+  private buildRetryInstruction(
+    memory: ConversationMemoryState,
+    reason: ResponseValidationReason,
+    rejectedText?: string,
+  ): string {
+    return [
+      'No repitas el mismo contenido, responde diferente.',
+      `Motivo del rechazo anterior: ${reason}.`,
+      rejectedText?.trim() ? `Texto rechazado: ${rejectedText.trim()}` : '',
+      memory.sentMessages.length > 0
+        ? `Evita estos textos exactos: ${memory.sentMessages.slice(-5).join(' | ')}`
+        : '',
+      'Si no hay media nueva, responde solo con texto distinto y natural.',
+      'Si ya explicaste algo, avanza con otra formulacion o con una pregunta util.',
+    ]
+      .filter((item) => item.length > 0)
+      .join('\n');
+  }
+
+  private async generateValidatedReply(params: {
+    config: Awaited<ReturnType<ClientConfigService['getConfig']>>;
+    fullPrompt: string;
+    companyContext: string;
+    contactId: string;
+    message: string;
+    history: StoredMessage[];
+    context: string;
+    classifiedIntent: BotDecisionIntent;
+    decisionAction: BotDecisionAction;
+    purchaseIntentScore: number;
+    responseStyle: AssistantResponseStyle;
+    leadStage: AssistantLeadStage;
+    replyObjective: AssistantReplyObjective;
+    conversationMemory: ConversationMemoryState;
+    candidateMediaFiles: MediaFile[];
+    intent: BotIntent;
+  }): Promise<{
+    reply: { type: 'text' | 'audio'; content: string };
+    mediaFiles: MediaFile[];
+    source: BotReplyResult['source'];
+  }> {
+    let lastRejectedText = '';
+    let lastReason: ResponseValidationReason | null = null;
+
+    for (let attempt = 0; attempt <= BotService.MAX_REPLY_REGENERATION_ATTEMPTS; attempt += 1) {
+      const candidates = await this.aiService.generateResponses({
+        config: params.config,
+        fullPrompt: params.fullPrompt,
+        companyContext: params.companyContext,
+        contactId: params.contactId,
+        message: params.message,
+        history: params.history,
+        context: [
+          params.context,
+          buildConversationMemoryContext(params.conversationMemory),
+          this.buildMediaSelectionContext(params.candidateMediaFiles),
+        ]
+          .filter((item) => item.trim().length > 0)
+          .join('\n\n'),
+        classifiedIntent: params.classifiedIntent,
+        decisionAction: params.decisionAction,
+        purchaseIntentScore: params.purchaseIntentScore,
+        responseStyle: params.responseStyle,
+        leadStage: params.leadStage,
+        replyObjective: params.replyObjective,
+        candidateCount: 3,
+        regenerationInstruction:
+          attempt > 0 && lastReason
+            ? this.buildRetryInstruction(params.conversationMemory, lastReason, lastRejectedText)
+            : undefined,
+      });
+
+      console.log('RESPUESTAS GENERADAS:', candidates);
+      const selected = this.decideResponse(candidates, params.candidateMediaFiles, params.conversationMemory);
+
+      if (selected) {
+        console.log('RESPUESTA FINAL:', {
+          text: selected.reply.content,
+          mediaIds: selected.mediaFiles.map((file) => file.fileUrl),
+          source: selected.source,
+        });
+        return selected;
+      }
+
+      const candidateFallback = this.tryBuildMediaCandidateFallback(
+        params.candidateMediaFiles,
+        params.conversationMemory,
+      );
+      if (candidateFallback) {
+        console.log('RESPUESTA FINAL:', {
+          text: candidateFallback.reply.content,
+          mediaIds: candidateFallback.mediaFiles.map((file) => file.fileUrl),
+          source: candidateFallback.source,
+        });
+        return candidateFallback;
+      }
+
+      lastRejectedText = candidates[0]?.text ?? '';
+      lastReason = this.getLastCandidateRejectionReason(
+        candidates,
+        params.candidateMediaFiles,
+        params.conversationMemory,
+      );
+    }
+
+    return {
+      reply: {
+        type: 'text',
+        content: this.buildNonRepeatingQuestion(
+          params.message,
+          params.intent,
+          params.conversationMemory,
+        ),
+      },
+      mediaFiles: [],
+      source: 'fallback',
+    };
+  }
+
+  private decideResponse(
+    candidates: AssistantResponseCandidate[],
+    candidateMediaFiles: MediaFile[],
+    conversationMemory: ConversationMemoryState,
+  ): {
+    reply: { type: 'text' | 'audio'; content: string };
+    mediaFiles: MediaFile[];
+    source: BotReplyResult['source'];
+  } | null {
+    for (const candidate of candidates) {
+      const selectedMediaFiles = this.resolveCandidateMediaFiles(candidate, candidateMediaFiles);
+      const validation = validateResponseCandidate(
+        {
+          text: candidate.text,
+          mediaIds: selectedMediaFiles.map((file) => file.fileUrl),
+          videoIds: selectedMediaFiles
+            .filter((file) => file.fileType === 'video')
+            .map((file) => file.fileUrl),
+        },
+        conversationMemory,
+      );
+
+      if (!validation.valid) {
+        console.log('RESPUESTA RECHAZADA:', validation.reason ?? 'no_new_content');
+        continue;
+      }
+
+      return {
+        reply: {
+          type: candidate.type === 'audio' ? 'audio' : 'text',
+          content: candidate.text,
+        },
+        mediaFiles: selectedMediaFiles,
+        source: 'ai',
+      };
+    }
+
+    return null;
+  }
+
+  private getLastCandidateRejectionReason(
+    candidates: AssistantResponseCandidate[],
+    candidateMediaFiles: MediaFile[],
+    conversationMemory: ConversationMemoryState,
+  ): ResponseValidationReason {
+    for (const candidate of candidates) {
+      const selectedMediaFiles = this.resolveCandidateMediaFiles(candidate, candidateMediaFiles);
+      const validation = validateResponseCandidate(
+        {
+          text: candidate.text,
+          mediaIds: selectedMediaFiles.map((file) => file.fileUrl),
+          videoIds: selectedMediaFiles
+            .filter((file) => file.fileType === 'video')
+            .map((file) => file.fileUrl),
+        },
+        conversationMemory,
+      );
+
+      if (!validation.valid) {
+        return validation.reason ?? 'no_new_content';
+      }
+    }
+
+    return 'no_new_content';
+  }
+
+  private resolveCandidateMediaFiles(
+    candidate: AssistantResponseCandidate,
+    candidateMediaFiles: MediaFile[],
+  ): MediaFile[] {
+    if (candidate.videoId) {
+      const selectedVideo = candidateMediaFiles.find(
+        (file) => file.fileType === 'video' && file.fileUrl === candidate.videoId,
+      );
+      return selectedVideo ? [selectedVideo] : [];
+    }
+
+    if (candidate.imageId) {
+      const selectedImage = candidateMediaFiles.find(
+        (file) => file.fileType === 'image' && file.fileUrl === candidate.imageId,
+      );
+      return selectedImage ? [selectedImage] : [];
+    }
+
+    return candidateMediaFiles;
+  }
+
+  private buildMediaSelectionContext(mediaFiles: MediaFile[]): string {
+    if (mediaFiles.length === 0) {
+      return '';
+    }
+
+    return [
+      '[MEDIA_DISPONIBLE]',
+      ...mediaFiles.map((file) => {
+        const kind = file.fileType === 'video' ? 'video' : 'image';
+        return `- ${kind}: ${file.fileUrl}`;
+      }),
+      'Si eliges una media, usa exactamente la URL como videoId o imageId.',
+      'Si no hace falta media nueva, omite videoId e imageId.',
+    ].join('\n');
+  }
+
+  private tryBuildMediaCandidateFallback(
+    candidateMediaFiles: MediaFile[],
+    conversationMemory: ConversationMemoryState,
+  ): {
+    reply: { type: 'text' | 'audio'; content: string };
+    mediaFiles: MediaFile[];
+    source: BotReplyResult['source'];
+  } | null {
+    if (candidateMediaFiles.length === 0) {
+      return null;
+    }
+
+    const mediaText = this.buildNonRepeatingMediaText(candidateMediaFiles, conversationMemory);
+    if (!mediaText) {
+      return null;
+    }
+
+    const validation = validateResponseCandidate(
+      {
+        text: mediaText,
+        mediaIds: candidateMediaFiles.map((file) => file.fileUrl),
+        videoIds: candidateMediaFiles
+          .filter((file) => file.fileType === 'video')
+          .map((file) => file.fileUrl),
+      },
+      conversationMemory,
+    );
+
+    if (!validation.valid) {
+      console.log('RESPUESTA RECHAZADA:', validation.reason ?? 'no_new_content');
+      return null;
+    }
+
+    return {
+      reply: {
+        type: 'text',
+        content: mediaText,
+      },
+      mediaFiles: candidateMediaFiles,
+      source: 'ai',
+    };
+  }
+
+  private pickFirstUnsentMessage(options: string[], sentMessages: string[]): string {
+    const normalizedOptions = options
+      .map((option) => option.trim())
+      .filter((option) => option.length > 0);
+
+    return normalizedOptions.find((option) => !sentMessages.includes(option))
+      ?? normalizedOptions[0]
+      ?? 'Quieres que te ayude por precio, resultados o como se usa?';
+  }
+
+  private buildNonRepeatingQuestion(
+    message: string,
+    intent: BotIntent,
+    conversationMemory: ConversationMemoryState,
+  ): string {
+    const normalized = this.normalizeTextForMatch(message);
+
+    if (intent === 'duda' || normalized.includes('funciona') || normalized.includes('sirve')) {
+      return this.pickFirstUnsentMessage([
+        'Que duda te preocupa mas ahora, si funciona, como se usa o en cuanto tiempo se nota?',
+        'Quieres que te aclare primero si funciona, como se toma o que resultados suele notar la gente?',
+        'Dime que parte quieres que te explique mejor: funcionamiento, uso o resultados?',
+      ], conversationMemory.sentMessages);
+    }
+
+    if (intent === 'compra' || intent === 'interes' || normalized.includes('precio')) {
+      return this.pickFirstUnsentMessage([
+        'Que te interesa mas ahora, precio, resultados o como pedirlo?',
+        'Quieres que te diga primero el precio, como se usa o como seria el pedido?',
+        'Prefieres que te explique precio, uso o la forma de envio?',
+      ], conversationMemory.sentMessages);
+    }
+
+    return this.pickFirstUnsentMessage([
+      'Que quieres ver ahora, precio, fotos o como funciona?',
+      'Quieres que te ayude por precio, resultados o modo de uso?',
+      'Dime que prefieres que te explique primero: precio, uso o resultados?',
+    ], conversationMemory.sentMessages);
+  }
+
+  private buildNonRepeatingMediaText(
+    mediaFiles: MediaFile[],
+    conversationMemory: ConversationMemoryState,
+  ): string | null {
+    if (mediaFiles.some((file) => file.fileType === 'video')) {
+      return this.pickFirstUnsentMessage([
+        'Te dejo este video para que lo veas mejor 👆',
+        'Mira este video y me dices que te parece 👆',
+        'Te mando este video para que lo veas claro 👆',
+      ], conversationMemory.sentMessages);
+    }
+
+    if (mediaFiles.some((file) => file.fileType === 'image')) {
+      return this.pickFirstUnsentMessage([
+        'Te dejo otra referencia por aquí 👇',
+        'Mira esta otra imagen para que lo veas mejor 👇',
+        'Te mando otra referencia visual 👇',
+      ], conversationMemory.sentMessages);
+    }
+
+    return null;
+  }
+
+  private buildFallbackDecisionState(contactId: string, message: string): BotDecisionState {
+    return {
+      intent: 'otro',
+      classificationSource: 'heuristic_fallback',
+      stage: 'curioso',
+      action: 'guiar',
+      purchaseIntentScore: 0,
+      currentIntent: 'otro',
+      summaryText: 'Fallback temporal por error interno.',
+      keyFacts: {},
+      lastMessageId: this.buildSyntheticMessageId(contactId, message),
+    };
+  }
+
+  private async buildFallbackResult(
+    contactId: string,
+    message: string,
+  ): Promise<BotReplyResult> {
+    const conversationMemory = await this.getConversationMemory(contactId, []);
+    const fallbackReply = this.pickFirstUnsentMessage([
+      'Ahora mismo estoy cargando la información, dame un momentico 🙏',
+      'Dame un momentico 🙏 estoy terminando de cargar la información para responderte bien.',
+      'Estoy cargando la información para responderte mejor, dame un momentico 🙏',
+      this.buildNonRepeatingQuestion(message, this.detectIntent(message), conversationMemory),
+    ], conversationMemory.sentMessages);
+
+    try {
+      await this.memoryService.saveMessage({
+        contactId,
+        role: 'assistant',
+        content: fallbackReply,
+      });
+      await this.saveConversationMemory(
+        recordConversationDelivery(conversationMemory, {
+          messageText: fallbackReply,
+          lastMessages: [message, fallbackReply],
+          lastIntent: this.detectIntent(message),
+          lastSentHadVideo: false,
+          cooldownMediaUntil: null,
+        }),
+      );
+    } catch {
+      // Ignore fallback persistence failures.
+    }
+
+    const result = this.createResult(
+      fallbackReply,
+      'fallback',
+      this.detectIntent(message),
+      this.buildFallbackDecisionState(contactId, message),
+      false,
+      [],
+      'text',
+      conversationMemory.lastMessages.length > 0,
+    );
+
+    console.log('RESPUESTA FINAL:', {
+      text: result.reply,
+      mediaIds: [],
+      source: result.source,
+    });
+    console.log('ENVIADA:', {
+      text: result.reply,
+      mediaIds: [],
+    });
+    return result;
   }
 
   private buildCombinedConversationContext(

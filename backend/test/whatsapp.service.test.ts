@@ -21,6 +21,7 @@ function createService() {
 }
 
 function createAudioFlowService() {
+  const redisStore = new Map<string, unknown>();
   const botService: any = {
     processIncomingMessage: async () => ({
       reply: 'Te ayudo ahora mismo',
@@ -40,8 +41,10 @@ function createAudioFlowService() {
   };
 
   const redisService = {
-    get: async () => null,
-    set: async () => undefined,
+    get: async (key: string) => redisStore.get(key) ?? null,
+    set: async (key: string, value: unknown) => {
+      redisStore.set(key, value);
+    },
     setIfAbsent: async () => true,
     appendGroupedMessage: async () => false,
     consumeGroupedMessage: async () => null,
@@ -2090,6 +2093,10 @@ test('processAndDeliverMessage can send media and then one audio reply', async (
     to: string,
     mediaFiles: Array<{ fileUrl: string }>,
   ) => {
+    if (mediaFiles.length === 0) {
+      return;
+    }
+
     deliveredMedia.push(`${to}:${mediaFiles[0]?.fileUrl ?? ''}`);
   };
 
@@ -2108,6 +2115,161 @@ test('processAndDeliverMessage can send media and then one audio reply', async (
   assert.equal(sentTexts.length, 0);
   assert.equal(sentAudios.length, 1);
   assert.equal(sentAudios[0]?.to, '18095551234@s.whatsapp.net');
+});
+
+test('processAndDeliverMessage omits an already sent video and rewrites duplicate text', async () => {
+  const { service, sentTexts, botService } = createAudioFlowService();
+  const deliveredMedia: string[] = [];
+
+  botService.processIncomingMessage = async () => ({
+    reply: 'Te comparto un video para que veas como funciona.',
+    replyType: 'text',
+    mediaFiles: [{
+      id: 1,
+      title: 'video-demo',
+      description: null,
+      fileUrl: 'https://example.com/producto-demo.mp4',
+      fileType: 'video',
+      createdAt: new Date(),
+    }],
+    intent: 'catalogo',
+    decisionIntent: 'info',
+    stage: 'interesado',
+    action: 'guiar',
+    purchaseIntentScore: 40,
+    hotLead: false,
+    cached: false,
+    usedGallery: true,
+    usedMemory: false,
+    source: 'ai',
+  });
+  service.deliverMatchedMedia = async (
+    _resolved: unknown,
+    to: string,
+    mediaFiles: Array<{ fileUrl: string }>,
+  ) => {
+    if (mediaFiles.length === 0) {
+      return;
+    }
+
+    deliveredMedia.push(`${to}:${mediaFiles[0]?.fileUrl ?? ''}`);
+  };
+
+  await service.processAndDeliverMessage(
+    createResolvedConfig(),
+    '18095551234',
+    'tienes video del producto?',
+    'text',
+    {
+      outboundAddress: '18095551234@s.whatsapp.net',
+    },
+  );
+
+  await service.processAndDeliverMessage(
+    createResolvedConfig(),
+    '18095551234',
+    'me vuelves a mandar el video?',
+    'text',
+    {
+      outboundAddress: '18095551234@s.whatsapp.net',
+    },
+  );
+
+  assert.equal(deliveredMedia.length, 1);
+  assert.equal(sentTexts.length, 2);
+  assert.equal(sentTexts[0]?.text, 'Te comparto un video para que veas como funciona.');
+  assert.equal(sentTexts[1]?.text, 'Claro, te comparto un video para que veas como funciona.');
+});
+
+test('processAndDeliverMessage allows sending a video again after the topic changes', async () => {
+  const { service, botService } = createAudioFlowService();
+  const deliveredMedia: string[] = [];
+
+  botService.processIncomingMessage = async (_contactId: string, message: string) => {
+    if (message.includes('ubicados')) {
+      return {
+        reply: 'Estamos ubicados en el centro de la ciudad.',
+        replyType: 'text',
+        mediaFiles: [],
+        intent: 'ubicacion',
+        decisionIntent: 'info',
+        stage: 'interesado',
+        action: 'guiar',
+        purchaseIntentScore: 20,
+        hotLead: false,
+        cached: false,
+        usedGallery: false,
+        usedMemory: false,
+        source: 'ai',
+      };
+    }
+
+    return {
+      reply: 'Te comparto un video para que veas como funciona.',
+      replyType: 'text',
+      mediaFiles: [{
+        id: 1,
+        title: 'video-demo',
+        description: null,
+        fileUrl: 'https://example.com/producto-demo.mp4',
+        fileType: 'video',
+        createdAt: new Date(),
+      }],
+      intent: 'catalogo',
+      decisionIntent: 'info',
+      stage: 'interesado',
+      action: 'guiar',
+      purchaseIntentScore: 40,
+      hotLead: false,
+      cached: false,
+      usedGallery: true,
+      usedMemory: false,
+      source: 'ai',
+    };
+  };
+  service.deliverMatchedMedia = async (
+    _resolved: unknown,
+    to: string,
+    mediaFiles: Array<{ fileUrl: string }>,
+  ) => {
+    if (mediaFiles.length === 0) {
+      return;
+    }
+
+    deliveredMedia.push(`${to}:${mediaFiles[0]?.fileUrl ?? ''}`);
+  };
+
+  await service.processAndDeliverMessage(
+    createResolvedConfig(),
+    '18095551234',
+    'tienes video del producto?',
+    'text',
+    {
+      outboundAddress: '18095551234@s.whatsapp.net',
+    },
+  );
+
+  await service.processAndDeliverMessage(
+    createResolvedConfig(),
+    '18095551234',
+    'donde estan ubicados?',
+    'text',
+    {
+      outboundAddress: '18095551234@s.whatsapp.net',
+    },
+  );
+
+  await service.processAndDeliverMessage(
+    createResolvedConfig(),
+    '18095551234',
+    'mandame el video otra vez',
+    'text',
+    {
+      outboundAddress: '18095551234@s.whatsapp.net',
+    },
+  );
+
+  assert.equal(deliveredMedia.length, 2);
 });
 
 test('processAndDeliverMessage falls back to text when media delivery fails', async () => {
@@ -2156,10 +2318,10 @@ test('processAndDeliverMessage falls back to text when media delivery fails', as
 
 test('processAndDeliverMessage blocks consecutive audio replies and sends text instead', async () => {
   const { service, sentTexts, sentAudios, botService, redisService } = createAudioFlowService();
-  const redisStore = new Map<string, string>();
+  const redisStore = new Map<string, unknown>();
 
   redisService.get = async (key: string) => redisStore.get(key) ?? null;
-  redisService.set = async (key: string, value: string) => {
+  redisService.set = async (key: string, value: unknown) => {
     redisStore.set(key, value);
   };
 
@@ -2201,7 +2363,7 @@ test('processAndDeliverMessage blocks consecutive audio replies and sends text i
 
   assert.equal(sentAudios.length, 1);
   assert.equal(sentTexts.length, 1);
-  assert.equal(sentTexts[0]?.text, 'Claro, te explico bien como funciona.');
+  assert.equal(sentTexts[0]?.text, 'Claro, te explico bien como funciona. Si quieres, te ayudo.');
 });
 
 test('prepareReplyForVoice removes emojis and leaves spoken punctuation', () => {

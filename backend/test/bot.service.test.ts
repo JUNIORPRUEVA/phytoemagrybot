@@ -40,6 +40,7 @@ function createService(options?: {
     };
   };
   generateReply?: (params: Record<string, unknown>) => { type: 'text' | 'audio'; content: string } | Promise<{ type: 'text' | 'audio'; content: string }>;
+  generateResponses?: (params: Record<string, unknown>) => Array<{ text: string; videoId?: string; imageId?: string; type?: 'text' | 'audio' }> | Promise<Array<{ text: string; videoId?: string; imageId?: string; type?: 'text' | 'audio' }>>;
   classifyIntent?: (params: Record<string, unknown>) => string | Promise<string>;
   onGenerateReply?: (params: Record<string, unknown>) => void;
   onClassifyIntent?: (params: Record<string, unknown>) => void;
@@ -73,6 +74,26 @@ function createService(options?: {
           type: 'text' as const,
           content: options?.aiReply ?? 'Claro 👌 te ayudo con eso.',
         };
+      },
+      async generateResponses(params: Record<string, unknown>) {
+        options?.onGenerateReply?.(params);
+
+        if (options?.generateResponses) {
+          return options.generateResponses(params);
+        }
+
+        if (options?.generateReply) {
+          const single = await options.generateReply(params);
+          return [{
+            text: single.content,
+            type: single.type,
+          }];
+        }
+
+        return [{
+          text: options?.aiReply ?? 'Claro 👌 te ayudo con eso.',
+          type: 'text' as const,
+        }];
       },
     } as any,
     {
@@ -642,7 +663,8 @@ test('repeated message still goes through AI and does not use reply cache shortc
 
   assert.equal(first.cached, false);
   assert.equal(second.cached, false);
-  assert.equal(second.source, 'ai');
+  assert.notEqual(second.source, 'cache');
+  assert.notEqual(second.reply, first.reply);
 });
 
 test('catalog request limits outgoing images to avoid saturating the client', async () => {
@@ -899,8 +921,8 @@ test('does not repeat images that were already sent to the same contact', async 
       'https://example.com/product-detox-2.jpg',
     ],
   );
-  assert.equal(second.mediaFiles.length, 1);
-  assert.equal(second.mediaFiles[0]?.fileUrl, 'https://example.com/product-detox-3.jpg');
+  assert.equal(second.mediaFiles.length, 0);
+  assert.notEqual(second.reply, first.reply);
 });
 
 test('video request uses product videos when available', async () => {
@@ -1427,4 +1449,135 @@ test('recurrent customer uses summary and history to avoid repeating the same an
   assert.match(result.reply.toLowerCase(), /ya sabes el precio|lo importante es que si ayuda/);
   assert.equal(replies[0], result.reply);
   assert.doesNotMatch(result.reply.toLowerCase(), /^cuesta 1,500 pesos\.?$/);
+});
+
+test('regenerates when AI returns a duplicated text already sent to the contact', async () => {
+  const capturedContexts: string[] = [];
+  const capturedRegenerationInstructions: string[] = [];
+  let attempts = 0;
+  const service = createService({
+    memoryContext: {
+      messages: [
+        { role: 'user', content: 'precio?' },
+        { role: 'assistant', content: 'Cuesta 1,500 pesos.' },
+      ],
+    },
+    generateReply: async (params) => {
+      capturedContexts.push(String(params.context ?? ''));
+      capturedRegenerationInstructions.push(String(params.regenerationInstruction ?? ''));
+      attempts += 1;
+
+      if (attempts === 1) {
+        return { type: 'text', content: 'Cuesta 1,500 pesos.' };
+      }
+
+      return {
+        type: 'text',
+        content: 'Cuesta 1,500 pesos, y si quieres te explico ahora mismo como pedirlo.',
+      };
+    },
+  });
+
+  const result = await service.processIncomingMessage('18095559994', 'precio?');
+
+  assert.equal(attempts, 2);
+  assert.equal(result.source, 'ai');
+  assert.notEqual(result.reply, 'Cuesta 1,500 pesos.');
+  assert.match(capturedContexts[0] ?? '', /Textos ya enviados, no los repitas exactos/i);
+  assert.match(capturedRegenerationInstructions[1] ?? '', /No repitas el mismo contenido, responde diferente/i);
+});
+
+test('does not resend the same product video twice and falls back to a new question', async () => {
+  const service = createService({
+    configConfigurations: {
+      instructions: {
+        identity: {
+          assistantName: 'Aura',
+        },
+        products: [
+          {
+            id: 'detox-1',
+            titulo: 'Te Detox Premium',
+            descripcion_corta: 'Ayuda a digestion y bienestar.',
+            descripcion_completa: 'Infusion herbal para apoyar digestion y desinflamar.',
+            precio: 1500,
+            precio_minimo: 1300,
+            imagenes: ['https://example.com/product-detox-1.jpg'],
+            videos: ['https://example.com/product-detox.mp4'],
+            activo: true,
+          },
+        ],
+      },
+    },
+    generateReply: async () => ({
+      type: 'text',
+      content: 'Claro, te mando el video ahora.',
+    }),
+  });
+
+  const first = await service.processIncomingMessage('18095559995', 'mandame el video');
+  const second = await service.processIncomingMessage('18095559995', 'mandame el video otra vez');
+
+  assert.equal(first.mediaFiles.length, 1);
+  assert.equal(first.mediaFiles[0]?.fileUrl, 'https://example.com/product-detox.mp4');
+  assert.equal(second.mediaFiles.length, 0);
+  assert.equal(second.source, 'fallback');
+  assert.match(second.reply, /\?/);
+});
+
+test('respects media cooldown even when there is a new image available', async () => {
+  const service = createService({
+    configConfigurations: {
+      instructions: {
+        identity: {
+          assistantName: 'Aura',
+        },
+        products: [
+          {
+            id: 'detox-1',
+            titulo: 'Te Detox Premium',
+            descripcion_corta: 'Ayuda a digestion y bienestar.',
+            descripcion_completa: 'Infusion herbal para apoyar digestion y desinflamar.',
+            precio: 1500,
+            precio_minimo: 1300,
+            imagenes: [
+              'https://example.com/product-detox-1.jpg',
+              'https://example.com/product-detox-2.jpg',
+            ],
+            videos: [],
+            activo: true,
+          },
+        ],
+      },
+    },
+    generateResponses: async () => ([
+      {
+        text: 'Te dejo una referencia para que lo veas mejor.',
+      },
+      {
+        text: 'Mira esta imagen y me dices que te parece.',
+      },
+    ]),
+  });
+
+  const first = await service.processIncomingMessage('18095559997', 'mandame una foto');
+  const second = await service.processIncomingMessage('18095559997', 'mandame otra foto');
+
+  assert.equal(first.mediaFiles.length > 0, true);
+  assert.equal(second.mediaFiles.length, 0);
+  assert.notEqual(second.reply, first.reply);
+});
+
+test('uses a dynamic human fallback instead of a fixed bot configuration error', async () => {
+  const service = createService({
+    generateReply: async () => {
+      throw new Error('OpenAI unavailable');
+    },
+  });
+
+  const result = await service.processIncomingMessage('18095559996', 'hola');
+
+  assert.equal(result.source, 'fallback');
+  assert.doesNotMatch(result.reply, /Configuracion incompleta del bot/i);
+  assert.match(result.reply, /momentico|cargando/i);
 });

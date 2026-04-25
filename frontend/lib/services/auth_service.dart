@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import 'api_client.dart';
@@ -65,6 +66,7 @@ class AuthService {
 
   final ApiClient _apiClient;
   final FlutterSecureStorage _storage;
+  String? _fallbackTokenCache;
 
   void setSessionToken(String? token) {
     _apiClient.setSessionToken(token);
@@ -174,16 +176,53 @@ class AuthService {
     await _apiClient.deleteJson('/users/$id');
   }
 
-  Future<void> persistToken(String token) {
-    return _storage.write(key: _tokenStorageKey, value: token);
+  Future<void> persistToken(String token) async {
+    _fallbackTokenCache = token;
+
+    try {
+      await _storage.write(key: _tokenStorageKey, value: token);
+    } on MissingPluginException {
+      debugPrint(
+        'flutter_secure_storage plugin unavailable; using in-memory auth token fallback.',
+      );
+    } on PlatformException catch (error) {
+      debugPrint(
+        'flutter_secure_storage write failed: ${error.message ?? error.code}',
+      );
+    }
   }
 
-  Future<String?> readPersistedToken() {
-    return _storage.read(key: _tokenStorageKey);
+  Future<String?> readPersistedToken() async {
+    try {
+      final persistedToken = await _storage.read(key: _tokenStorageKey);
+      return persistedToken ?? _fallbackTokenCache;
+    } on MissingPluginException {
+      debugPrint(
+        'flutter_secure_storage plugin unavailable while reading token; using in-memory auth token fallback.',
+      );
+      return _fallbackTokenCache;
+    } on PlatformException catch (error) {
+      debugPrint(
+        'flutter_secure_storage read failed: ${error.message ?? error.code}',
+      );
+      return _fallbackTokenCache;
+    }
   }
 
-  Future<void> clearPersistedToken() {
-    return _storage.delete(key: _tokenStorageKey);
+  Future<void> clearPersistedToken() async {
+    _fallbackTokenCache = null;
+
+    try {
+      await _storage.delete(key: _tokenStorageKey);
+    } on MissingPluginException {
+      debugPrint(
+        'flutter_secure_storage plugin unavailable while clearing token; cleared in-memory auth token fallback only.',
+      );
+    } on PlatformException catch (error) {
+      debugPrint(
+        'flutter_secure_storage delete failed: ${error.message ?? error.code}',
+      );
+    }
   }
 }
 
@@ -208,7 +247,18 @@ class SessionController extends ChangeNotifier {
     _status = SessionStatus.loading;
     notifyListeners();
 
-    final token = await authService.readPersistedToken();
+    String? token;
+
+    try {
+      token = await authService.readPersistedToken();
+    } catch (error) {
+      _currentUser = null;
+      _errorMessage = _cleanError(error);
+      _status = SessionStatus.unauthenticated;
+      notifyListeners();
+      return;
+    }
+
     if (token == null || token.trim().isEmpty) {
       _status = SessionStatus.unauthenticated;
       notifyListeners();

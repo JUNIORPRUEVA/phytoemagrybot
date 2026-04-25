@@ -2,12 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import 'pages/login_page.dart';
-import 'pages/register_page.dart';
 import 'services/auth_service.dart';
 import 'services/api_service.dart';
 import 'widgets/dashboard_shell.dart';
 
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
   runApp(const DashboardApp());
 }
 
@@ -22,7 +22,6 @@ class _DashboardAppState extends State<DashboardApp> {
   late final ApiService _apiService;
   late final AuthService _authService;
   late final SessionController _sessionController;
-  bool _showRegister = false;
 
   @override
   void initState() {
@@ -95,7 +94,10 @@ class _DashboardAppState extends State<DashboardApp> {
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
         fillColor: const Color(0xFFF8FAFC),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 16,
+          vertical: 18,
+        ),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(18),
           borderSide: const BorderSide(color: borderColor),
@@ -164,38 +166,13 @@ class _DashboardAppState extends State<DashboardApp> {
             return const _SessionLoadingPage();
           }
 
-          if (_sessionController.isAuthenticated && _sessionController.currentUser != null) {
+          if (_sessionController.isAuthenticated &&
+              _sessionController.currentUser != null) {
             return DashboardShell(
               apiService: _apiService,
               authService: _authService,
               currentUser: _sessionController.currentUser!,
               onLogout: _sessionController.logout,
-            );
-          }
-
-          if (_showRegister) {
-            return RegisterPage(
-              isBusy: _sessionController.isBusy,
-              errorMessage: _sessionController.errorMessage,
-              onSubmit: ({
-                required String name,
-                required String email,
-                required String? phone,
-                required String password,
-              }) {
-                return _sessionController.register(
-                  name: name,
-                  email: email,
-                  phone: phone,
-                  password: password,
-                );
-              },
-              onShowLogin: () {
-                _sessionController.clearError();
-                setState(() {
-                  _showRegister = false;
-                });
-              },
             );
           }
 
@@ -207,12 +184,6 @@ class _DashboardAppState extends State<DashboardApp> {
                 identifier: identifier,
                 password: password,
               );
-            },
-            onShowRegister: () {
-              _sessionController.clearError();
-              setState(() {
-                _showRegister = true;
-              });
             },
           );
         },

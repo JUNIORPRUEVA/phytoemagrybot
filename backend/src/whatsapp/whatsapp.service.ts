@@ -50,6 +50,11 @@ type DeliveryDiagnosticContext = {
   recipientAddress?: string | null;
   recipientNumber?: string | null;
 };
+type ConversationSendState = {
+  topic: string;
+  sentVideos: string[];
+  sentMessages: string[];
+};
 
 @Injectable()
 export class WhatsAppService implements OnModuleInit {
@@ -64,6 +69,10 @@ export class WhatsAppService implements OnModuleInit {
   private static readonly AUDIO_REPLY_MAX_WORDS = 90;
   private static readonly AUDIO_TRANSCRIPT_CACHE_TTL_SECONDS = 60 * 60 * 6;
   private static readonly VOICE_PREFERENCE_TTL_SECONDS = 60 * 60 * 24 * 30;
+  private static readonly CONVERSATION_SEND_STATE_TTL_SECONDS = 60 * 60 * 24;
+  private static readonly MAX_SENT_MESSAGES_MEMORY = 20;
+  private static readonly MAX_SENT_VIDEOS_MEMORY = 20;
+  private static readonly MAX_VIDEOS_PER_TOPIC = 2;
   private static readonly INBOUND_MESSAGE_DEDUP_TTL_SECONDS = 60 * 10;
   private static readonly MESSAGE_JID_CORRELATION_TTL_SECONDS = 60 * 60 * 24;
   private static readonly LID_JID_MAPPING_TTL_SECONDS = 60 * 60 * 24 * 30;
@@ -798,7 +807,7 @@ export class WhatsAppService implements OnModuleInit {
   ): Promise<void> {
     const fallbackMessage =
       resolved.whatsapp.fallbackMessage ??
-      'En este momento no pude procesar tu mensaje. Intenta nuevamente en unos minutos.';
+      'Ahora mismo estoy cargando la información, dame un momentico 🙏';
     const outboundAddress = options?.outboundAddress?.trim() || '';
     const diagnostic = this.mergeDeliveryDiagnosticContext(options?.diagnostic, {
       contactId,
@@ -865,6 +874,25 @@ export class WhatsAppService implements OnModuleInit {
       hotLead: botReply.hotLead,
     });
 
+    const conversationSendState = await this.getConversationSendState(contactId, message);
+    const uniqueReply = this.resolveUniqueOutgoingMessage(
+      botReply.reply,
+      conversationSendState.sentMessages,
+    );
+
+    const replyToSend = uniqueReply
+      ?? this.buildDuplicateRecoveryQuestion(botReply.intent, conversationSendState.sentMessages);
+
+    if (!replyToSend) {
+      console.log('MENSAJE OMITIDO: duplicado detectado');
+      return;
+    }
+
+    const deliverableMediaFiles = this.filterDeliverableMediaFiles(
+      botReply.mediaFiles,
+      conversationSendState,
+    );
+
     const sendAs = await this.shouldSendAudioReply(resolved, contactId, botReply.replyType)
       ? 'audio'
       : 'text';
@@ -876,17 +904,17 @@ export class WhatsAppService implements OnModuleInit {
       console.log({
         replyType: botReply.replyType,
         sendAs,
-        message: botReply.reply,
+        message: replyToSend,
       });
       this.logDeliveryStage('evolution_send_attempt', diagnostic, {
         sendAs,
       });
       try {
-        await this.sendTextReliably(resolved, outboundAddress, botReply.reply, diagnostic, {
+        await this.sendTextReliably(resolved, outboundAddress, replyToSend, diagnostic, {
           contactId,
           reason: 'primary_text_reply',
           fallbackText:
-            botReply.reply.trim() === fallbackMessage.trim() ? undefined : fallbackMessage,
+            replyToSend.trim() === fallbackMessage.trim() ? undefined : fallbackMessage,
         });
       } catch (error) {
         this.logDeliveryFailure('evolution_send', error, diagnostic, {
@@ -898,20 +926,24 @@ export class WhatsAppService implements OnModuleInit {
         sendAs,
       });
       await this.rememberLastBotReplyModality(contactId, 'text');
+      await this.rememberSentMessage(contactId, conversationSendState.topic, replyToSend);
     }
 
-    if (botReply.mediaFiles.length > 0) {
+    if (deliverableMediaFiles.length > 0) {
       this.logDeliveryStage('evolution_send_attempt', diagnostic, {
         sendAs: 'media',
-        mediaCount: botReply.mediaFiles.length,
+        mediaCount: deliverableMediaFiles.length,
       });
       try {
         await this.deliverMatchedMedia(
           resolved,
           outboundAddress,
-          botReply.mediaFiles,
-          botReply.reply,
+          deliverableMediaFiles,
+          replyToSend,
           diagnostic,
+          {
+            textAlreadySent: sendAs === 'text',
+          },
         );
         mediaDelivered = true;
       } catch (error) {
@@ -923,7 +955,7 @@ export class WhatsAppService implements OnModuleInit {
             event: 'whatsapp_media_delivery_fallback_to_text',
             traceId: diagnostic.traceId ?? null,
             contactId,
-            mediaCount: botReply.mediaFiles.length,
+            mediaCount: deliverableMediaFiles.length,
             error: error instanceof Error ? error.message : 'Unknown error',
           }),
         );
@@ -932,8 +964,9 @@ export class WhatsAppService implements OnModuleInit {
         usedGallery = true;
         this.logDeliveryStage('evolution_send_completed', diagnostic, {
           sendAs: 'media',
-          mediaCount: botReply.mediaFiles.length,
+          mediaCount: deliverableMediaFiles.length,
         });
+        await this.rememberSentVideos(contactId, conversationSendState.topic, deliverableMediaFiles);
       }
 
     }
@@ -942,16 +975,16 @@ export class WhatsAppService implements OnModuleInit {
       console.log({
         replyType: botReply.replyType,
         sendAs,
-        message: botReply.reply,
+        message: replyToSend,
       });
       this.logDeliveryStage('evolution_send_attempt', diagnostic, {
         sendAs,
       });
       try {
-        await this.sendVoiceReply(resolved, outboundAddress, botReply.reply, diagnostic, {
+        await this.sendVoiceReply(resolved, outboundAddress, replyToSend, diagnostic, {
           contactId,
           fallbackText:
-            botReply.reply.trim() === fallbackMessage.trim() ? undefined : fallbackMessage,
+            replyToSend.trim() === fallbackMessage.trim() ? undefined : fallbackMessage,
         });
       } catch (error) {
         this.logDeliveryFailure('evolution_send', error, diagnostic, {
@@ -963,6 +996,7 @@ export class WhatsAppService implements OnModuleInit {
         sendAs,
       });
       await this.rememberLastBotReplyModality(contactId, 'audio');
+      await this.rememberSentMessage(contactId, conversationSendState.topic, replyToSend);
     }
     this.logger.log(
       JSON.stringify({
@@ -978,7 +1012,11 @@ export class WhatsAppService implements OnModuleInit {
     await this.followupService.registerBotReply({
       contactId,
       outboundAddress,
-      reply: botReply.reply,
+      reply: replyToSend,
+    });
+    console.log('ENVIADA:', {
+      text: replyToSend,
+      mediaIds: deliverableMediaFiles.map((file) => file.fileUrl),
     });
   }
 
@@ -988,17 +1026,293 @@ export class WhatsAppService implements OnModuleInit {
     mediaFiles: MediaFile[],
     message: string,
     diagnostic?: DeliveryDiagnosticContext,
+    options?: {
+      textAlreadySent?: boolean;
+    },
   ): Promise<void> {
     for (const [index, media] of mediaFiles.entries()) {
-      const caption = index === 0 ? message : media.title;
+      const caption = this.resolveMediaCaption(media, index, message, options?.textAlreadySent === true);
 
       if (media.fileType === 'video') {
         await this.sendVideo(resolved, contactId, media.fileUrl, caption, diagnostic);
+        console.log('VIDEO ENVIADO:', media.fileUrl);
         continue;
       }
 
       await this.sendImage(resolved, contactId, media.fileUrl, caption, diagnostic);
     }
+  }
+
+  private resolveUniqueOutgoingMessage(
+    message: string,
+    sentMessages: string[],
+  ): string | null {
+    const trimmedMessage = message.trim();
+    if (!trimmedMessage) {
+      return null;
+    }
+
+    if (!sentMessages.includes(trimmedMessage)) {
+      return trimmedMessage;
+    }
+
+    console.log('MENSAJE OMITIDO: duplicado detectado');
+
+    const variants = this.buildMessageVariants(trimmedMessage);
+    return variants.find((variant) => !sentMessages.includes(variant)) ?? null;
+  }
+
+  private buildMessageVariants(message: string): string[] {
+    const trimmedMessage = message.trim();
+    const lowerCasedMessage = trimmedMessage.length === 0
+      ? trimmedMessage
+      : `${trimmedMessage[0].toLowerCase()}${trimmedMessage.slice(1)}`;
+    const startsWithClaro = /^claro\b/i.test(trimmedMessage);
+
+    return Array.from(
+      new Set(
+        [
+          trimmedMessage,
+          startsWithClaro ? null : `Claro, ${lowerCasedMessage}`,
+          `${trimmedMessage} Si quieres, te ayudo.`,
+          `${trimmedMessage} Dime y seguimos.`,
+          `${trimmedMessage} Quedo atento.`,
+        ]
+          .filter((variant): variant is string => Boolean(variant))
+          .map((variant) => variant.trim())
+          .filter((variant) => variant.length > 0),
+      ),
+    );
+  }
+
+    private buildDuplicateRecoveryQuestion(intent: string, sentMessages: string[]): string | null {
+      const options = intent === 'duda'
+        ? [
+            'Que duda te preocupa mas ahora, si funciona, como se usa o en cuanto tiempo se nota?',
+            'Quieres que te aclare mejor si funciona, como se toma o que resultados suele notar la gente?',
+          ]
+        : intent === 'compra' || intent === 'interes'
+          ? [
+              'Que te interesa mas ahora, precio, resultados o como pedirlo?',
+              'Quieres que te diga primero el precio, como se usa o como seria el pedido?',
+            ]
+          : [
+              'Que quieres ver ahora, precio, fotos o como funciona?',
+              'Quieres que te ayude por precio, resultados o modo de uso?',
+            ];
+
+      return options.find((option) => !sentMessages.includes(option)) ?? options[0] ?? null;
+    }
+
+  private async getConversationSendState(
+    contactId: string,
+    message: string,
+  ): Promise<ConversationSendState> {
+    const topic = this.buildConversationTopic(message);
+    const topicKey = this.getConversationTopicKey(contactId);
+    const currentTopic = (await this.redisService.get<string>(topicKey)) ?? '';
+
+    if (currentTopic && currentTopic !== topic) {
+      await this.redisService.set(topicKey, topic, WhatsAppService.CONVERSATION_SEND_STATE_TTL_SECONDS);
+      await this.redisService.set(
+        this.getConversationSentVideosKey(contactId),
+        [],
+        WhatsAppService.CONVERSATION_SEND_STATE_TTL_SECONDS,
+      );
+
+      return {
+        topic,
+        sentVideos: [],
+        sentMessages: this.asStringList(
+          await this.redisService.get<string[]>(this.getConversationSentMessagesKey(contactId)),
+        ),
+      };
+    }
+
+    await this.redisService.set(topicKey, topic, WhatsAppService.CONVERSATION_SEND_STATE_TTL_SECONDS);
+
+    return {
+      topic,
+      sentVideos: this.asStringList(
+        await this.redisService.get<string[]>(this.getConversationSentVideosKey(contactId)),
+      ),
+      sentMessages: this.asStringList(
+        await this.redisService.get<string[]>(this.getConversationSentMessagesKey(contactId)),
+      ),
+    };
+  }
+
+  private filterDeliverableMediaFiles(
+    mediaFiles: MediaFile[],
+    state: ConversationSendState,
+  ): MediaFile[] {
+    let selectedVideoCount = 0;
+    let historicalVideoCount = state.sentVideos.length;
+
+    return mediaFiles.filter((media) => {
+      if (media.fileType !== 'video') {
+        return true;
+      }
+
+      const videoId = media.fileUrl.trim();
+      if (!videoId) {
+        return false;
+      }
+
+      if (state.sentVideos.includes(videoId)) {
+        console.log('VIDEO OMITIDO: ya enviado anteriormente', videoId);
+        return false;
+      }
+
+      if (selectedVideoCount >= 1) {
+        console.log('VIDEO OMITIDO: limite de 1 video por respuesta', videoId);
+        return false;
+      }
+
+      if (historicalVideoCount >= WhatsAppService.MAX_VIDEOS_PER_TOPIC) {
+        console.log('VIDEO OMITIDO: limite por conversacion alcanzado', videoId);
+        return false;
+      }
+
+      selectedVideoCount += 1;
+      historicalVideoCount += 1;
+      return true;
+    });
+  }
+
+  private async rememberSentMessage(
+    contactId: string,
+    topic: string,
+    message: string,
+  ): Promise<void> {
+    const trimmedMessage = message.trim();
+    if (!trimmedMessage) {
+      return;
+    }
+
+    const key = this.getConversationSentMessagesKey(contactId);
+    const next = Array.from(
+      new Set([
+        ...this.asStringList(await this.redisService.get<string[]>(key)),
+        trimmedMessage,
+      ]),
+    ).slice(-WhatsAppService.MAX_SENT_MESSAGES_MEMORY);
+
+    await this.redisService.set(key, next, WhatsAppService.CONVERSATION_SEND_STATE_TTL_SECONDS);
+    await this.redisService.set(
+      this.getConversationTopicKey(contactId),
+      topic,
+      WhatsAppService.CONVERSATION_SEND_STATE_TTL_SECONDS,
+    );
+  }
+
+  private async rememberSentVideos(
+    contactId: string,
+    topic: string,
+    mediaFiles: MediaFile[],
+  ): Promise<void> {
+    const sentVideoIds = mediaFiles
+      .filter((media) => media.fileType === 'video')
+      .map((media) => media.fileUrl.trim())
+      .filter((videoId) => videoId.length > 0);
+
+    if (sentVideoIds.length === 0) {
+      return;
+    }
+
+    const key = this.getConversationSentVideosKey(contactId);
+    const next = Array.from(
+      new Set([
+        ...this.asStringList(await this.redisService.get<string[]>(key)),
+        ...sentVideoIds,
+      ]),
+    ).slice(-WhatsAppService.MAX_SENT_VIDEOS_MEMORY);
+
+    await this.redisService.set(key, next, WhatsAppService.CONVERSATION_SEND_STATE_TTL_SECONDS);
+    await this.redisService.set(
+      this.getConversationTopicKey(contactId),
+      topic,
+      WhatsAppService.CONVERSATION_SEND_STATE_TTL_SECONDS,
+    );
+  }
+
+  private buildConversationTopic(message: string): string {
+    const normalized = (message || '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    if (!normalized) {
+      return 'general';
+    }
+
+    const catalogIntentKeywords = ['video', 'videos', 'foto', 'fotos', 'imagen', 'imagenes'];
+    if (catalogIntentKeywords.some((keyword) => normalized.includes(keyword))) {
+      return 'catalog_media';
+    }
+
+    if (normalized.includes('precio') || normalized.includes('cuesta') || normalized.includes('valor')) {
+      return 'pricing';
+    }
+
+    if (
+      normalized.includes('pago')
+      || normalized.includes('transferencia')
+      || normalized.includes('tarjeta')
+      || normalized.includes('deposito')
+    ) {
+      return 'payment';
+    }
+
+    if (
+      normalized.includes('donde')
+      || normalized.includes('ubic')
+      || normalized.includes('direccion')
+      || normalized.includes('local')
+    ) {
+      return 'location';
+    }
+
+    const stopwords = new Set([
+      'que', 'como', 'donde', 'cuando', 'tengo', 'tienes', 'quiero', 'mandame', 'muestrame',
+      'explicame', 'por', 'para', 'del', 'las', 'los', 'una', 'uno', 'con', 'sin', 'esta',
+      'este', 'eso', 'esa', 'hay', 'otra', 'vez', 'vuelves', 'volver', 'ahora', 'mismo',
+    ]);
+
+    const tokens = normalized
+      .split(' ')
+      .filter((token) => token.length >= 3 && !stopwords.has(token))
+      .slice(0, 5);
+
+    if (tokens.length === 0) {
+      return 'general';
+    }
+
+    return createHash('sha1').update(tokens.join('|')).digest('hex').slice(0, 12);
+  }
+
+  private resolveMediaCaption(
+    media: MediaFile,
+    index: number,
+    message: string,
+    textAlreadySent: boolean,
+  ): string {
+    if (textAlreadySent) {
+      if (media.fileType === 'video') {
+        return 'mira como funciona 👆';
+      }
+
+      return index === 0 ? 'mira 👇' : media.title;
+    }
+
+    if (media.fileType === 'video') {
+      return 'mira como funciona 👆';
+    }
+
+    return index === 0 ? message : media.title;
   }
 
   private async processIncomingAudioMessage(
@@ -1551,6 +1865,18 @@ export class WhatsAppService implements OnModuleInit {
 
   private getVoiceReplyPreferenceKey(contactId: string): string {
     return `voice-pref:${this.normalizeNumber(contactId)}`;
+  }
+
+  private getConversationSentVideosKey(contactId: string): string {
+    return `conversation:${this.normalizeNumber(contactId)}:sent_videos`;
+  }
+
+  private getConversationSentMessagesKey(contactId: string): string {
+    return `conversation:${this.normalizeNumber(contactId)}:sent_messages`;
+  }
+
+  private getConversationTopicKey(contactId: string): string {
+    return `conversation:${this.normalizeNumber(contactId)}:topic`;
   }
 
   private getLidJidMappingKey(instanceName: string, lidJid: string): string {
