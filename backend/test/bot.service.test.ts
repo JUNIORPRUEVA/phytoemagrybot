@@ -314,39 +314,43 @@ function findGreetingKey(store: Map<string, unknown>, contactId: string): string
   return null;
 }
 
-test('price message uses ai with a brief answer style', async () => {
+test('price message responds immediately without running AI', async () => {
   let capturedParams: Record<string, unknown> | null = null;
   const service = createService({
     mediaCount: 1,
-    aiReply: 'Cuesta 1,500 pesos. Si quieres, te digo cómo pedirla.',
+    aiReply: 'No deberia usarse.',
     onGenerateReply: (params) => {
       capturedParams = params;
     },
   });
   const result = await service.processIncomingMessage('18095551234', 'precio');
 
-  assert.equal(result.usedGallery, true);
-  assert.equal(result.mediaFiles.length, 1);
-  assert.equal(result.source, 'ai');
-  assert.equal((capturedParams as { responseStyle?: string } | null)?.responseStyle, 'brief');
-  assert.match(result.reply.toLowerCase(), /cuesta|pesos/);
+  assert.equal(result.usedGallery, false);
+  assert.equal(result.mediaFiles.length, 0);
+  assert.equal(result.source, 'hardcode');
+  assert.equal(capturedParams, null);
+  assert.match(result.reply.toLowerCase(), /cuesta|precio/);
 });
 
-test('injects company context as a separate AI input without replacing prompts', async () => {
+test('location questions use company rule override without running AI', async () => {
   let capturedParams: Record<string, unknown> | null = null;
   const service = createService({
-    companyContextText:
-      'CONTEXTO_EMPRESA\n\nNo reemplaza el prompt principal.\n\n{"usage_rules_json":{"send_location":"solo_si_cliente_la_pide"}}',
+    companyContextData: {
+      companyName: 'Phyto Emagry',
+      address: 'Santo Domingo',
+      googleMapsLink: 'https://maps.app.goo.gl/demo123',
+    },
     onGenerateReply: (params) => {
       capturedParams = params;
     },
   });
 
-  await service.processIncomingMessage('18095551234', 'donde estan ubicados?');
+  const result = await service.processIncomingMessage('18095551234', 'donde estan ubicados?');
 
-  assert.match(String((capturedParams as { companyContext?: string } | null)?.companyContext ?? ''), /CONTEXTO_EMPRESA/);
-  assert.match(String((capturedParams as { companyContext?: string } | null)?.companyContext ?? ''), /No reemplaza el prompt principal/);
-  assert.equal(typeof (capturedParams as { fullPrompt?: string } | null)?.fullPrompt, 'string');
+  assert.equal(result.source, 'hardcode');
+  assert.equal(capturedParams, null);
+  assert.match(result.reply, /Santo Domingo/);
+  assert.match(result.reply, /maps\.app\.goo\.gl/);
 });
 
 test('always injects the mandatory combined knowledge context before replying', async () => {
@@ -359,78 +363,37 @@ test('always injects the mandatory combined knowledge context before replying', 
     },
   });
 
-  await service.processIncomingMessage('18095551234', 'quiero informacion');
+  await service.processIncomingMessage('18095551234', 'quiero informacion del Te Detox Premium');
 
   const companyContext = String(
     (capturedParams as { companyContext?: string } | null)?.companyContext ?? '',
   );
   assert.match(companyContext, /\[INSTRUCCIONES\]/);
-  assert.match(companyContext, /\[PRODUCTOS\]/);
+  assert.match(companyContext, /\[PRODUCTO_RELEVANTE\]/);
   assert.match(companyContext, /\[EMPRESA\]/);
   assert.match(companyContext, /Te Detox Premium/);
   assert.match(companyContext, /Phyto Emagry/);
+  assert.ok(companyContext.length <= 2000);
 });
 
-test('uses real company data for location, schedule, and payment questions', async () => {
-  const capturedContexts: string[] = [];
-  const companyContextText = [
-    '[INSTRUCCIONES]',
-    'Responder con datos reales.',
-    '',
-    '[PRODUCTOS]',
-    'Te Detox Premium',
-    '',
-    '[EMPRESA]',
-    'EMPRESA:',
-    'Nombre: Phyto Emagry',
-    'Direccion: Santo Domingo',
-    'Google Maps: https://maps.app.goo.gl/demo123',
-    '',
-    'HORARIO:',
-    '- Lunes: 08:00 - 18:00',
-    '',
-    'CUENTAS:',
-    '- Banco: Banreservas | Tipo: Ahorro | Numero: 123456789 | Titular: Empresa Demo',
-  ].join('\n');
-
+test('uses real company data for location, schedule, and payment questions without AI', async () => {
+  let aiCalls = 0;
   const service = createService({
-    companyContextText,
-    generateReply: (params) => {
-      const message = String(params.message ?? '').toLowerCase();
-      const context = String(params.companyContext ?? '');
-      capturedContexts.push(context);
-
-      if (message.includes('donde estan')) {
-        return {
-          type: 'text',
-          content: context.includes('Santo Domingo')
-            ? 'Estamos en Santo Domingo. Ubicacion: https://maps.app.goo.gl/demo123'
-            : 'No tengo ubicacion.',
-        };
-      }
-
-      if (message.includes('horario')) {
-        return {
-          type: 'text',
-          content: context.includes('08:00 - 18:00')
-            ? 'Nuestro horario es de 08:00 a 18:00 los lunes.'
-            : 'No tengo horario.',
-        };
-      }
-
-      if (message.includes('como pago')) {
-        return {
-          type: 'text',
-          content: context.includes('Banreservas')
-            ? 'Puedes pagar por Banreservas, cuenta 123456789.'
-            : 'No tengo cuentas.',
-        };
-      }
-
-      return {
-        type: 'text',
-        content: 'Claro, te ayudo con eso.',
-      };
+    companyContextData: {
+      companyName: 'Phyto Emagry',
+      address: 'Santo Domingo',
+      googleMapsLink: 'https://maps.app.goo.gl/demo123',
+      workingHoursJson: [{ day: 'lunes', open: true, from: '08:00', to: '18:00' }],
+      bankAccountsJson: [{
+        bank: 'Banreservas',
+        accountType: 'Ahorro',
+        number: '123456789',
+        holder: 'Empresa Demo',
+        image: '',
+      }],
+    },
+    onGenerateReply: () => {
+      aiCalls += 1;
     },
   });
 
@@ -438,17 +401,12 @@ test('uses real company data for location, schedule, and payment questions', asy
   const scheduleReply = await service.processIncomingMessage('18095551234', 'cual es su horario');
   const paymentReply = await service.processIncomingMessage('18095551234', 'como pago');
 
+  assert.equal(aiCalls, 0);
   assert.match(locationReply.reply, /Santo Domingo/);
   assert.match(locationReply.reply, /maps\.app\.goo\.gl/);
-  assert.match(scheduleReply.reply, /08:00 a 18:00/);
+  assert.match(scheduleReply.reply, /08:00|18:00/);
   assert.match(paymentReply.reply, /Banreservas/);
   assert.match(paymentReply.reply, /123456789/);
-
-  for (const context of capturedContexts) {
-    assert.match(context, /Nombre: Phyto Emagry/);
-    assert.match(context, /HORARIO:/);
-    assert.match(context, /CUENTAS:/);
-  }
 });
 
 test('company rule engine blocks sales outside business hours before AI generation', async () => {
@@ -675,7 +633,7 @@ test('company rule engine full conversation keeps business rules ahead of AI', a
   }
 });
 
-test('keeps full product catalog and highlights relevant products separately', async () => {
+test('AI context includes only the relevant product (not the full catalog)', async () => {
   let capturedParams: Record<string, unknown> | null = null;
   const service = createService({
     configConfigurations: {
@@ -720,10 +678,10 @@ test('keeps full product catalog and highlights relevant products separately', a
     (capturedParams as { companyContext?: string } | null)?.companyContext ?? '',
   );
 
-  assert.match(companyContext, /\[PRODUCTOS\]/);
-  assert.match(companyContext, /Te Detox Premium/);
+  assert.match(companyContext, /\[PRODUCTO_RELEVANTE\]/);
   assert.match(companyContext, /Cafe Slim/);
-  assert.match(companyContext, /\[PRODUCTOS_RELEVANTES\]/);
+  assert.doesNotMatch(companyContext, /Te Detox Premium/);
+  assert.ok(companyContext.length <= 2000);
 });
 
 test('uses AI with available context when mandatory knowledge sources are incomplete', async () => {
@@ -779,11 +737,11 @@ test('uses AI with partial context when some knowledge sources exist', async () 
 
   assert.equal(result.source, 'ai');
   assert.match(companyContext, /\[INSTRUCCIONES\]/);
-  assert.match(companyContext, /^\[PRODUCTOS\]$/m);
   assert.match(companyContext, /\[EMPRESA\]/);
+  assert.ok(companyContext.length <= 2000);
 });
 
-test('mandatory knowledge context always includes instructions products and company in order', async () => {
+test('mandatory knowledge context always includes instructions and company in order', async () => {
   let capturedParams: Record<string, unknown> | null = null;
   const service = createService({
     configConfigurations: {
@@ -807,95 +765,91 @@ test('mandatory knowledge context always includes instructions products and comp
   );
 
   assert.match(companyContext, /^\[INSTRUCCIONES\]/m);
-  assert.match(companyContext, /^\[PRODUCTOS\]/m);
   assert.match(companyContext, /^\[EMPRESA\]/m);
   assert.ok(
-    companyContext.indexOf('[INSTRUCCIONES]') < companyContext.indexOf('[PRODUCTOS]') &&
-    companyContext.indexOf('[PRODUCTOS]') < companyContext.indexOf('[EMPRESA]'),
+    companyContext.indexOf('[INSTRUCCIONES]') < companyContext.indexOf('[EMPRESA]'),
   );
 });
 
-test('location question injects only location business context', async () => {
-  let capturedParams: Record<string, unknown> | null = null;
+test('location question answers immediately from company rules without AI', async () => {
+  let aiCalls = 0;
   const service = createService({
-    companyContextResolver: () =>
-      'CONTEXTO_EMPRESA\n\n{"google_maps_link":"https://www.google.com/maps?q=18.48,-69.93","address":"Santo Domingo"}',
-    onGenerateReply: (params) => {
-      capturedParams = params;
+    companyContextData: {
+      companyName: 'Phyto Emagry',
+      address: 'Santo Domingo',
+      googleMapsLink: 'https://www.google.com/maps?q=18.48,-69.93',
     },
-    generateReply: async (params) => ({
-      type: 'text',
-      content: String((params.companyContext as string).includes('google_maps_link'))
-          ? 'Estamos en Santo Domingo. Te envio la ubicacion por Google Maps: https://www.google.com/maps?q=18.48,-69.93'
-          : 'Claro, te digo.',
-    }),
+    onGenerateReply: () => {
+      aiCalls += 1;
+    },
   });
 
   const result = await service.processIncomingMessage('18095551234', 'donde estan ubicados?');
 
-  assert.match(String((capturedParams as { companyContext?: string } | null)?.companyContext ?? ''), /google_maps_link/);
-  assert.match(result.reply, /Google Maps|ubicacion|ubicaci[oó]n/i);
+  assert.equal(aiCalls, 0);
+  assert.match(result.reply, /Santo Domingo/);
+  assert.match(result.reply, /google\.com\/maps/);
 });
 
-test('payment question injects bank accounts context', async () => {
-  let capturedParams: Record<string, unknown> | null = null;
+test('payment question answers with real bank account data without AI', async () => {
+  let aiCalls = 0;
   const service = createService({
-    companyContextResolver: () =>
-      'CONTEXTO_EMPRESA\n\n{"bank_accounts_json":[{"bank":"Banreservas","number":"123"}]}',
-    onGenerateReply: (params) => {
-      capturedParams = params;
+    companyContextData: {
+      companyName: 'Phyto Emagry',
+      bankAccountsJson: [{
+        bank: 'Banreservas',
+        accountType: 'Ahorro',
+        number: '123',
+        holder: 'Empresa Demo',
+        image: '',
+      }],
     },
-    generateReply: async (params) => ({
-      type: 'text',
-      content: String((params.companyContext as string).includes('Banreservas'))
-          ? 'Puedes pagar por Banreservas cuenta 123 a nombre de la empresa.'
-          : 'Claro, te digo como pagar.',
-    }),
+    onGenerateReply: () => {
+      aiCalls += 1;
+    },
   });
 
   const result = await service.processIncomingMessage('18095551234', 'como pago?');
 
-  assert.match(String((capturedParams as { companyContext?: string } | null)?.companyContext ?? ''), /bank_accounts_json/);
-  assert.match(result.reply, /Banreservas|cuenta 123/i);
+  assert.equal(aiCalls, 0);
+  assert.match(result.reply, /Banreservas|Banco/i);
+  assert.match(result.reply, /123/);
 });
 
-test('schedule question injects working hours context', async () => {
-  let capturedParams: Record<string, unknown> | null = null;
+test('schedule question answers immediately from company rules without AI', async () => {
+  let aiCalls = 0;
   const service = createService({
-    companyContextResolver: () =>
-      'CONTEXTO_EMPRESA\n\n{"working_hours_json":{"lunes_viernes":"8:00 AM - 6:00 PM"}}',
-    onGenerateReply: (params) => {
-      capturedParams = params;
+    companyContextData: {
+      companyName: 'Phyto Emagry',
+      workingHoursJson: [
+        { day: 'lunes', open: true, from: '08:00', to: '18:00' },
+        { day: 'martes', open: true, from: '08:00', to: '18:00' },
+      ],
     },
-    generateReply: async (params) => ({
-      type: 'text',
-      content: String((params.companyContext as string).includes('lunes_viernes'))
-          ? 'Trabajamos de lunes a viernes de 8:00 AM a 6:00 PM.'
-          : 'Te comparto el horario.',
-    }),
+    onGenerateReply: () => {
+      aiCalls += 1;
+    },
   });
 
-  const result = await service.processIncomingMessage('18095551234', 'a que hora trabajan?');
+  const result = await service.processIncomingMessage('18095551234', 'cual es su horario?');
 
-  assert.match(String((capturedParams as { companyContext?: string } | null)?.companyContext ?? ''), /working_hours_json/);
-  assert.match(result.reply, /8:00 AM - 6:00 PM|lunes a viernes/i);
+  assert.equal(aiCalls, 0);
+  assert.match(result.reply, /08:00|18:00/i);
 });
 
-test('closing message answers with sales close', async () => {
-  let capturedParams: Record<string, unknown> | null = null;
+test('short confirmation message does not run AI', async () => {
+  let aiCalled = false;
   const service = createService({
-    aiReply: 'Perfecto, te lo dejo listo hoy mismo 👍',
-    onGenerateReply: (params) => {
-      capturedParams = params;
+    onGenerateReply: () => {
+      aiCalled = true;
     },
   });
+
   const result = await service.processIncomingMessage('18095551234', 'ok');
 
-  assert.equal(result.intent, 'cierre');
-  assert.equal(result.source, 'ai');
-  assert.equal((capturedParams as { leadStage?: string } | null)?.leadStage, 'listo_para_comprar');
-  assert.equal((capturedParams as { replyObjective?: string } | null)?.replyObjective, 'cerrar_venta');
-  assert.match(result.reply.toLowerCase(), /env[ií]o hoy|dejo listo/);
+  assert.equal(aiCalled, false);
+  assert.equal(result.source, 'hardcode');
+  assert.match(result.reply.toLowerCase(), /precio|beneficios|usa|horario|ubicacion/);
 });
 
 test('closure phrases stop the sale before AI and persist conversation_end in Redis', async () => {
@@ -1026,21 +980,20 @@ test('new contact with a pure greeting gets a human greeting without running AI'
 
   const result = await service.processIncomingMessage('18095550005', 'hola');
 
-  assert.equal(result.source, 'greeting');
+  assert.equal(result.source, 'hardcode');
   assert.equal(result.replyType, 'text');
   assert.equal(result.usedGallery, false);
   assert.equal(aiCalled, false);
-  assert.match(result.reply.toLowerCase(), /hola|hey|saludos/);
-  assert.doesNotMatch(result.reply.toLowerCase(), /precio|producto|catalogo|catálogo/);
+  assert.match(result.reply.toLowerCase(), /hola/);
+  assert.match(result.reply.toLowerCase(), /bajar de peso|info/);
   const key = findGreetingKey((service as any).redisService.store, '18095550005');
-  assert.ok(key);
-  assert.equal((service as any).redisService.store.get(key as string), true);
+  assert.equal(key, null);
 });
 
-test('a contact greeted in Redis does not receive the greeting shortcut again', async () => {
+test('greeting keywords always respond immediately without running AI', async () => {
   let aiCalls = 0;
   const service = createService({
-    aiReply: 'Claro, dime que necesitas y te respondo rapido.',
+    aiReply: 'No deberia usarse.',
     onGenerateReply: () => {
       aiCalls += 1;
     },
@@ -1051,9 +1004,9 @@ test('a contact greeted in Redis does not receive the greeting shortcut again', 
 
   const result = await service.processIncomingMessage('18095550006', 'hola');
 
-  assert.equal(result.source, 'ai');
-  assert.equal(aiCalls, 1);
-  assert.doesNotMatch(result.reply.toLowerCase(), /hola|hey|saludos/);
+  assert.equal(result.source, 'hardcode');
+  assert.equal(aiCalls, 0);
+  assert.match(result.reply.toLowerCase(), /hola/);
 });
 
 test('a closed conversation stays closed for generic messages until interest returns', async () => {
@@ -1075,8 +1028,8 @@ test('a closed conversation stays closed for generic messages until interest ret
 
   const reopened = await service.processIncomingMessage('18095550002', 'precio');
 
-  assert.equal(reopened.source, 'ai');
-  assert.equal(aiCalls, 1);
+  assert.equal(reopened.source, 'hardcode');
+  assert.equal(aiCalls, 0);
   assert.equal((service as any).redisService.store.get('conversation_end:18095550002'), undefined);
 });
 
@@ -1112,15 +1065,16 @@ test('doubt message uses direct convincing response', async () => {
   assert.equal((capturedParams as { replyObjective?: string } | null)?.replyObjective, 'resolver_duda');
 });
 
-test('repeated message still goes through AI and does not use reply cache shortcuts', async () => {
+test('repeated price messages use the same hardcoded reply (no AI, no reply cache)', async () => {
   const service = createService({ mediaCount: 1 });
   const first = await service.processIncomingMessage('18095551234', 'precio');
   const second = await service.processIncomingMessage('18095551234', 'precio');
 
+  assert.equal(first.source, 'hardcode');
+  assert.equal(second.source, 'hardcode');
   assert.equal(first.cached, false);
   assert.equal(second.cached, false);
-  assert.notEqual(second.source, 'cache');
-  assert.notEqual(second.reply, first.reply);
+  assert.equal(second.reply, first.reply);
 });
 
 test('catalog request limits outgoing images to avoid saturating the client', async () => {
@@ -1801,12 +1755,8 @@ test('simulates a cold customer who replies dry without forcing an early close',
   const second = await service.processIncomingMessage('18095550004', 'ok');
 
   assert.equal(first.source, 'ai');
-  assert.equal(second.source, 'ai');
-  assert.equal((aiCalls[1] as { leadStage?: string }).leadStage, 'curioso');
-  assert.equal((aiCalls[1] as { replyObjective?: string }).replyObjective, 'avanzar_conversacion');
-  assert.notEqual(second.reply.toLowerCase().includes('te lo dejo listo'), true);
-  assert.notEqual(first.reply, second.reply);
-  assert.match(second.reply.toLowerCase(), /mira|gusta|apetito/);
+  assert.notEqual(second.source, 'ai');
+  assert.notEqual(second.intent, 'cierre');
 });
 
 test('simulates a customer comparing with another product', async () => {

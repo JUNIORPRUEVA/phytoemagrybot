@@ -103,8 +103,8 @@ export class VoiceService {
     voiceId?: string,
     baseUrl?: string,
   }): Promise<GeneratedVoiceAudio> {
-    const text = params.text.trim();
-    if (!text) {
+    const text = `${params.text ?? ''}`;
+    if (!text.trim()) {
       throw new HttpException('Voice text is required', HttpStatus.BAD_REQUEST);
     }
 
@@ -161,41 +161,15 @@ export class VoiceService {
   }
 
   async prepareSpokenReply(params: PrepareSpokenReplyParams): Promise<string> {
-    const normalized = this.normalizeSpokenText(params.text);
-    const openAiKey = params.openAiKey?.trim();
+    // CRITICAL: Voice must preserve the exact same content as the text reply.
+    // No paraphrasing, no emoji removal, no LLM rewrite.
+    const original = `${params.text ?? ''}`;
 
-    if (!normalized) {
+    if (!original.trim()) {
       throw new HttpException('Voice text is required', HttpStatus.BAD_REQUEST);
     }
 
-    if (!openAiKey) {
-      return normalized;
-    }
-
-    try {
-      const openai = new OpenAI({ apiKey: openAiKey });
-      const completion = await openai.chat.completions.create({
-        model: 'gpt-4o-mini',
-        temperature: 0.7,
-        max_completion_tokens: 120,
-        messages: [
-          {
-            role: 'system',
-            content:
-              'Convierte el texto a una version hablada para una nota de voz de WhatsApp. Debe sonar natural, cercana, humana, comercial y con un tono dominicano suave, sin sonar robotica. Mantener el mismo significado. Si encaja de forma natural, puede usar expresiones cercanas como mira, oye, tranquilo o bro, pero sin exagerar. Usa una sola idea corta o dos ideas breves. No uses emojis, listas, ni comillas. Devuelve solo texto plano.',
-          },
-          {
-            role: 'user',
-            content: normalized,
-          },
-        ],
-      });
-
-      const rewritten = completion.choices[0]?.message?.content?.trim() || '';
-      return this.normalizeSpokenText(rewritten || normalized);
-    } catch {
-      return normalized;
-    }
+    return original;
   }
 
   private async generateWithElevenLabs(

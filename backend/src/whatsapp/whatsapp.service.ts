@@ -2421,26 +2421,9 @@ export class WhatsAppService implements OnModuleInit {
   }
 
   private prepareReplyForVoice(reply: string): string {
-    const withoutEmoji = reply.replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, ' ');
-    const normalized = withoutEmoji
-      .replace(/[¡!]{2,}/g, '!')
-      .replace(/[?]{2,}/g, '?')
-      .replace(/\s+/g, ' ')
-      .trim();
-
-    if (!normalized) {
-      return 'Claro, te explico.';
-    }
-
-    const spoken = normalized
-      .replace(/^perfecto\b/i, 'Perfecto,')
-      .replace(/^claro\b/i, 'Claro,')
-      .replace(/^si\b/i, 'Sí,')
-      .replace(/^sí\b/i, 'Sí,')
-      .replace(/\bte lo envio hoy\b/i, 'te lo envío hoy')
-      .replace(/\bte lo dejo listo\b/i, 'te lo dejo listo');
-
-    return /[.!?]$/.test(spoken) ? spoken : `${spoken}.`;
+    // CRITICAL: Voice is a *format* decision, not a content rewrite.
+    // The audio must say EXACTLY the same as the text.
+    return reply;
   }
 
   private logAudioDebug(payload: Record<string, unknown>): void {
@@ -2460,10 +2443,8 @@ export class WhatsAppService implements OnModuleInit {
     sourceMimetype?: string;
     spokenReply: string;
   }> {
-    const spokenReply = await this.voiceService.prepareSpokenReply({
-      text: reply,
-      openAiKey: resolved.config.openaiKey ?? undefined,
-    });
+    // CRITICAL: Do NOT rewrite content for voice.
+    const spokenReply = reply;
 
     const audio = await this.voiceService.generateVoice({
       text: spokenReply,
@@ -2518,6 +2499,17 @@ export class WhatsAppService implements OnModuleInit {
     options?: { contactId?: string },
   ): Promise<{ buffer: Buffer; fileName: string; mimetype: string }> {
     const prepared = this.prepareReplyForVoice(reply);
+
+    this.logger.log(
+      JSON.stringify({
+        event: 'VOICE_DEBUG',
+        traceId: diagnostic?.traceId ?? null,
+        contactId: options?.contactId ?? null,
+        response_original: reply,
+        response_audio: prepared,
+        iguales: reply === prepared,
+      }),
+    );
 
     for (let attempt = 1; attempt <= WhatsAppService.OUTBOUND_AUDIO_MAX_ATTEMPTS; attempt += 1) {
       this.logAudioDebug({

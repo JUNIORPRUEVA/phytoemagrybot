@@ -338,6 +338,15 @@ export class BotService {
           return finalResult;
         }
 
+        const closedResult = await this.handleClosedConversationForSpeedPath({
+          contactId: normalizedContactId,
+          message: normalizedMessage,
+          messageType: metadata?.messageType ?? 'text',
+        });
+        if (closedResult) {
+          return finalizeResponse('stop', closedResult);
+        }
+
         await this.memoryService.saveMessage({
           contactId: normalizedContactId,
           role: 'user',
@@ -348,6 +357,11 @@ export class BotService {
 
         const conversationMemory = await this.getConversationMemory(normalizedContactId, []);
         const reply = this.buildSpeedGreetingReply();
+        await this.redisService.set(
+          this.getQuickReplyCacheKey('greeting', null),
+          reply,
+          BotService.QUICK_REPLY_CACHE_TTL_SECONDS,
+        );
         const decision = this.buildQuickDecisionState({
           contactId: normalizedContactId,
           message: normalizedMessage,
@@ -466,11 +480,21 @@ export class BotService {
       console.log('PRODUCTOS_RELEVANTES:', relevantProducts);
 
       const relevantProduct = relevantProducts[0] ?? null;
+      let quickInfoKindForCache: 'benefits' | 'usage' | null = null;
       const speedKind = this.detectSpeedKind(normalizedMessage);
       if (speedKind === 'price') {
         if (responseGenerated && finalResult) {
           logResponseDebug({ layer: 'hardcode_price', blocked: true, reason: 'response_already_generated' });
           return finalResult;
+        }
+
+        const closedResult = await this.handleClosedConversationForSpeedPath({
+          contactId: normalizedContactId,
+          message: normalizedMessage,
+          messageType: metadata?.messageType ?? 'text',
+        });
+        if (closedResult) {
+          return finalizeResponse('stop', closedResult);
         }
 
         await this.memoryService.saveMessage({
@@ -499,6 +523,19 @@ export class BotService {
         });
         const intent = this.mapDecisionIntentToBotIntent(decision.intent, normalizedMessage);
 
+        const sentMediaState = await this.getSentMediaState(normalizedContactId);
+        const mediaIntent = this.detectMediaIntent(normalizedMessage);
+        const productMediaCandidates = relevantProducts.length > 0 ? relevantProducts : allProducts;
+        const productMediaFiles = await this.selectProductMedia(
+          productMediaCandidates,
+          mediaIntent,
+          decision.action,
+        );
+        const candidateMediaFiles = this.filterConversationMediaFiles(
+          this.limitOutgoingMediaFiles(productMediaFiles, mediaIntent, sentMediaState),
+          conversationMemory,
+        );
+
         await this.memoryService.saveMessage({
           contactId: normalizedContactId,
           role: 'assistant',
@@ -507,11 +544,15 @@ export class BotService {
         await this.saveConversationMemory(
           recordConversationDelivery(conversationMemory, {
             messageText: reply,
+            mediaIds: candidateMediaFiles.map((file) => file.fileUrl),
             lastMessages: [normalizedMessage, reply],
             lastIntent: decision.intent,
             state: decision.stage,
-            lastSentHadVideo: false,
-            cooldownMediaUntil: null,
+            lastSentHadVideo: candidateMediaFiles.some((file) => file.fileType === 'video'),
+            cooldownMediaUntil:
+              candidateMediaFiles.length > 0
+                ? Date.now() + BotService.MEDIA_COOLDOWN_MS
+                : null,
           }),
         );
 
@@ -521,11 +562,16 @@ export class BotService {
           intent,
           decision,
           false,
-          [],
+          candidateMediaFiles,
           'text',
           conversationMemory.lastMessages.length > 0,
         );
-        await this.markBotResponseInDecisionState(normalizedContactId, result.reply, decision, []);
+        await this.markBotResponseInDecisionState(
+          normalizedContactId,
+          result.reply,
+          decision,
+          candidateMediaFiles,
+        );
         await this.persistMicroContext(
           normalizedContactId,
           decision.intent,
@@ -540,6 +586,15 @@ export class BotService {
         if (responseGenerated && finalResult) {
           logResponseDebug({ layer: 'hardcode_company_info', blocked: true, reason: 'response_already_generated' });
           return finalResult;
+        }
+
+        const closedResult = await this.handleClosedConversationForSpeedPath({
+          contactId: normalizedContactId,
+          message: normalizedMessage,
+          messageType: metadata?.messageType ?? 'text',
+        });
+        if (closedResult) {
+          return finalizeResponse('stop', closedResult);
         }
 
         await this.memoryService.saveMessage({
@@ -621,6 +676,15 @@ export class BotService {
 
       const quickInfoKind = this.detectQuickInfoKind(normalizedMessage);
       if (quickInfoKind) {
+        const closedResult = await this.handleClosedConversationForSpeedPath({
+          contactId: normalizedContactId,
+          message: normalizedMessage,
+          messageType: metadata?.messageType ?? 'text',
+        });
+        if (closedResult) {
+          return finalizeResponse('stop', closedResult);
+        }
+
         const cacheKey = this.getQuickReplyCacheKey(quickInfoKind, relevantProduct?.id ?? null);
         const cachedQuickReply = await this.readRedisCache<string>(cacheKey);
         if (cachedQuickReply?.trim()) {
@@ -686,71 +750,7 @@ export class BotService {
           return finalizeResponse('quick_cache', result);
         }
 
-        const reply =
-          quickInfoKind === 'benefits'
-            ? this.buildQuickBenefitsReply(relevantProduct)
-            : this.buildQuickUsageReply(relevantProduct);
-        await this.redisService.set(cacheKey, reply, BotService.QUICK_REPLY_CACHE_TTL_SECONDS);
-
-        if (responseGenerated && finalResult) {
-          logResponseDebug({ layer: 'quick_cache_miss', blocked: true, reason: 'response_already_generated' });
-          return finalResult;
-        }
-
-        await this.memoryService.saveMessage({
-          contactId: normalizedContactId,
-          role: 'user',
-          content: normalizedMessage,
-        });
-        userMessageStored = true;
-        await this.rememberLastMessageType(normalizedContactId, metadata?.messageType ?? 'text');
-
-        const conversationMemory = await this.getConversationMemory(normalizedContactId, []);
-        const decision = this.buildQuickDecisionState({
-          contactId: normalizedContactId,
-          message: normalizedMessage,
-          decisionIntent: 'info',
-          stage: 'curioso',
-          action: 'guiar',
-          summary: 'Respuesta rapida (sin IA).',
-        });
-        const intent = this.mapDecisionIntentToBotIntent(decision.intent, normalizedMessage);
-
-        await this.memoryService.saveMessage({
-          contactId: normalizedContactId,
-          role: 'assistant',
-          content: reply,
-        });
-        await this.saveConversationMemory(
-          recordConversationDelivery(conversationMemory, {
-            messageText: reply,
-            lastMessages: [normalizedMessage, reply],
-            lastIntent: decision.intent,
-            state: decision.stage,
-            lastSentHadVideo: false,
-            cooldownMediaUntil: null,
-          }),
-        );
-
-        const result = this.createResult(
-          reply,
-          'hardcode',
-          intent,
-          decision,
-          false,
-          [],
-          'text',
-          conversationMemory.lastMessages.length > 0,
-        );
-        await this.markBotResponseInDecisionState(normalizedContactId, result.reply, decision, []);
-        await this.persistMicroContext(
-          normalizedContactId,
-          decision.intent,
-          result.reply,
-          metadata?.messageType ?? 'text',
-        );
-        this.logReply(normalizedContactId, result);
-        return finalizeResponse('quick_cache_miss', result);
+        quickInfoKindForCache = quickInfoKind;
       }
 
       const sentMediaState = await this.getSentMediaState(normalizedContactId);
@@ -909,7 +909,8 @@ export class BotService {
         return finalizeResponse('micro', microResult);
       }
 
-      if (normalizedMessage.length < BotService.SPEED_NO_AI_MAX_CHARS) {
+      const earlyMediaIntent = this.detectMediaIntent(normalizedMessage);
+      if (earlyMediaIntent === null && normalizedMessage.length < BotService.SPEED_NO_AI_MAX_CHARS) {
         if (responseGenerated && finalResult) {
           logResponseDebug({ layer: 'short_no_ai', blocked: true, reason: 'response_already_generated' });
           return finalResult;
@@ -1253,6 +1254,14 @@ export class BotService {
         metadata,
       });
 
+      if (quickInfoKindForCache) {
+        await this.redisService.set(
+          this.getQuickReplyCacheKey(quickInfoKindForCache, relevantProduct?.id ?? null),
+          validatedReply.reply.content,
+          BotService.QUICK_REPLY_CACHE_TTL_SECONDS,
+        );
+      }
+
       await this.memoryService.saveMessage({
         contactId: normalizedContactId,
         role: 'assistant',
@@ -1342,7 +1351,7 @@ export class BotService {
         scenario: 'precio',
         contactId: `${baseContactId}-thread`,
         messages: ['precio'],
-        expectGallery: true,
+        expectGallery: false,
         expectHot: false,
         expectClose: false,
       },
@@ -1366,7 +1375,7 @@ export class BotService {
         scenario: 'multiples mensajes',
         contactId: `${baseContactId}-multi`,
         messages: ['hola', 'quiero info', 'precio'],
-        expectGallery: true,
+        expectGallery: false,
         expectHot: false,
         expectClose: false,
       },
@@ -1374,7 +1383,7 @@ export class BotService {
         scenario: 'mensaje repetido',
         contactId: `${baseContactId}-repeat`,
         messages: ['precio', 'precio'],
-        expectGallery: true,
+        expectGallery: false,
         expectHot: false,
         expectClose: false,
       },
@@ -2004,6 +2013,78 @@ export class BotService {
     };
   }
 
+  private async handleClosedConversationForSpeedPath(params: {
+    contactId: string;
+    message: string;
+    messageType: 'text' | 'audio' | 'image';
+  }): Promise<BotReplyResult | null> {
+    const conversationEndKey = this.getConversationEndKey(params.contactId);
+    const conversationWasEnded = Boolean(await this.readRedisCache<boolean>(conversationEndKey));
+    if (!conversationWasEnded) {
+      return null;
+    }
+
+    const resumedByInterest = this.shouldResumeClosedConversation(params.message);
+    if (resumedByInterest) {
+      await this.redisService.del(conversationEndKey);
+      return null;
+    }
+
+    await this.memoryService.saveMessage({
+      contactId: params.contactId,
+      role: 'user',
+      content: params.message,
+    });
+    await this.rememberLastMessageType(params.contactId, params.messageType);
+
+    const conversationMemory = await this.getConversationMemory(params.contactId, []);
+    const closureDecision = this.buildConversationEndedDecision(params.message);
+    const closureReply = this.buildConversationEndedReply(conversationMemory, false);
+
+    await this.memoryService.saveMessage({
+      contactId: params.contactId,
+      role: 'assistant',
+      content: closureReply,
+    });
+    await this.saveConversationMemory(
+      recordConversationDelivery(conversationMemory, {
+        messageText: closureReply,
+        lastMessages: [params.message, closureReply],
+        lastIntent: closureDecision.intent,
+        state: closureDecision.stage,
+        lastSentHadVideo: false,
+        cooldownMediaUntil: null,
+      }),
+    );
+
+    const usedMemory = conversationMemory.lastMessages.length > 0;
+    const closureResult = this.createResult(
+      closureReply,
+      'cierre',
+      'cierre',
+      closureDecision,
+      false,
+      [],
+      'text',
+      usedMemory,
+    );
+
+    await this.markBotResponseInDecisionState(
+      params.contactId,
+      closureResult.reply,
+      closureDecision,
+      [],
+    );
+    await this.persistMicroContext(
+      params.contactId,
+      closureDecision.intent,
+      closureResult.reply,
+      params.messageType,
+    );
+    this.logReply(params.contactId, closureResult);
+    return closureResult;
+  }
+
   private buildQuickDecisionState(params: {
     contactId: string;
     message: string;
@@ -2064,6 +2145,17 @@ export class BotService {
   private detectQuickInfoKind(message: string): 'benefits' | 'usage' | null {
     const normalized = this.normalizeTextForMatch(message);
     if (!normalized) {
+      return null;
+    }
+
+    // Only treat as a quick-info request when it's a short, direct question.
+    // Longer messages usually need richer AI handling (objections, context, follow-ups).
+    if (normalized.length > 50) {
+      return null;
+    }
+
+    const mediaTerms = ['foto', 'fotos', 'imagen', 'imagenes', 'video', 'videos', 'catalogo', 'catálogo'];
+    if (mediaTerms.some((term) => normalized.includes(term))) {
       return null;
     }
 

@@ -63,7 +63,7 @@ function createAudioFlowService() {
   const voiceService = {
     transcribeAudio: async () => 'quiero precio',
     prepareSpokenReply: async ({ text }: { text: string }) => text,
-    generateVoice: async () => ({
+    generateVoice: async (_params: { text: string }) => ({
       buffer: Buffer.alloc(25_000, 1),
       fileName: 'reply.ogg',
       mimetype: 'audio/ogg; codecs=opus',
@@ -2162,7 +2162,7 @@ test('processAndDeliverMessage promotes a detailed text reply to audio when the 
 test('emotion+voice: "no entiendo" => confundido + audio + explains tone', async () => {
   const { service, sentTexts, sentAudios, botService, voiceService } = createAudioFlowService();
   const emotionEvents: Array<{ emotion: string; decision: string }> = [];
-  let preparedText = '';
+  let voiceInputText = '';
 
   service.logger.log = (value: string) => {
     try {
@@ -2191,9 +2191,17 @@ test('emotion+voice: "no entiendo" => confundido + audio + explains tone', async
     source: 'ai',
   });
 
-  voiceService.prepareSpokenReply = async ({ text }: { text: string }) => {
-    preparedText = text;
-    return text;
+  voiceService.prepareSpokenReply = async () => {
+    throw new Error('prepareSpokenReply should not be called');
+  };
+  voiceService.generateVoice = async ({ text }: { text: string }) => {
+    voiceInputText = text;
+    return {
+      buffer: Buffer.alloc(25_000, 1),
+      fileName: 'reply.ogg',
+      mimetype: 'audio/ogg; codecs=opus',
+      durationSeconds: 3,
+    };
   };
 
   await service.processAndDeliverMessage(
@@ -2210,13 +2218,13 @@ test('emotion+voice: "no entiendo" => confundido + audio + explains tone', async
   assert.equal(sentTexts.length, 0);
   assert.equal(emotionEvents.at(-1)?.emotion, 'confundido');
   assert.equal(emotionEvents.at(-1)?.decision, 'audio');
-  assert.match(preparedText, /^Mira, te explico bien:/);
+  assert.match(voiceInputText, /^Mira, te explico bien:/);
 });
 
 test('emotion+voice: "eso funciona?" => dudoso + audio + convincing tone', async () => {
   const { service, sentTexts, sentAudios, botService, voiceService } = createAudioFlowService();
   const emotionEvents: Array<{ emotion: string; decision: string }> = [];
-  let preparedText = '';
+  let voiceInputText = '';
 
   service.logger.log = (value: string) => {
     try {
@@ -2245,9 +2253,17 @@ test('emotion+voice: "eso funciona?" => dudoso + audio + convincing tone', async
     source: 'ai',
   });
 
-  voiceService.prepareSpokenReply = async ({ text }: { text: string }) => {
-    preparedText = text;
-    return text;
+  voiceService.prepareSpokenReply = async () => {
+    throw new Error('prepareSpokenReply should not be called');
+  };
+  voiceService.generateVoice = async ({ text }: { text: string }) => {
+    voiceInputText = text;
+    return {
+      buffer: Buffer.alloc(25_000, 1),
+      fileName: 'reply.ogg',
+      mimetype: 'audio/ogg; codecs=opus',
+      durationSeconds: 3,
+    };
   };
 
   await service.processAndDeliverMessage(
@@ -2264,7 +2280,7 @@ test('emotion+voice: "eso funciona?" => dudoso + audio + convincing tone', async
   assert.equal(sentTexts.length, 0);
   assert.equal(emotionEvents.at(-1)?.emotion, 'dudoso');
   assert.equal(emotionEvents.at(-1)?.decision, 'audio');
-  assert.match(preparedText, /^Te digo algo claro:/);
+  assert.match(voiceInputText, /^Te digo algo claro:/);
 });
 
 test('emotion+voice: "cuanto cuesta" => interesado + text', async () => {
@@ -2520,6 +2536,10 @@ test('processAndDeliverMessage does not duplicate full reply in media caption wh
     throw new Error('tts failed');
   };
 
+  voiceService.generateVoice = async () => {
+    throw new Error('tts failed');
+  };
+
   await service.processAndDeliverMessage(
     createResolvedConfig(),
     '18095551234',
@@ -2740,7 +2760,7 @@ test('processAndDeliverMessage falls back to text when media delivery fails', as
 test('processAndDeliverMessage blocks consecutive audio replies and sends text instead', async () => {
   const { service, sentTexts, sentAudios, botService, redisService, voiceService } = createAudioFlowService();
   const redisStore = new Map<string, unknown>();
-  let firstAudioPreparedText = '';
+  let firstAudioVoiceText = '';
 
   redisService.get = async (key: string) => redisStore.get(key) ?? null;
   redisService.set = async (key: string, value: unknown) => {
@@ -2763,12 +2783,21 @@ test('processAndDeliverMessage blocks consecutive audio replies and sends text i
     source: 'ai',
   });
 
-  voiceService.prepareSpokenReply = async ({ text }: { text: string }) => {
-    if (!firstAudioPreparedText) {
-      firstAudioPreparedText = text;
+  voiceService.prepareSpokenReply = async () => {
+    throw new Error('prepareSpokenReply should not be called');
+  };
+
+  voiceService.generateVoice = async ({ text }: { text: string }) => {
+    if (!firstAudioVoiceText) {
+      firstAudioVoiceText = text;
     }
 
-    return text;
+    return {
+      buffer: Buffer.alloc(25_000, 1),
+      fileName: 'reply.ogg',
+      mimetype: 'audio/ogg; codecs=opus',
+      durationSeconds: 3,
+    };
   };
 
   await service.processAndDeliverMessage(
@@ -2794,8 +2823,8 @@ test('processAndDeliverMessage blocks consecutive audio replies and sends text i
   assert.equal(sentAudios.length, 1);
   assert.equal(sentTexts.length, 1);
   assert.match(sentTexts[0]?.text ?? '', /Claro, te explico bien como funciona\./);
-  assert.notEqual(firstAudioPreparedText.trim().length, 0);
-  assert.notEqual(sentTexts[0]?.text?.trim() ?? '', firstAudioPreparedText.trim());
+  assert.notEqual(firstAudioVoiceText.trim().length, 0);
+  assert.notEqual(sentTexts[0]?.text?.trim() ?? '', firstAudioVoiceText.trim());
 });
 
 test('prepareReplyForVoice removes emojis and leaves spoken punctuation', () => {
@@ -2803,14 +2832,12 @@ test('prepareReplyForVoice removes emojis and leaves spoken punctuation', () => 
 
   const result = service.prepareReplyForVoice('Perfecto 👍 te lo dejo listo, ¿te lo envío hoy?');
 
-  assert.equal(result.includes('👍'), false);
-  assert.match(result, /^Perfecto,/);
-  assert.match(result, /\?$/);
+  assert.equal(result, 'Perfecto 👍 te lo dejo listo, ¿te lo envío hoy?');
 });
 
-test('processAndDeliverMessage rewrites the text before generating voice', async () => {
+test('processAndDeliverMessage sends voice using the exact same text (no rewrite)', async () => {
   const { service, voiceService, botService, sentAudios } = createAudioFlowService();
-  let preparedText = '';
+  let voiceInputText = '';
 
   botService.processIncomingMessage = async () => ({
     reply: 'Te ayudo ahora mismo',
@@ -2828,9 +2855,18 @@ test('processAndDeliverMessage rewrites the text before generating voice', async
     source: 'ai',
   });
 
-  voiceService.prepareSpokenReply = async ({ text }: { text: string }) => {
-    preparedText = text;
-    return 'Claro, te explico un poco mejor como funciona.';
+  voiceService.prepareSpokenReply = async () => {
+    throw new Error('prepareSpokenReply should not be called');
+  };
+
+  voiceService.generateVoice = async ({ text }: { text: string }) => {
+    voiceInputText = text;
+    return {
+      buffer: Buffer.alloc(25_000, 1),
+      fileName: 'reply.ogg',
+      mimetype: 'audio/ogg; codecs=opus',
+      durationSeconds: 3,
+    };
   };
 
   await service.processAndDeliverMessage(
@@ -2844,7 +2880,8 @@ test('processAndDeliverMessage rewrites the text before generating voice', async
     },
   );
 
-  assert.match(preparedText, /Te ayudo ahora mismo\./);
+  assert.match(voiceInputText, /^Mira, te explico bien:/);
+  assert.match(voiceInputText, /Te ayudo ahora mismo/);
   assert.equal(sentAudios.length, 1);
 });
 
@@ -3143,7 +3180,7 @@ test('acceptWebhook ignores group reaction payloads without triggering bot repli
     } as any,
     {
       transcribeAudio: async () => 'irrelevante',
-      generateVoice: async () => ({
+      generateVoice: async (_params: { text: string }) => ({
         buffer: Buffer.alloc(25_000, 1),
         fileName: 'reply.ogg',
         mimetype: 'audio/ogg; codecs=opus',
