@@ -3,6 +3,9 @@ import axios from 'axios';
 import OpenAI from 'openai';
 import { toFile } from 'openai/uploads';
 import { spawn } from 'node:child_process';
+import * as fs from 'node:fs/promises';
+import * as os from 'node:os';
+import * as path from 'node:path';
 
 export interface GeneratedVoiceAudio {
   buffer: Buffer;
@@ -10,6 +13,7 @@ export interface GeneratedVoiceAudio {
   mimetype: string;
   provider?: 'elevenlabs' | 'openai';
   sourceMimetype?: string;
+  durationSeconds?: number;
 }
 
 export interface PrepareSpokenReplyParams {
@@ -25,66 +29,32 @@ export interface ProbeAudioDurationParams {
 
 @Injectable()
 export class VoiceService {
+  private static readonly MIN_TTS_BYTES = 1000;
+
   async getDurationSeconds(params: ProbeAudioDurationParams): Promise<number> {
     if (!Buffer.isBuffer(params.buffer) || params.buffer.length === 0) {
       throw new HttpException('Audio buffer is required', HttpStatus.BAD_REQUEST);
     }
 
-    const mimetype = params.mimetype?.toLowerCase() ?? '';
-    const isOgg = mimetype.includes('audio/ogg') || (params.fileName ?? '').toLowerCase().endsWith('.ogg');
+    const extension = (params.fileName ?? '').toLowerCase().endsWith('.mp3')
+      ? 'mp3'
+      : (params.fileName ?? '').toLowerCase().endsWith('.ogg')
+        ? 'ogg'
+        : (params.mimetype ?? '').toLowerCase().includes('audio/mpeg')
+          ? 'mp3'
+          : (params.mimetype ?? '').toLowerCase().includes('audio/ogg')
+            ? 'ogg'
+            : 'bin';
 
-    const args = [
-      '-hide_banner',
-      '-loglevel',
-      'error',
-      '-show_entries',
-      'format=duration',
-      '-of',
-      'default=noprint_wrappers=1:nokey=1',
-    ];
+    const workdir = await fs.mkdtemp(path.join(os.tmpdir(), 'wa-audio-probe-'));
+    const probePath = path.join(workdir, `temp_audio_output.${extension}`);
 
-    if (isOgg) {
-      args.push('-f', 'ogg');
+    try {
+      await fs.writeFile(probePath, params.buffer);
+      return await this.probeDurationFromFile(probePath);
+    } finally {
+      await fs.rm(workdir, { recursive: true, force: true });
     }
-
-    args.push('-i', 'pipe:0');
-
-    return new Promise<number>((resolve, reject) => {
-      const process = spawn('ffprobe', args, { stdio: ['pipe', 'pipe', 'pipe'] });
-
-      const stdoutChunks: Buffer[] = [];
-      const stderrChunks: Buffer[] = [];
-
-      process.stdout.on('data', (chunk: Buffer) => stdoutChunks.push(chunk));
-      process.stderr.on('data', (chunk: Buffer) => stderrChunks.push(chunk));
-      process.on('error', (error) => {
-        reject(new HttpException(`ffprobe failed: ${error.message}`, HttpStatus.BAD_GATEWAY));
-      });
-
-      process.on('close', (code) => {
-        if (code !== 0) {
-          const details = Buffer.concat(stderrChunks).toString('utf8').trim();
-          reject(
-            new HttpException(
-              `ffprobe failed (code ${code ?? 'unknown'}): ${details || 'unknown error'}`,
-              HttpStatus.BAD_GATEWAY,
-            ),
-          );
-          return;
-        }
-
-        const raw = Buffer.concat(stdoutChunks).toString('utf8').trim();
-        const duration = Number.parseFloat(raw);
-        if (!Number.isFinite(duration) || duration <= 0) {
-          reject(new HttpException(`ffprobe returned invalid duration: ${raw || 'empty'}`, HttpStatus.BAD_GATEWAY));
-          return;
-        }
-
-        resolve(duration);
-      });
-
-      process.stdin.end(params.buffer);
-    });
   }
 
   async transcribeAudio(
@@ -150,26 +120,37 @@ export class VoiceService {
         params.baseUrl,
       );
 
-      const oggBuffer = await this.convertMp3ToOggOpus(rawBuffer);
+      if (!rawBuffer || rawBuffer.length < VoiceService.MIN_TTS_BYTES) {
+        throw new HttpException('Audio inválido o vacío', HttpStatus.BAD_GATEWAY);
+      }
+
+      const converted = await this.convertMp3ToOggOpus(rawBuffer);
 
       return {
-        buffer: oggBuffer,
+        buffer: converted.buffer,
         fileName: 'reply.ogg',
         mimetype: 'audio/ogg; codecs=opus',
         provider: 'elevenlabs',
         sourceMimetype: 'audio/mpeg',
+        durationSeconds: converted.durationSeconds,
       };
     }
 
     if (openAiKey) {
       const rawBuffer = await this.generateWithOpenAi(text, openAiKey);
-      const oggBuffer = await this.convertMp3ToOggOpus(rawBuffer);
+
+      if (!rawBuffer || rawBuffer.length < VoiceService.MIN_TTS_BYTES) {
+        throw new HttpException('Audio inválido o vacío', HttpStatus.BAD_GATEWAY);
+      }
+
+      const converted = await this.convertMp3ToOggOpus(rawBuffer);
       return {
-        buffer: oggBuffer,
+        buffer: converted.buffer,
         fileName: 'reply.ogg',
         mimetype: 'audio/ogg; codecs=opus',
         provider: 'openai',
         sourceMimetype: 'audio/mpeg',
+        durationSeconds: converted.durationSeconds,
       };
     }
 
@@ -262,35 +243,44 @@ export class VoiceService {
     }
   }
 
-  private async convertMp3ToOggOpus(input: Buffer): Promise<Buffer> {
+  private async convertMp3ToOggOpus(input: Buffer): Promise<{ buffer: Buffer; durationSeconds: number }> {
     if (!Buffer.isBuffer(input) || input.length === 0) {
       throw new HttpException('Audio conversion input is required', HttpStatus.BAD_REQUEST);
     }
 
-    return new Promise<Buffer>((resolve, reject) => {
+    const workdir = await fs.mkdtemp(path.join(os.tmpdir(), 'wa-audio-'));
+    const inputPath = path.join(workdir, 'temp_audio_input.mp3');
+    const outputPath = path.join(workdir, 'temp_audio_output.ogg');
+
+    const keepTempFiles = ['1', 'true', 'yes'].includes((process.env.AUDIO_KEEP_TEMP_FILES ?? '').toLowerCase());
+
+    try {
+      await fs.writeFile(inputPath, input);
+      await this.runFfmpegConversion(inputPath, outputPath);
+
+      const durationSeconds = await this.probeDurationFromFile(outputPath);
+      const buffer = await fs.readFile(outputPath);
+      if (!buffer || buffer.length === 0) {
+        throw new HttpException('ffmpeg returned empty audio output', HttpStatus.BAD_GATEWAY);
+      }
+
+      return { buffer, durationSeconds };
+    } finally {
+      if (!keepTempFiles) {
+        await fs.rm(workdir, { recursive: true, force: true });
+      }
+    }
+  }
+
+  private async runFfmpegConversion(inputPath: string, outputPath: string): Promise<void> {
+    await new Promise<void>((resolve, reject) => {
       const process = spawn(
         'ffmpeg',
-        [
-          '-hide_banner',
-          '-loglevel',
-          'error',
-          '-i',
-          'pipe:0',
-          '-c:a',
-          'libopus',
-          '-b:a',
-          '128k',
-          '-f',
-          'ogg',
-          'pipe:1',
-        ],
-        { stdio: ['pipe', 'pipe', 'pipe'] },
+        ['-y', '-i', inputPath, '-c:a', 'libopus', '-b:a', '128k', outputPath],
+        { stdio: ['ignore', 'ignore', 'pipe'] },
       );
 
-      const stdoutChunks: Buffer[] = [];
       const stderrChunks: Buffer[] = [];
-
-      process.stdout.on('data', (chunk: Buffer) => stdoutChunks.push(chunk));
       process.stderr.on('data', (chunk: Buffer) => stderrChunks.push(chunk));
       process.on('error', (error) => {
         reject(new HttpException(`ffmpeg conversion failed: ${error.message}`, HttpStatus.BAD_GATEWAY));
@@ -298,12 +288,7 @@ export class VoiceService {
 
       process.on('close', (code) => {
         if (code === 0) {
-          const output = Buffer.concat(stdoutChunks);
-          if (output.length === 0) {
-            reject(new HttpException('ffmpeg returned empty audio output', HttpStatus.BAD_GATEWAY));
-            return;
-          }
-          resolve(output);
+          resolve();
           return;
         }
 
@@ -315,8 +300,62 @@ export class VoiceService {
           ),
         );
       });
+    });
+  }
 
-      process.stdin.end(input);
+  private async probeDurationFromFile(filePath: string): Promise<number> {
+    return new Promise<number>((resolve, reject) => {
+      const process = spawn(
+        'ffprobe',
+        [
+          '-hide_banner',
+          '-loglevel',
+          'error',
+          '-show_entries',
+          'format=duration',
+          '-of',
+          'default=noprint_wrappers=1:nokey=1',
+          filePath,
+        ],
+        { stdio: ['ignore', 'pipe', 'pipe'] },
+      );
+
+      const stdoutChunks: Buffer[] = [];
+      const stderrChunks: Buffer[] = [];
+
+      process.stdout.on('data', (chunk: Buffer) => stdoutChunks.push(chunk));
+      process.stderr.on('data', (chunk: Buffer) => stderrChunks.push(chunk));
+      process.on('error', (error) => {
+        reject(new HttpException(`ffprobe failed: ${error.message}`, HttpStatus.BAD_GATEWAY));
+      });
+
+      process.on('close', (code) => {
+        if (code !== 0) {
+          const details = Buffer.concat(stderrChunks).toString('utf8').trim();
+          reject(
+            new HttpException(
+              `ffprobe failed (code ${code ?? 'unknown'}): ${details || 'unknown error'}`,
+              HttpStatus.BAD_GATEWAY,
+            ),
+          );
+          return;
+        }
+
+        const raw = Buffer.concat(stdoutChunks).toString('utf8').trim();
+        const rawLower = raw.toLowerCase();
+        if (!raw || rawLower === 'n/a') {
+          reject(new HttpException(`ffprobe returned invalid duration: ${raw || 'empty'}`, HttpStatus.BAD_GATEWAY));
+          return;
+        }
+
+        const duration = Number.parseFloat(raw);
+        if (!Number.isFinite(duration) || duration <= 0) {
+          reject(new HttpException(`ffprobe returned invalid duration: ${raw || 'empty'}`, HttpStatus.BAD_GATEWAY));
+          return;
+        }
+
+        resolve(duration);
+      });
     });
   }
 

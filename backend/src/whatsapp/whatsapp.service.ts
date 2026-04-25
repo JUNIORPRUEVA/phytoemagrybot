@@ -2302,12 +2302,19 @@ export class WhatsAppService implements OnModuleInit {
     buffer: Buffer;
     fileName?: string;
     mimetype?: string;
+    durationSeconds?: number;
   }): Promise<{ durationSeconds: number | null; bytes: number; durationOk: boolean; bytesOk: boolean }> {
     const bytes = audio.buffer.length;
     const bytesOk = bytes >= WhatsAppService.MIN_OUTBOUND_AUDIO_BYTES;
 
     let durationSeconds: number | null = null;
     let durationOk = true;
+
+    if (typeof audio.durationSeconds === 'number' && Number.isFinite(audio.durationSeconds)) {
+      durationSeconds = audio.durationSeconds;
+      durationOk = audio.durationSeconds >= WhatsAppService.MIN_OUTBOUND_AUDIO_DURATION_SECONDS;
+      return { durationSeconds, bytes, durationOk, bytesOk };
+    }
 
     const durationProbe = (this.voiceService as any).getDurationSeconds;
     if (typeof durationProbe === 'function') {
@@ -2339,44 +2346,67 @@ export class WhatsAppService implements OnModuleInit {
         attempt,
       });
 
-      const built = await this.buildVoiceReply(resolved, prepared);
-      const validation = await this.validateOutboundAudio(built);
+      try {
+        const built = await this.buildVoiceReply(resolved, prepared);
+        const validation = await this.validateOutboundAudio(built);
 
-      this.logAudioDebug({
-        traceId: diagnostic?.traceId ?? null,
-        contactId: options?.contactId ?? null,
-        stage: 'generated',
-        attempt,
-        provider: built.provider ?? null,
-        fileName: built.fileName,
-        mimetype: built.mimetype,
-        sourceMimetype: built.sourceMimetype ?? null,
-        bytes: validation.bytes,
-        durationSeconds: validation.durationSeconds,
-        minBytes: WhatsAppService.MIN_OUTBOUND_AUDIO_BYTES,
-        minDurationSeconds: WhatsAppService.MIN_OUTBOUND_AUDIO_DURATION_SECONDS,
-        bytesOk: validation.bytesOk,
-        durationOk: validation.durationOk,
-      });
-
-      if (validation.bytesOk && validation.durationOk) {
-        return built;
-      }
-
-      if (attempt < WhatsAppService.OUTBOUND_AUDIO_MAX_ATTEMPTS) {
         this.logAudioDebug({
           traceId: diagnostic?.traceId ?? null,
           contactId: options?.contactId ?? null,
-          stage: 'generate_retry',
+          stage: 'generated',
           attempt,
-          reason: 'audio_validation_failed',
+          provider: built.provider ?? null,
+          fileName: built.fileName,
+          mimetype: built.mimetype,
+          sourceMimetype: built.sourceMimetype ?? null,
+          bytes: validation.bytes,
+          durationSeconds: validation.durationSeconds,
+          minBytes: WhatsAppService.MIN_OUTBOUND_AUDIO_BYTES,
+          minDurationSeconds: WhatsAppService.MIN_OUTBOUND_AUDIO_DURATION_SECONDS,
+          bytesOk: validation.bytesOk,
+          durationOk: validation.durationOk,
         });
-        continue;
-      }
 
-      throw new Error(
-        `Audio validation failed (bytesOk=${validation.bytesOk}, durationOk=${validation.durationOk}, bytes=${validation.bytes}, durationSeconds=${validation.durationSeconds ?? 'unknown'})`,
-      );
+        if (validation.bytesOk && validation.durationOk) {
+          return built;
+        }
+
+        if (attempt < WhatsAppService.OUTBOUND_AUDIO_MAX_ATTEMPTS) {
+          this.logAudioDebug({
+            traceId: diagnostic?.traceId ?? null,
+            contactId: options?.contactId ?? null,
+            stage: 'generate_retry',
+            attempt,
+            reason: 'audio_validation_failed',
+          });
+          continue;
+        }
+
+        throw new Error(
+          `Audio validation failed (bytesOk=${validation.bytesOk}, durationOk=${validation.durationOk}, bytes=${validation.bytes}, durationSeconds=${validation.durationSeconds ?? 'unknown'})`,
+        );
+      } catch (error) {
+        this.logAudioDebug({
+          traceId: diagnostic?.traceId ?? null,
+          contactId: options?.contactId ?? null,
+          stage: 'generate_error',
+          attempt,
+          error: error instanceof Error ? error.message : 'Unknown error',
+        });
+
+        if (attempt < WhatsAppService.OUTBOUND_AUDIO_MAX_ATTEMPTS) {
+          this.logAudioDebug({
+            traceId: diagnostic?.traceId ?? null,
+            contactId: options?.contactId ?? null,
+            stage: 'generate_retry',
+            attempt,
+            reason: 'audio_generation_failed',
+          });
+          continue;
+        }
+
+        throw error;
+      }
     }
 
     throw new Error('Audio validation failed');

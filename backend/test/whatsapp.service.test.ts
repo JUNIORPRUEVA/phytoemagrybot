@@ -67,8 +67,8 @@ function createAudioFlowService() {
       buffer: Buffer.alloc(25_000, 1),
       fileName: 'reply.ogg',
       mimetype: 'audio/ogg; codecs=opus',
+      durationSeconds: 3,
     }),
-    getDurationSeconds: async () => 3,
   };
 
   const followupService = {
@@ -2927,9 +2927,9 @@ test('processAndDeliverMessage falls back to text when generated audio is too sh
       buffer: Buffer.alloc(2000, 1),
       fileName: 'reply.ogg',
       mimetype: 'audio/ogg; codecs=opus',
+      durationSeconds: 1.2,
     };
   };
-  voiceService.getDurationSeconds = async () => 1.2;
 
   await service.processAndDeliverMessage(
     createResolvedConfig(),
@@ -3146,8 +3146,8 @@ test('acceptWebhook ignores group reaction payloads without triggering bot repli
         buffer: Buffer.alloc(25_000, 1),
         fileName: 'reply.ogg',
         mimetype: 'audio/ogg; codecs=opus',
+        durationSeconds: 3,
       }),
-      getDurationSeconds: async () => 3,
     } as any,
   ) as any;
 
