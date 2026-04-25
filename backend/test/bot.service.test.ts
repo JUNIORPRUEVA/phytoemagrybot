@@ -2110,7 +2110,34 @@ test('uses a dynamic human fallback instead of a fixed bot configuration error',
 
   assert.equal(result.source, 'fallback');
   assert.doesNotMatch(result.reply, /Configuracion incompleta del bot/i);
-  assert.match(result.reply, /momentico|cargando/i);
+  assert.match(result.reply, /Te Detox Premium/i);
+  assert.doesNotMatch(result.reply, /momentico|cargando|espera|verificar|revisar/i);
+  assert.match(result.reply, /\?\s*$/);
+});
+
+test('sales fallback for hello stays sales-active and avoids wait language', async () => {
+  const service = createService({
+    memoryContext: {
+      messages: [
+        { role: 'user', content: 'precio' },
+        { role: 'assistant', content: 'Cuesta RD$1,500.' },
+      ],
+      clientMemory: {
+        status: 'interesado',
+      },
+    },
+    generateReply: async () => {
+      throw new Error('OpenAI unavailable');
+    },
+  });
+
+  const result = await service.processIncomingMessage('18095559995', 'Hola');
+
+  assert.equal(result.source, 'fallback');
+  assert.match(result.reply, /hola/i);
+  assert.match(result.reply, /Te Detox Premium/i);
+  assert.doesNotMatch(result.reply, /momentico|cargando|espera|verificar|revisar/i);
+  assert.match(result.reply, /\?\s*$/);
 });
 
 test('hello thanks k tal conversation stays varied and does not repeat media', async () => {

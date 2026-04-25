@@ -1522,17 +1522,71 @@ export class BotService {
     };
   }
 
+  private pickProductSnippet(product: StructuredProduct | null): string {
+    if (!product?.titulo?.trim()) {
+      return '';
+    }
+
+    const rawDescription = (product.descripcionCorta || product.descripcionCompleta || '').trim();
+    const cleaned = rawDescription.replace(/\s+/g, ' ').trim();
+    const sentence = cleaned.split(/[.!?]\s+/)[0]?.trim() ?? '';
+    const short = (sentence || cleaned).slice(0, 120).trim().replace(/[?¿]/g, '').trim();
+
+    if (!short) {
+      return product.titulo.trim();
+    }
+
+    return `${product.titulo.trim()}: ${short}`;
+  }
+
+  private buildSalesActiveFallbackReply(
+    config: Awaited<ReturnType<ClientConfigService['getConfig']>> | null,
+    message: string,
+    conversationMemory: ConversationMemoryState,
+  ): string {
+    const greetingOnly = this.isGreetingOnlyMessage(message);
+    const intent = this.detectIntent(message);
+
+    const products = config ? this.getProductsFromConfig(config) : [];
+    const relevantProducts = config ? this.filterRelevantProducts(products, message) : [];
+    const featuredProduct = relevantProducts[0] ?? products[0] ?? null;
+    const productSnippet = this.pickProductSnippet(featuredProduct);
+
+    const closingQuestion = greetingOnly
+      ? 'Que te interesa saber primero: precio, resultados o como se usa?'
+      : this.buildNonRepeatingQuestion(message, intent, conversationMemory);
+
+    const introOptions = greetingOnly
+      ? ['Hola 👋', 'Hola, dime', 'Hey, cuentame']
+      : ['Te ayudo de una vez', 'Listo, te ayudo rapido', 'Vamos a resolverlo rapido'];
+
+    const intro = this.pickFirstUnsentMessage(introOptions, conversationMemory.sentMessages);
+
+    const options = [
+      [intro, productSnippet ? `Por ejemplo, ${productSnippet}.` : '', closingQuestion].filter(Boolean).join(' '),
+      [intro, productSnippet ? `${productSnippet}.` : '', closingQuestion].filter(Boolean).join(' '),
+      [intro, closingQuestion].filter(Boolean).join(' '),
+    ]
+      .map((value) => value.replace(/\s+/g, ' ').trim())
+      .filter((value) => value.length > 0);
+
+    return this.pickFirstUnsentMessage(options, conversationMemory.sentMessages);
+  }
+
   private async buildFallbackResult(
     contactId: string,
     message: string,
   ): Promise<BotReplyResult> {
     const conversationMemory = await this.getConversationMemory(contactId, []);
-    const fallbackReply = this.pickFirstUnsentMessage([
-      'Ahora mismo estoy cargando la información, dame un momentico 🙏',
-      'Dame un momentico 🙏 estoy terminando de cargar la información para responderte bien.',
-      'Estoy cargando la información para responderte mejor, dame un momentico 🙏',
-      this.buildNonRepeatingQuestion(message, this.detectIntent(message), conversationMemory),
-    ], conversationMemory.sentMessages);
+    let config: Awaited<ReturnType<ClientConfigService['getConfig']>> | null = null;
+    try {
+      config = await this.clientConfigService.getConfig();
+    } catch {
+      config = null;
+    }
+
+    const fallbackReply = this.buildSalesActiveFallbackReply(config, message, conversationMemory);
+    const intent = this.detectIntent(message);
 
     try {
       await this.memoryService.saveMessage({
@@ -1544,7 +1598,7 @@ export class BotService {
         recordConversationDelivery(conversationMemory, {
           messageText: fallbackReply,
           lastMessages: [message, fallbackReply],
-          lastIntent: this.detectIntent(message),
+          lastIntent: intent,
           lastSentHadVideo: false,
           cooldownMediaUntil: null,
         }),
@@ -1556,7 +1610,7 @@ export class BotService {
     const result = this.createResult(
       fallbackReply,
       'fallback',
-      this.detectIntent(message),
+      intent,
       this.buildFallbackDecisionState(contactId, message),
       false,
       [],

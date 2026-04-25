@@ -829,6 +829,165 @@ export class WhatsAppService implements OnModuleInit {
     });
   }
 
+  private normalizeTextForMatch(value: string): string {
+    return value
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-zA-Z0-9\s]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .toLowerCase()
+      .trim();
+  }
+
+  private isGreetingOnlyMessage(message: string): boolean {
+    const normalized = this.normalizeTextForMatch(message);
+    if (!normalized) {
+      return false;
+    }
+
+    const tokens = normalized.split(' ').filter((token) => token.length > 0);
+    if (tokens.length === 0 || tokens.length > 4) {
+      return false;
+    }
+
+    const joined = tokens.join(' ');
+    const greetings = new Set([
+      'hola',
+      'hello',
+      'hey',
+      'holi',
+      'saludos',
+      'buenas',
+      'buenos dias',
+      'buenas tardes',
+      'buenas noches',
+      'que tal',
+      'k tal',
+      'klk',
+      'que lo que',
+      'que lo q',
+    ]);
+
+    return greetings.has(joined);
+  }
+
+  private containsProhibitedWaitFallbackLanguage(text: string): boolean {
+    const normalized = this.normalizeTextForMatch(text);
+    if (!normalized) {
+      return false;
+    }
+
+    return [
+      'cargando',
+      'estoy cargando',
+      'dame un momento',
+      'dame un momentico',
+      'dame un momentito',
+      'un momentico',
+      'un momentito',
+      'esperame',
+      'espera',
+      'dejame verificar',
+      'dejame revisar',
+      'dejame confirmar',
+    ].some((needle) => normalized.includes(needle));
+  }
+
+  private sanitizeFallbackIntro(value: string | undefined): string | null {
+    const trimmed = value?.trim() || '';
+    if (!trimmed) {
+      return null;
+    }
+
+    if (/[?¿]/.test(trimmed)) {
+      return null;
+    }
+
+    if (this.containsProhibitedWaitFallbackLanguage(trimmed)) {
+      return null;
+    }
+
+    return trimmed.replace(/[.!]+\s*$/, '').trim() || null;
+  }
+
+  private pickProductSnippetFromConfig(resolved: ResolvedWhatsAppClient, message: string): string {
+    const configurations = this.asRecord(resolved.config.configurations);
+    const instructions = this.asRecord(configurations.instructions);
+    const rawProducts = Array.isArray(instructions.products) ? instructions.products : [];
+
+    const products = rawProducts
+      .map((value) => {
+        const product = this.asRecord(value);
+        const titulo =
+          this.asString(product.titulo) ||
+          this.asString(product.title) ||
+          this.asString(product.name) ||
+          '';
+        const descripcion =
+          this.asString(product.descripcion_corta) ||
+          this.asString(product.descripcionCorta) ||
+          this.asString(product.summary) ||
+          this.asString(product.descripcion_completa) ||
+          this.asString(product.descripcionCompleta) ||
+          this.asString(product.description) ||
+          '';
+        const activo = typeof product.activo === 'boolean'
+          ? product.activo
+          : (typeof product.active === 'boolean' ? product.active : true);
+
+        return {
+          titulo: titulo.trim(),
+          descripcion: descripcion.trim(),
+          activo,
+        };
+      })
+      .filter((product) => product.activo && product.titulo.length > 0);
+
+    if (products.length === 0) {
+      return '';
+    }
+
+    const normalizedMessage = this.normalizeTextForMatch(message);
+    const terms = normalizedMessage
+      .split(/\s+/)
+      .map((term) => term.trim())
+      .filter((term) => term.length >= 3);
+
+    const featured =
+      products.find((product) => {
+        const haystack = this.normalizeTextForMatch(`${product.titulo} ${product.descripcion}`);
+        return terms.some((term) => haystack.includes(term));
+      }) ??
+      products[0];
+
+    const cleaned = featured.descripcion.replace(/\s+/g, ' ').trim();
+    const firstSentence = cleaned.split(/[.!?]\s+/)[0]?.trim() ?? '';
+    const short = (firstSentence || cleaned).slice(0, 120).trim().replace(/[?¿]/g, '').trim();
+
+    return short ? `${featured.titulo}: ${short}` : featured.titulo;
+  }
+
+  private buildSalesActiveDeliveryFallbackMessage(resolved: ResolvedWhatsAppClient, message: string): string {
+    const greetingOnly = this.isGreetingOnlyMessage(message);
+    const intro = this.sanitizeFallbackIntro(resolved.whatsapp.fallbackMessage);
+    const productSnippet = this.pickProductSnippetFromConfig(resolved, message);
+
+    const safeIntro = intro || (greetingOnly ? 'Hola 👋' : 'Te ayudo de una vez');
+    const closingQuestion = greetingOnly
+      ? 'Que te interesa saber primero: precio, resultados o como se usa?'
+      : 'Que te interesa ver ahora: precio, resultados o como pedirlo?';
+
+    return [
+      safeIntro,
+      productSnippet ? `Por ejemplo, ${productSnippet}.` : '',
+      closingQuestion,
+    ]
+      .filter((value) => Boolean(value && value.trim()))
+      .join(' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
   private async processAndDeliverMessage(
     resolved: ResolvedWhatsAppClient,
     contactId: string,
@@ -840,9 +999,7 @@ export class WhatsAppService implements OnModuleInit {
       diagnostic?: DeliveryDiagnosticContext;
     },
   ): Promise<void> {
-    const fallbackMessage =
-      resolved.whatsapp.fallbackMessage ??
-      'Ahora mismo estoy cargando la información, dame un momentico 🙏';
+    const fallbackMessage = this.buildSalesActiveDeliveryFallbackMessage(resolved, message);
     const outboundAddress = options?.outboundAddress?.trim() || '';
     const normalizedContactId = this.normalizeNumber(contactId);
     const effectiveOutboundAddress =
