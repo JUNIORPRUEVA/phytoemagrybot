@@ -2006,6 +2006,40 @@ test('processAndDeliverMessage keeps text delivery even when preferAudioReply is
   assert.equal(sentAudios.length, 0);
 });
 
+test('processAndDeliverMessage promotes a detailed text reply to audio when the contact prefers voice', async () => {
+  const { service, sentTexts, sentAudios, botService, redisService } = createAudioFlowService();
+
+  await redisService.set('voice-pref:18095551234', '1');
+  botService.processIncomingMessage = async () => ({
+    reply: 'Mira, te explico rapido como funciona, como se usa bien y que detalle cuidar para que le saques mejor provecho sin complicarte.',
+    replyType: 'text',
+    mediaFiles: [],
+    intent: 'interes',
+    decisionIntent: 'info',
+    stage: 'interesado',
+    action: 'guiar',
+    purchaseIntentScore: 35,
+    hotLead: false,
+    cached: false,
+    usedGallery: false,
+    usedMemory: false,
+    source: 'ai',
+  });
+
+  await service.processAndDeliverMessage(
+    createResolvedConfig(),
+    '18095551234',
+    'quiero saber bien como funciona',
+    'text',
+    {
+      outboundAddress: '18095551234@s.whatsapp.net',
+    },
+  );
+
+  assert.equal(sentAudios.length, 1);
+  assert.equal(sentTexts.length, 0);
+});
+
 test('processAndDeliverMessage sends text before media when reply type is text', async () => {
   const { service, sentTexts, sentAudios, botService } = createAudioFlowService();
   const deliveryOrder: string[] = [];
@@ -2414,6 +2448,26 @@ test('processAndDeliverMessage rewrites the text before generating voice', async
 
   assert.equal(preparedText, 'Te ayudo ahora mismo.');
   assert.equal(sentAudios.length, 1);
+});
+
+test('processIncomingAudioMessage remembers voice preference after a successful audio flow', async () => {
+  const { service, getRememberedVoicePreferences } = createAudioFlowService();
+
+  await service.processIncomingAudioMessage(createResolvedConfig(), {
+    number: '18095551234',
+    outboundAddress: '18095551234@s.whatsapp.net',
+    message: '[audio]',
+    type: 'audio',
+    messageId: 'successful-audio',
+    audio: {
+      mimetype: 'audio/ogg; codecs=opus',
+      seconds: 20,
+      ptt: true,
+    },
+    rawPayload: {},
+  });
+
+  assert.equal(getRememberedVoicePreferences(), 1);
 });
 
 test('processAndDeliverMessage falls back to text when audio generation exceeds 3 seconds', async () => {

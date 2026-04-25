@@ -9,12 +9,17 @@ function createFollowupHarness(options?: {
   clientMemory?: Record<string, unknown>;
   initialMessages?: Array<{ contactId: string; role: string; content: string }>;
   summary?: string;
+  closedContacts?: string[];
 }) {
   const followups = new Map<string, any>();
   const sentMessages: Array<{ to: string; text: string }> = [];
   const savedMessages: Array<{ contactId: string; role: string; content: string }> = [];
   const aiCalls: any[] = [];
   const initialMessages = [...(options?.initialMessages ?? [])];
+  const redisStore = new Map<string, unknown>();
+  for (const contactId of options?.closedContacts ?? []) {
+    redisStore.set(`conversation_end:${contactId}`, true);
+  }
   const config = {
     botSettings: {
       followupEnabled: true,
@@ -154,6 +159,11 @@ function createFollowupHarness(options?: {
         return entry;
       },
     } as any,
+    {
+      async get(key: string) {
+        return redisStore.get(key) ?? null;
+      },
+    } as any,
   );
 
   Object.defineProperty(service as any, 'sendFollowupText', {
@@ -290,6 +300,46 @@ test('does not schedule followup after a clear closing message from the customer
   });
 
   assert.equal(followups.get('18095557777'), undefined);
+});
+
+test('does not schedule followup when the conversation is marked as ended in Redis', async () => {
+  const { service, followups } = createFollowupHarness({
+    closedContacts: ['18095550003'],
+  });
+
+  await service.registerBotReply({
+    contactId: '18095550003',
+    outboundAddress: '18095550003@s.whatsapp.net',
+    reply: 'Perfecto.',
+  });
+
+  assert.equal(followups.get('18095550003'), undefined);
+});
+
+test('processDueFollowups deactivates queued followups when the conversation is ended in Redis', async () => {
+  const { service, followups, sentMessages } = createFollowupHarness();
+
+  await service.registerBotReply({
+    contactId: '18095550004',
+    outboundAddress: '18095550004@s.whatsapp.net',
+    reply: 'Perfecto.',
+  });
+
+  await (service as any).redisService.get('conversation_end:18095550004');
+  (service as any).redisService.get = async (key: string) => (
+    key === 'conversation_end:18095550004' ? true : null
+  );
+
+  const current = followups.get('18095550004');
+  current.nextFollowupAt = new Date(Date.now() - 60 * 1000);
+  followups.set('18095550004', current);
+
+  await service.processDueFollowups();
+
+  const updated = followups.get('18095550004');
+  assert.equal(sentMessages.length, 0);
+  assert.equal(updated.isActive, false);
+  assert.equal(updated.nextFollowupAt, null);
 });
 
 test('uses name and memory context for AI followups and avoids literal repetition', async () => {

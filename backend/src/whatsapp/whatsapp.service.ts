@@ -68,7 +68,7 @@ export class WhatsAppService implements OnModuleInit {
   private static readonly AUDIO_REPLY_TIMEOUT_MS = 3000;
   private static readonly AUDIO_REPLY_MAX_WORDS = 90;
   private static readonly AUDIO_TRANSCRIPT_CACHE_TTL_SECONDS = 60 * 60 * 6;
-  private static readonly VOICE_PREFERENCE_TTL_SECONDS = 60 * 60 * 24 * 30;
+  private static readonly VOICE_PREFERENCE_TTL_SECONDS = 60 * 60 * 24;
   private static readonly CONVERSATION_SEND_STATE_TTL_SECONDS = 60 * 60 * 24;
   private static readonly MAX_SENT_MESSAGES_MEMORY = 20;
   private static readonly MAX_SENT_VIDEOS_MEMORY = 20;
@@ -893,7 +893,16 @@ export class WhatsAppService implements OnModuleInit {
       conversationSendState,
     );
 
-    const sendAs = await this.shouldSendAudioReply(resolved, contactId, botReply.replyType)
+    const sendAs = await this.shouldSendAudioReply(
+      resolved,
+      contactId,
+      botReply.replyType,
+      {
+        voicePreferred: options?.preferAudioReply === true || await this.hasVoiceReplyPreference(contactId),
+        incomingMessage: message,
+        reply: replyToSend,
+      },
+    )
       ? 'audio'
       : 'text';
     let usedGallery = false;
@@ -996,6 +1005,9 @@ export class WhatsAppService implements OnModuleInit {
         sendAs,
       });
       await this.rememberLastBotReplyModality(contactId, 'audio');
+      if (options?.preferAudioReply === true || this.detectExplicitVoicePreference(message)) {
+        await this.rememberVoiceReplyPreference(contactId);
+      }
       await this.rememberSentMessage(contactId, conversationSendState.topic, replyToSend);
     }
     this.logger.log(
@@ -1394,9 +1406,11 @@ export class WhatsAppService implements OnModuleInit {
       );
 
       await this.processAndDeliverMessage(resolved, incoming.number, transcript, 'audio', {
+        preferAudioReply: true,
         outboundAddress,
         diagnostic: mergedDiagnostic,
       });
+      await this.rememberVoiceReplyPreference(incoming.number);
     } catch (error) {
       this.logDeliveryFailure('audio_processing', error, mergedDiagnostic);
       this.logger.error(
@@ -1622,12 +1636,97 @@ export class WhatsAppService implements OnModuleInit {
     resolved: ResolvedWhatsAppClient,
     contactId: string,
     replyType: 'text' | 'audio',
+    options?: {
+      voicePreferred?: boolean;
+      incomingMessage?: string;
+      reply?: string;
+    },
   ): Promise<boolean> {
-    if (resolved.config.botSettings?.allowAudioReplies === false || replyType !== 'audio') {
+    if (resolved.config.botSettings?.allowAudioReplies === false) {
+      return Promise.resolve(false);
+    }
+
+    const shouldUseAudio = replyType === 'audio' || (
+      options?.voicePreferred === true &&
+      this.shouldPromoteTextReplyToVoice(options.incomingMessage ?? '', options.reply ?? '')
+    );
+
+    if (!shouldUseAudio) {
       return Promise.resolve(false);
     }
 
     return this.wasLastBotReplyAudio(contactId).then((wasAudio) => !wasAudio);
+  }
+
+  private shouldPromoteTextReplyToVoice(message: string, reply: string): boolean {
+    const normalizedReply = reply.trim();
+    if (!normalizedReply || this.isSimpleTextReply(normalizedReply)) {
+      return false;
+    }
+
+    if (this.isLongVoiceFriendlyReply(normalizedReply)) {
+      return true;
+    }
+
+    const normalizedMessage = this.normalizeTextForVoiceDecision(message);
+    if (!normalizedMessage) {
+      return false;
+    }
+
+    return [
+      'explicame',
+      'como funciona',
+      'como se usa',
+      'instrucciones',
+      'paso por paso',
+      'hablame',
+      'quiero saber bien',
+      'tengo varias dudas',
+    ].some((keyword) => normalizedMessage.includes(keyword));
+  }
+
+  private isLongVoiceFriendlyReply(reply: string): boolean {
+    const words = reply.split(/\s+/).filter((word) => word.length > 0);
+    return words.length >= 18 || reply.length >= 95;
+  }
+
+  private isSimpleTextReply(reply: string): boolean {
+    const normalized = this.normalizeTextForVoiceDecision(reply);
+    if (!normalized) {
+      return true;
+    }
+
+    if (normalized.length <= 45) {
+      return true;
+    }
+
+    return ['ok', 'dale', 'perfecto', 'listo', 'si', 'claro', 'confirmado'].includes(normalized);
+  }
+
+  private detectExplicitVoicePreference(message: string): boolean {
+    const normalized = this.normalizeTextForVoiceDecision(message);
+    if (!normalized) {
+      return false;
+    }
+
+    return [
+      'audio',
+      'nota de voz',
+      'por voz',
+      'mandame un audio',
+      'mandame una nota',
+      'respondeme por audio',
+    ].some((keyword) => normalized.includes(keyword));
+  }
+
+  private normalizeTextForVoiceDecision(value: string): string {
+    return value
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
   }
 
   private prepareReplyForVoice(reply: string): string {

@@ -131,7 +131,7 @@ export class VoiceService {
           {
             role: 'system',
             content:
-              'Convierte el texto a una version hablada para una nota de voz de WhatsApp. Debe sonar natural, cercana, humana y comercial, en espanol latino. Mantener el mismo significado. Usa una sola idea corta o dos ideas breves. No uses emojis, listas, ni comillas. Devuelve solo texto plano.',
+              'Convierte el texto a una version hablada para una nota de voz de WhatsApp. Debe sonar natural, cercana, humana, comercial y con un tono dominicano suave, sin sonar robotica. Mantener el mismo significado. Si encaja de forma natural, puede usar expresiones cercanas como mira, oye, tranquilo o bro, pero sin exagerar. Usa una sola idea corta o dos ideas breves. No uses emojis, listas, ni comillas. Devuelve solo texto plano.',
           },
           {
             role: 'user',

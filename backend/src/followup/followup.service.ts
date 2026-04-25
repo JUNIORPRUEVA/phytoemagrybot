@@ -16,6 +16,7 @@ import { ClientConfigService } from '../config/config.service';
 import { MemoryService } from '../memory/memory.service';
 import { ClientMemorySnapshot, StoredMessage } from '../memory/memory.types';
 import { PrismaService } from '../prisma/prisma.service';
+import { RedisService } from '../redis/redis.service';
 
 type FollowupConfig = {
   enabled: boolean;
@@ -38,6 +39,7 @@ export class FollowupService {
     private readonly companyContextService: CompanyContextService,
     private readonly clientConfigService: ClientConfigService,
     private readonly memoryService: MemoryService,
+    private readonly redisService: RedisService,
   ) {}
 
   async registerBotReply(params: {
@@ -50,6 +52,11 @@ export class FollowupService {
 
     if (!config.enabled) {
       await this.deactivate(contactId, 'disabled');
+      return;
+    }
+
+    if (await this.isConversationEnded(contactId)) {
+      await this.deactivate(contactId, 'conversation_ended');
       return;
     }
 
@@ -221,6 +228,11 @@ export class FollowupService {
   ): Promise<void> {
     if (followup.followupStep >= config.maxFollowups) {
       await this.deactivate(followup.contactId, 'max_reached');
+      return;
+    }
+
+    if (await this.isConversationEnded(followup.contactId)) {
+      await this.deactivate(followup.contactId, 'conversation_ended');
       return;
     }
 
@@ -673,6 +685,14 @@ export class FollowupService {
       maxFollowups: Math.min(Math.max(settings?.maxFollowups ?? 3, 1), 3),
       stopIfUserReply: settings?.stopIfUserReply ?? true,
     };
+  }
+
+  private async isConversationEnded(contactId: string): Promise<boolean> {
+    return (await this.redisService.get<boolean>(this.getConversationEndKey(contactId))) === true;
+  }
+
+  private getConversationEndKey(contactId: string): string {
+    return `conversation_end:${contactId}`;
   }
 
   private async deactivate(contactId: string, reason: string): Promise<void> {

@@ -242,6 +242,9 @@ function createService(options?: {
       async set(key: string, value: BotReplyResult) {
         this.store.set(key, value);
       },
+      async del(key: string) {
+        this.store.delete(key);
+      },
     } as any,
     {
       contactState: {
@@ -865,6 +868,47 @@ test('closing message answers with sales close', async () => {
   assert.match(result.reply.toLowerCase(), /env[ií]o hoy|dejo listo/);
 });
 
+test('closure phrases stop the sale before AI and persist conversation_end in Redis', async () => {
+  let aiCalled = false;
+  const service = createService({
+    onGenerateReply: () => {
+      aiCalled = true;
+    },
+  });
+
+  const result = await service.processIncomingMessage('18095550001', 'ok gracias, te aviso');
+
+  assert.equal(result.source, 'cierre');
+  assert.equal(result.intent, 'cierre');
+  assert.equal(aiCalled, false);
+  assert.doesNotMatch(result.reply, /\?/);
+  assert.equal((service as any).redisService.store.get('conversation_end:18095550001'), true);
+});
+
+test('a closed conversation stays closed for generic messages until interest returns', async () => {
+  let aiCalls = 0;
+  const service = createService({
+    aiReply: 'Cuesta RD$1,500 y te explico como pedirlo.',
+    onGenerateReply: () => {
+      aiCalls += 1;
+    },
+  });
+
+  await (service as any).redisService.set('conversation_end:18095550002', true);
+
+  const held = await service.processIncomingMessage('18095550002', 'hola');
+
+  assert.equal(held.source, 'cierre');
+  assert.equal(aiCalls, 0);
+  assert.doesNotMatch(held.reply, /\?/);
+
+  const reopened = await service.processIncomingMessage('18095550002', 'precio');
+
+  assert.equal(reopened.source, 'ai');
+  assert.equal(aiCalls, 1);
+  assert.equal((service as any).redisService.store.get('conversation_end:18095550002'), undefined);
+});
+
 test('hot lead message marks the conversation as hot', async () => {
   let capturedParams: Record<string, unknown> | null = null;
   const service = createService({
@@ -917,14 +961,19 @@ test('catalog request limits outgoing images to avoid saturating the client', as
   assert.equal(result.mediaFiles.length, 2);
 });
 
-test('voice request by text still stays as text', async () => {
-  const service = createService();
+test('voice request by text uses audio when the answer needs explanation', async () => {
+  const service = createService({
+    generateReply: async () => ({
+      type: 'text',
+      content: 'Claro, te explico paso por paso como funciona, como se usa bien y que suele notar la gente para que entiendas todo completo antes de decidir.',
+    }),
+  });
   const result = await service.processIncomingMessage(
     '18095551234',
     'explicame por voz como funciona',
   );
 
-  assert.equal(result.replyType, 'text');
+  assert.equal(result.replyType, 'audio');
 });
 
 test('short price text always stays as text reply', async () => {
@@ -1020,7 +1069,7 @@ test('explanation intent uses audio only when the answer is long enough', async 
   assert.equal(result.replyType, 'audio');
 });
 
-test('explanation by text stays text even with a detailed answer', async () => {
+test('long explanation by text now prefers audio when the answer is detailed', async () => {
   const service = createService({
     generateReply: async () => ({
       type: 'audio',
@@ -1028,9 +1077,44 @@ test('explanation by text stays text even with a detailed answer', async () => {
     }),
   });
 
-  const result = await service.processIncomingMessage('18095551234', 'que es exactamente este producto');
+  const result = await service.processIncomingMessage(
+    '18095551234',
+    'quiero que me expliques bien que es exactamente este producto y como se usa porque tengo varias dudas',
+  );
 
-  assert.equal(result.replyType, 'text');
+  assert.equal(result.replyType, 'audio');
+});
+
+test('long instructional text prefers audio', async () => {
+  const service = createService({
+    generateReply: async () => ({
+      type: 'text',
+      content: 'Mira, te explico paso por paso como tomarlo, a que hora te conviene mas, cuantos dias seguirlo y que detalle cuidar para aprovecharlo mejor sin complicarte.',
+    }),
+  });
+
+  const result = await service.processIncomingMessage(
+    '18095551234',
+    'quiero las instrucciones paso por paso de como tomarlo y como se usa correctamente porque no quiero hacerlo mal',
+  );
+
+  assert.equal(result.replyType, 'audio');
+});
+
+test('emotional sales reply prefers audio when persuasion needs a long reply', async () => {
+  const service = createService({
+    generateReply: async () => ({
+      type: 'text',
+      content: 'Mira, te explico rapidito por que tanta gente se anima con este apoyo, que suele notar cuando lo usa bien y por que puede ayudarte a arrancar con mas confianza sin sentirte sola en el proceso.',
+    }),
+  });
+
+  const result = await service.processIncomingMessage(
+    '18095551234',
+    'funciona de verdad o es cuento? quiero que me hables claro porque me da miedo botar mi dinero',
+  );
+
+  assert.equal(result.replyType, 'audio');
 });
 
 test('visual request limits outgoing images to two items', async () => {

@@ -127,6 +127,7 @@ export class BotService {
   private static readonly COMPANY_RULES_CACHE_KEY = 'company_rules';
   private static readonly SENT_MEDIA_CACHE_KEY_PREFIX = 'bot:sent-media:';
   private static readonly CONVERSATION_MEMORY_TTL_SECONDS = 60 * 60 * 24;
+  private static readonly CONVERSATION_END_TTL_SECONDS = 60 * 60 * 2;
   private static readonly INTENT_CACHE_TTL_SECONDS = 60 * 60;
   private static readonly STATE_CACHE_TTL_SECONDS = 60 * 60 * 24;
   private static readonly ANALYSIS_CACHE_TTL_SECONDS = 60 * 60 * 24;
@@ -225,6 +226,69 @@ export class BotService {
         normalizedMessage,
       );
       const conversationMemory = await this.getConversationMemory(normalizedContactId, history);
+      const usedMemory = this.hasUsefulMemory(memoryContext, history.length) || conversationMemory.lastMessages.length > 0;
+      const conversationEndKey = this.getConversationEndKey(normalizedContactId);
+      const conversationWasEnded = Boolean(
+        await this.readRedisCache<boolean>(conversationEndKey),
+      );
+      const resumedByInterest = this.shouldResumeClosedConversation(normalizedMessage);
+
+      if (conversationWasEnded && resumedByInterest) {
+        await this.redisService.del(conversationEndKey);
+        console.log('CONVERSATION END CLEARED:', normalizedContactId);
+      }
+
+      const closureDetected = this.shouldMarkConversationAsEnded(normalizedMessage);
+      if ((closureDetected || conversationWasEnded) && !resumedByInterest) {
+        await this.redisService.set(
+          conversationEndKey,
+          true,
+          BotService.CONVERSATION_END_TTL_SECONDS,
+        );
+
+        const closureDecision = this.buildConversationEndedDecision(normalizedMessage);
+        const closureReply = this.buildConversationEndedReply(
+          conversationMemory,
+          closureDetected,
+        );
+
+        await this.memoryService.saveMessage({
+          contactId: normalizedContactId,
+          role: 'assistant',
+          content: closureReply,
+        });
+        await this.saveConversationMemory(
+          recordConversationDelivery(conversationMemory, {
+            messageText: closureReply,
+            lastMessages: [normalizedMessage, closureReply],
+            lastIntent: closureDecision.intent,
+            state: closureDecision.stage,
+            lastSentHadVideo: false,
+            cooldownMediaUntil: null,
+          }),
+        );
+
+        const closureResult = this.createResult(
+          closureReply,
+          'cierre',
+          'cierre',
+          closureDecision,
+          false,
+          [],
+          'text',
+          usedMemory,
+        );
+
+        await this.markBotResponseInDecisionState(
+          normalizedContactId,
+          closureResult.reply,
+          closureDecision,
+          [],
+        );
+        this.logReply(normalizedContactId, closureResult);
+        return closureResult;
+      }
+
       const companyData = await this.getCachedCompanyRules();
       const decision = await this.runDecisionEngine({
         contactId: normalizedContactId,
@@ -267,7 +331,6 @@ export class BotService {
       const responseStyle = this.resolveResponseStyleFromDecision(decision, normalizedMessage, intent);
       const leadStage = this.mapDecisionStageToLeadStage(decision.stage, hotLead);
       const replyObjective = this.mapDecisionActionToReplyObjective(decision.action);
-      const usedMemory = this.hasUsefulMemory(memoryContext, history.length) || conversationMemory.lastMessages.length > 0;
       await this.redisService.set(
         this.getNextBestActionCacheKey(normalizedContactId),
         {
@@ -1870,6 +1933,10 @@ export class BotService {
     return `intent:${contactId}`;
   }
 
+  private getConversationEndKey(contactId: string): string {
+    return `conversation_end:${contactId}`;
+  }
+
   private getStateCacheKey(contactId: string): string {
     return `state:${contactId}`;
   }
@@ -1992,6 +2059,10 @@ export class BotService {
     };
   }): BotReplyResult['replyType'] {
     const incoming = this.analyzeIncomingMessage(params.message, params.metadata);
+    if (this.shouldUseTextReply(params.message, params.intent, params.action, incoming)) {
+      return 'text';
+    }
+
     const modalityIntent = this.detectReplyModalityIntent(
       params.message,
       params.intent,
@@ -2007,23 +2078,7 @@ export class BotService {
       return 'text';
     }
 
-    if (modalityIntent === 'explicacion') {
-      if (
-        incoming.messageType === 'audio' &&
-        incoming.messageLength === 'largo' &&
-        this.shouldUseAudioReply(params.message, params.reply, params.action, incoming)
-      ) {
-        return 'audio';
-      }
-
-      return 'text';
-    }
-
-    if (
-      incoming.messageType === 'audio' &&
-      incoming.messageLength === 'largo' &&
-      this.shouldUseAudioReply(params.message, params.reply, params.action, incoming)
-    ) {
+    if (this.shouldUseAudioReply(params.message, params.reply, params.action, incoming)) {
       return 'audio';
     }
 
@@ -2142,25 +2197,92 @@ export class BotService {
     action: BotDecisionAction,
     incoming: { messageType: 'text' | 'audio' | 'image'; messageLength: 'corto' | 'medio' | 'largo' },
   ): boolean {
+    const explicitVoicePreference = this.prefersVoiceReply(message);
+    const detailedRequest = this.requiresDetailedResponse(message);
+    const instructionRequest = this.requiresInstructionalWalkthrough(message);
+    const emotionalSalesReply = this.isEmotionalSalesReply(reply, action);
+    const longOrDetailedReply = this.isLongOrDetailedReply(reply);
+    const voiceSuitableReply = longOrDetailedReply || this.isVoiceSuitableReply(reply);
+
+    if (!voiceSuitableReply && !emotionalSalesReply) {
+      return false;
+    }
+
     if (incoming.messageType === 'audio' && incoming.messageLength !== 'corto') {
-      if (action === 'persuadir' || this.requiresDetailedResponse(message)) {
+      if (action === 'persuadir' || detailedRequest || instructionRequest || explicitVoicePreference) {
         return true;
       }
     }
 
-    if (!this.isLongOrDetailedReply(reply)) {
+    if (incoming.messageType === 'text' && incoming.messageLength === 'largo') {
+      return detailedRequest || instructionRequest || emotionalSalesReply || explicitVoicePreference;
+    }
+
+    if (explicitVoicePreference && (detailedRequest || instructionRequest || voiceSuitableReply)) {
+      return true;
+    }
+
+    if (action === 'persuadir' && (voiceSuitableReply || emotionalSalesReply)) {
+      return true;
+    }
+
+    return detailedRequest || instructionRequest;
+  }
+
+  private isVoiceSuitableReply(reply: string): boolean {
+    const normalized = reply.trim();
+    if (!normalized) {
       return false;
     }
 
-    if (action === 'persuadir') {
+    const words = normalized.split(/\s+/).filter((word) => word.length > 0);
+    if (words.length >= 18) {
       return true;
     }
 
-    if (incoming.messageType === 'audio' && incoming.messageLength !== 'corto') {
-      return true;
+    return normalized.length >= 95;
+  }
+
+  private requiresInstructionalWalkthrough(message: string): boolean {
+    const normalized = message.trim().toLowerCase();
+    if (!normalized) {
+      return false;
     }
 
-    return this.requiresDetailedResponse(message);
+    return [
+      'como se usa',
+      'cómo se usa',
+      'como lo uso',
+      'cómo lo uso',
+      'como tomarlo',
+      'cómo tomarlo',
+      'como me lo tomo',
+      'cómo me lo tomo',
+      'paso por paso',
+      'pasos',
+      'instrucciones',
+    ].some((keyword) => normalized.includes(keyword));
+  }
+
+  private isEmotionalSalesReply(reply: string, action: BotDecisionAction): boolean {
+    if (action !== 'persuadir') {
+      return false;
+    }
+
+    const normalized = reply.trim().toLowerCase();
+    if (!normalized) {
+      return false;
+    }
+
+    return [
+      'te explico',
+      'te puede ayudar',
+      'vas a sentir',
+      'vas a notar',
+      'te va a ayudar',
+      'lo importante es',
+      'mira',
+    ].some((keyword) => normalized.includes(keyword));
   }
 
   private isSimpleConfirmation(message: string): boolean {
@@ -2182,6 +2304,104 @@ export class BotService {
 
   private isGreetingMessage(message: string): boolean {
     return ['hola', 'hola!', 'buenas', 'buenos dias', 'buenos dias!', 'buenas tardes', 'buenas noches'].includes(message);
+  }
+
+  private shouldMarkConversationAsEnded(message: string): boolean {
+    const normalized = this.normalizeTextForMatch(message);
+    if (!normalized || this.shouldResumeClosedConversation(message)) {
+      return false;
+    }
+
+    return [
+      'te aviso',
+      'yo te aviso',
+      'manana sera',
+      'luego',
+      'despues hablamos',
+      'mas tarde',
+      'lo dejamos asi',
+      'dejalo asi',
+      'ok gracias',
+      'gracias',
+      'esta bien',
+      'todo bien',
+      'perfecto gracias',
+      'listo gracias',
+    ].some((keyword) => normalized.includes(keyword));
+  }
+
+  private shouldResumeClosedConversation(message: string): boolean {
+    const normalized = this.normalizeTextForMatch(message);
+    if (!normalized) {
+      return false;
+    }
+
+    const intent = this.detectIntent(message);
+    if (intent === 'interes' || intent === 'compra' || intent === 'catalogo' || intent === 'hot') {
+      return true;
+    }
+
+    return [
+      'precio',
+      'cuanto',
+      'vale',
+      'quiero',
+      'me interesa',
+      'como compro',
+      'como pido',
+      'comprar',
+      'pedido',
+      'ordenar',
+      'catalogo',
+      'catalog',
+      'mandame',
+      'enviame',
+      'enviamelo',
+      'foto',
+      'video',
+      'ubicacion',
+      'direccion',
+      'pago',
+      'cuenta',
+      'disponible',
+    ].some((keyword) => normalized.includes(keyword));
+  }
+
+  private buildConversationEndedReply(
+    conversationMemory: ConversationMemoryState,
+    closureDetected: boolean,
+  ): string {
+    const options = closureDetected
+      ? [
+          'Perfecto, lo dejamos hasta ahi por ahora. Cuando quieras retomarlo, me escribes.',
+          'Dale, lo dejamos asi por ahora. Aqui sigo cuando quieras retomarlo.',
+          'Todo bien, lo dejamos por ahora. Aqui estare cuando quieras volver a eso.',
+        ]
+      : [
+          'Claro, aqui sigo cuando quieras retomarlo.',
+          'Todo bien, lo dejamos por ahora.',
+          'Perfecto, aqui estare cuando quieras volver a eso.',
+        ];
+
+    return this.pickFirstUnsentMessage(options, conversationMemory.sentMessages);
+  }
+
+  private buildConversationEndedDecision(message: string): BotDecisionState {
+    const normalized = this.normalizeTextForMatch(message);
+
+    return {
+      intent: 'no_interesado',
+      classificationSource: 'rules',
+      stage: 'curioso',
+      action: 'cerrar',
+      purchaseIntentScore: 0,
+      currentIntent: 'conversation_end',
+      summaryText: 'Client ended the conversation for now.',
+      keyFacts: {
+        conversationEnded: true,
+      },
+      lastMessageId: `conversation_end:${this.hashValue(normalized || 'empty')}`,
+    };
   }
 
   private isLongOrDetailedReply(reply: string): boolean {
