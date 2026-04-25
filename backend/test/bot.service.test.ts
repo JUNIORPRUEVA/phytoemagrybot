@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import { BotService } from '../src/bot/bot.service';
 import { BotReplyResult } from '../src/bot/bot.types';
+import { DEFAULT_COMPANY_CONTEXT } from '../src/company-context/company-context.types';
 
 function createService(options?: {
   mediaCount?: number;
@@ -10,6 +11,7 @@ function createService(options?: {
   aiReply?: string;
   classifiedIntent?: string;
   companyContextText?: string;
+  companyContextData?: Record<string, unknown>;
   companyContextResolver?: (message: string) => string;
   configConfigurations?: Record<string, unknown>;
   botConfig?: {
@@ -110,6 +112,15 @@ function createService(options?: {
       },
     } as any,
     {
+      async getContext() {
+        return {
+          id: 1,
+          ...DEFAULT_COMPANY_CONTEXT,
+          createdAt: new Date('2026-04-24T00:00:00.000Z'),
+          updatedAt: new Date('2026-04-24T00:00:00.000Z'),
+          ...(options?.companyContextData ?? {}),
+        };
+      },
       async buildAgentContext() {
         return options?.companyContextText ?? options?.companyContextResolver?.('') ?? 'CONTEXTO_EMPRESA\n\n{"company_name":"Phyto Emagry","phone":"809-555-1234","address":"Santo Domingo"}';
       },
@@ -398,6 +409,230 @@ test('uses real company data for location, schedule, and payment questions', asy
     assert.match(context, /Nombre: Phyto Emagry/);
     assert.match(context, /HORARIO:/);
     assert.match(context, /CUENTAS:/);
+  }
+});
+
+test('company rule engine blocks sales outside business hours before AI generation', async () => {
+  let aiCalls = 0;
+  const service = createService({
+    companyContextData: {
+      workingHoursJson: [
+        ...['lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado', 'domingo'].map((day) => ({
+          day,
+          open: true,
+          from: '08:00',
+          to: '18:00',
+        })),
+      ],
+    },
+    generateReply: async () => {
+      aiCalls += 1;
+      return {
+        type: 'text',
+        content: 'Te lo envio hoy mismo.',
+      };
+    },
+  });
+
+  const realDateNow = Date.now;
+  Date.now = () => new Date('2026-04-24T23:30:00.000Z').getTime();
+
+  try {
+    const result = await service.processIncomingMessage('18095558888', 'quiero comprarlo ahora');
+
+    assert.equal(aiCalls, 0);
+    assert.equal(result.source, 'fallback');
+    assert.match(result.reply, /fuera de horario/i);
+  } finally {
+    Date.now = realDateNow;
+  }
+});
+
+test('company rule engine overrides location replies with real company data', async () => {
+  let aiCalls = 0;
+  const service = createService({
+    companyContextData: {
+      companyName: 'Phyto Emagry',
+      address: 'Av. Independencia, Santo Domingo',
+      googleMapsLink: 'https://maps.app.goo.gl/phyto-real',
+    },
+    generateReply: async () => {
+      aiCalls += 1;
+      return {
+        type: 'text',
+        content: 'Estamos por ahi, luego te mando ubicacion.',
+      };
+    },
+  });
+
+  const result = await service.processIncomingMessage('18095557777', 'donde estan ubicados?');
+
+  assert.equal(aiCalls, 0);
+  assert.match(result.reply, /Phyto Emagry/);
+  assert.match(result.reply, /Av\. Independencia, Santo Domingo/);
+  assert.match(result.reply, /maps\.app\.goo\.gl\/phyto-real/);
+});
+
+test('company rule engine uses real company phone and name for contact requests', async () => {
+  let aiCalls = 0;
+  const service = createService({
+    companyContextData: {
+      companyName: 'Phyto Emagry',
+      phone: '809-555-1234',
+      whatsapp: '+18095551234',
+    },
+    generateReply: async () => {
+      aiCalls += 1;
+      return {
+        type: 'text',
+        content: 'Escribeme luego y te paso el numero.',
+      };
+    },
+  });
+
+  const result = await service.processIncomingMessage('18095551111', 'cual es su telefono?');
+
+  assert.equal(aiCalls, 0);
+  assert.match(result.reply, /Phyto Emagry/);
+  assert.match(result.reply, /809-555-1234/);
+  assert.match(result.reply, /18095551234|\+18095551234/);
+});
+
+test('company rule engine injects mandatory catalog media instruction before AI reply', async () => {
+  let capturedParams: Record<string, unknown> | null = null;
+  const service = createService({
+    configConfigurations: {
+      instructions: {
+        identity: {
+          assistantName: 'Aura',
+        },
+        products: [
+          {
+            id: 'detox-1',
+            titulo: 'Te Detox Premium',
+            descripcion_corta: 'Ayuda a digestion y bienestar.',
+            descripcion_completa: 'Infusion herbal para apoyar digestion y desinflamar.',
+            precio: 1500,
+            precio_minimo: 1300,
+            imagenes: ['https://example.com/product-detox-1.jpg'],
+            videos: [],
+            activo: true,
+          },
+        ],
+      },
+    },
+    onGenerateReply: (params) => {
+      capturedParams = params;
+    },
+    generateResponses: async () => ([
+      {
+        text: 'Claro, te muestro una referencia.',
+        type: 'text',
+      },
+      {
+        text: 'Te mando una foto para que lo veas mejor.',
+        type: 'text',
+      },
+    ]),
+  });
+
+  const result = await service.processIncomingMessage('18095556666', 'mandame una foto');
+  const context = String((capturedParams as { context?: string } | null)?.context ?? '');
+
+  assert.match(context, /\[COMPANY_RULE_ENGINE\]/);
+  assert.match(context, /No respondas solo con texto si existe media disponible/i);
+  assert.equal(result.mediaFiles.length > 0, true);
+});
+
+test('company rule engine answers honestly when photos are requested but no real media exists', async () => {
+  const service = createService({
+    companyContextData: {
+      companyName: 'Phyto Emagry',
+      whatsapp: '+18095551234',
+    },
+    generateResponses: async () => ([
+      {
+        text: 'Claro, te envio fotos ahora mismo.',
+        type: 'text',
+      },
+    ]),
+  });
+
+  const result = await service.processIncomingMessage('18095552222', 'enviame fotos');
+
+  assert.equal(result.mediaFiles.length, 0);
+  assert.equal(result.source, 'fallback');
+  assert.match(result.reply, /Phyto Emagry/);
+  assert.match(result.reply, /no tengo fotos cargadas/i);
+  assert.doesNotMatch(result.reply, /no puedo enviar fotos/i);
+});
+
+test('company rule engine full conversation keeps business rules ahead of AI', async () => {
+  const service = createService({
+    companyContextData: {
+      companyName: 'Phyto Emagry',
+      address: 'Av. Independencia, Santo Domingo',
+      googleMapsLink: 'https://maps.app.goo.gl/phyto-real',
+      phone: '809-555-1234',
+      whatsapp: '+18095551234',
+      workingHoursJson: [
+        {
+          day: 'viernes',
+          open: true,
+          from: '08:00',
+          to: '18:00',
+        },
+      ],
+    },
+    configConfigurations: {
+      instructions: {
+        identity: {
+          assistantName: 'Aura',
+        },
+        products: [
+          {
+            id: 'detox-1',
+            titulo: 'Te Detox Premium',
+            descripcion_corta: 'Ayuda a digestion y bienestar.',
+            descripcion_completa: 'Infusion herbal para apoyar digestion y desinflamar.',
+            precio: 1500,
+            precio_minimo: 1300,
+            imagenes: ['https://example.com/product-detox-1.jpg'],
+            videos: [],
+            activo: true,
+          },
+        ],
+      },
+    },
+    generateResponses: async () => ([
+      {
+        text: 'Te lo envio hoy mismo y estamos donde sea.',
+        type: 'text',
+      },
+      {
+        text: 'Claro, te explico rapido.',
+        type: 'text',
+      },
+    ]),
+  });
+
+  const realDateNow = Date.now;
+  Date.now = () => new Date('2026-04-25T01:30:00.000Z').getTime();
+
+  try {
+    const afterHours = await service.processIncomingMessage('18095553333', 'puedes enviarlo ahora?');
+    const photos = await service.processIncomingMessage('18095553333', 'enviame fotos');
+    const location = await service.processIncomingMessage('18095553333', 'donde estan ubicados?');
+    const buyAttempt = await service.processIncomingMessage('18095553333', 'quiero comprarlo ahora');
+
+    assert.match(afterHours.reply, /fuera de horario/i);
+    assert.equal(photos.mediaFiles.length > 0, true);
+    assert.match(location.reply, /Phyto Emagry/);
+    assert.match(location.reply, /Av\. Independencia, Santo Domingo/);
+    assert.match(location.reply, /maps\.app\.goo\.gl\/phyto-real/);
+    assert.match(buyAttempt.reply, /fuera de horario/i);
+  } finally {
+    Date.now = realDateNow;
   }
 });
 

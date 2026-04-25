@@ -36,6 +36,13 @@ import {
   ResponseValidationReason,
   validateResponseCandidate,
 } from './conversation-memory';
+import {
+  applyCompanyRules,
+  buildCompanyRuleMediaUnavailableResponse,
+  buildCompanyRuleInstruction,
+  CompanyRuleCheck,
+  validateCompanyRuleResponse,
+} from './company-rule-engine';
 
 type MediaIntent = 'IMAGEN' | 'VIDEO' | 'MEDIA' | null;
 
@@ -161,6 +168,7 @@ export class BotService {
         normalizedMessage,
       );
       const conversationMemory = await this.getConversationMemory(normalizedContactId, history);
+      const companyData = await this.companyContextService.getContext();
       const decision = await this.runDecisionEngine({
         contactId: normalizedContactId,
         message: normalizedMessage,
@@ -182,10 +190,57 @@ export class BotService {
         hotLead,
       });
       console.log('THINKING RESULT:', thinkingAnalysis);
+      const companyCheck = applyCompanyRules(
+        normalizedMessage,
+        thinkingAnalysis,
+        companyData,
+        new Date(Date.now()),
+      );
+      if (companyCheck.reason) {
+        console.log('COMPANY RULE APPLIED:', companyCheck.reason);
+      }
       const responseStyle = this.resolveResponseStyleFromDecision(decision, normalizedMessage, intent);
       const leadStage = this.mapDecisionStageToLeadStage(decision.stage, hotLead);
       const replyObjective = this.mapDecisionActionToReplyObjective(decision.action);
       const usedMemory = this.hasUsefulMemory(memoryContext, history.length) || conversationMemory.lastMessages.length > 0;
+
+      if (!companyCheck.allowResponse && companyCheck.overrideResponse) {
+        await this.memoryService.saveMessage({
+          contactId: normalizedContactId,
+          role: 'assistant',
+          content: companyCheck.overrideResponse,
+        });
+        await this.saveConversationMemory(
+          recordConversationDelivery(conversationMemory, {
+            messageText: companyCheck.overrideResponse,
+            lastMessages: [normalizedMessage, companyCheck.overrideResponse],
+            lastIntent: decision.intent,
+            lastSentHadVideo: false,
+            cooldownMediaUntil: null,
+          }),
+        );
+
+        const blockedResult = this.createResult(
+          companyCheck.overrideResponse,
+          'fallback',
+          intent,
+          decision,
+          false,
+          [],
+          'text',
+          usedMemory,
+        );
+
+        await this.markBotResponseInDecisionState(
+          normalizedContactId,
+          blockedResult.reply,
+          decision,
+          [],
+        );
+        this.logReply(normalizedContactId, blockedResult);
+        return blockedResult;
+      }
+
       const mediaIntent = this.detectMediaIntent(normalizedMessage);
       const productMediaCandidates = relevantProducts.length > 0
         ? relevantProducts
@@ -218,6 +273,8 @@ export class BotService {
         leadStage,
         replyObjective,
         thinkingAnalysis,
+        companyData,
+        companyCheck,
         conversationMemory,
         candidateMediaFiles: this.shouldAttachMediaToAiReply(
           normalizedMessage,
@@ -604,6 +661,8 @@ export class BotService {
     leadStage: AssistantLeadStage;
     replyObjective: AssistantReplyObjective;
     thinkingAnalysis: ThinkingAnalysis;
+    companyData: Awaited<ReturnType<CompanyContextService['getContext']>>;
+    companyCheck: CompanyRuleCheck;
     conversationMemory: ConversationMemoryState;
     candidateMediaFiles: MediaFile[];
     intent: BotIntent;
@@ -612,6 +671,17 @@ export class BotService {
     mediaFiles: MediaFile[];
     source: BotReplyResult['source'];
   }> {
+    if (params.companyCheck.reason === 'require_catalog_media' && params.candidateMediaFiles.length === 0) {
+      return {
+        reply: {
+          type: 'text',
+          content: buildCompanyRuleMediaUnavailableResponse(params.companyData),
+        },
+        mediaFiles: [],
+        source: 'fallback',
+      };
+    }
+
     let lastRejectedText = '';
     let lastReason: ResponseValidationReason | null = null;
 
@@ -625,6 +695,7 @@ export class BotService {
         history: params.history,
         context: [
           params.context,
+          buildCompanyRuleInstruction(params.message, params.companyData, params.companyCheck),
           buildConversationMemoryContext(params.conversationMemory),
           this.buildMediaSelectionContext(params.candidateMediaFiles),
         ]
@@ -648,6 +719,20 @@ export class BotService {
       const selected = this.decideResponse(candidates, params.candidateMediaFiles, params.conversationMemory);
 
       if (selected) {
+        const companyRuleValidation = validateCompanyRuleResponse(
+          params.message,
+          selected.reply.content,
+          params.companyData,
+          params.companyCheck,
+          selected.mediaFiles.length,
+        );
+        if (!companyRuleValidation.valid) {
+          console.log('RESPUESTA RECHAZADA:', companyRuleValidation.reason ?? 'company_rule_validation_failed');
+          lastRejectedText = selected.reply.content;
+          lastReason = 'no_new_content';
+          continue;
+        }
+
         console.log('RESPUESTA FINAL:', {
           text: selected.reply.content,
           mediaIds: selected.mediaFiles.map((file) => file.fileUrl),
