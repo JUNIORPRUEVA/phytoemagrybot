@@ -1,4 +1,3 @@
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
 import '../services/api_service.dart';
@@ -13,10 +12,12 @@ class ConfigPage extends StatefulWidget {
     super.key,
     required this.apiService,
     required this.onConfigUpdated,
+    this.onNavigationChanged,
   });
 
   final ApiService apiService;
   final VoidCallback onConfigUpdated;
+  final VoidCallback? onNavigationChanged;
 
   @override
   State<ConfigPage> createState() => _ConfigPageState();
@@ -24,6 +25,8 @@ class ConfigPage extends StatefulWidget {
 
 abstract class ConfigPageStateAccess {
   bool handleBackNavigation();
+  bool canNavigateBack();
+  String currentTitle();
   Future<void> reloadCurrentSection();
 }
 
@@ -31,15 +34,14 @@ enum _ConfigSection { channels, company, tools, memory }
 
 class _ConfigPageState extends State<ConfigPage>
     implements ConfigPageStateAccess {
-  final GlobalKey<State<MemoryPage>> _memoryPageKey = GlobalKey<State<MemoryPage>>();
-  final TextEditingController _companyNameController = TextEditingController();
-  final TextEditingController _companyDetailsController =
-      TextEditingController();
+  final GlobalKey<State<CompanyContextPage>> _companyPageKey =
+      GlobalKey<State<CompanyContextPage>>();
+  final GlobalKey<State<ToolsPage>> _toolsPageKey =
+      GlobalKey<State<ToolsPage>>();
+  final GlobalKey<State<MemoryPage>> _memoryPageKey =
+      GlobalKey<State<MemoryPage>>();
 
   bool _isLoading = true;
-  bool _isSaving = false;
-  bool _isUploadingLogo = false;
-  String _companyLogoUrl = '';
   String? _loadError;
   _ConfigSection? _selectedSection;
 
@@ -57,13 +59,6 @@ class _ConfigPageState extends State<ConfigPage>
     }
   }
 
-  @override
-  void dispose() {
-    _companyNameController.dispose();
-    _companyDetailsController.dispose();
-    super.dispose();
-  }
-
   Future<void> _loadConfig() async {
     setState(() {
       _isLoading = true;
@@ -71,12 +66,12 @@ class _ConfigPageState extends State<ConfigPage>
     });
 
     try {
-      final config = await widget.apiService.getConfig();
+      await widget.apiService.getConfig();
       if (!mounted) {
         return;
       }
       setState(() {
-        _applyConfig(config);
+        _loadError = null;
       });
     } catch (error) {
       if (!mounted) {
@@ -85,9 +80,6 @@ class _ConfigPageState extends State<ConfigPage>
 
       setState(() {
         _loadError = error.toString().replaceFirst('Exception: ', '');
-        _companyNameController.clear();
-        _companyDetailsController.clear();
-        _companyLogoUrl = '';
       });
     } finally {
       if (mounted) {
@@ -98,119 +90,18 @@ class _ConfigPageState extends State<ConfigPage>
     }
   }
 
-  void _applyConfig(ClientConfigData config) {
-    _companyNameController.text = config.companyName;
-    _companyDetailsController.text = config.companyDetails;
-    _companyLogoUrl = config.companyLogoUrl;
-  }
-
-  Future<void> _saveConfig() async {
-    setState(() {
-      _isSaving = true;
-    });
-
-    try {
-      final normalizedCompanyName = _companyNameController.text.trim();
-      if (normalizedCompanyName.isEmpty) {
-        throw Exception('El nombre de la empresa es obligatorio.');
-      }
-
-      final config = await widget.apiService.saveBrandingSettings(
-        companyName: normalizedCompanyName,
-        companyDetails: _companyDetailsController.text.trim(),
-        companyLogoUrl: _companyLogoUrl.trim(),
-      );
-
-      if (!mounted) {
-        return;
-      }
-
-      setState(() {
-        _applyConfig(config);
-      });
-      widget.onConfigUpdated();
-      _showMessage('Identidad visual guardada.');
-    } catch (error) {
-      if (!mounted) {
-        return;
-      }
-      _showMessage(error.toString(), isError: true);
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isSaving = false;
-        });
-      }
-    }
-  }
-
-  Future<void> _pickAndUploadLogo() async {
-    setState(() {
-      _isUploadingLogo = true;
-    });
-
-    try {
-      final result = await FilePicker.platform.pickFiles(
-        allowMultiple: false,
-        withData: true,
-        type: FileType.custom,
-        allowedExtensions: const <String>['png', 'jpg', 'jpeg', 'webp', 'svg'],
-      );
-
-      final file = result?.files.single;
-      if (file == null || file.bytes == null) {
-        return;
-      }
-
-      final extension = file.extension?.toLowerCase();
-      final uploaded = await widget.apiService.uploadMedia(
-        fileBytes: file.bytes!,
-        fileName: file.name,
-        contentType: extension == 'png'
-            ? 'image/png'
-            : extension == 'webp'
-                ? 'image/webp'
-                : extension == 'svg'
-                    ? 'image/svg+xml'
-                    : 'image/jpeg',
-        title:
-            'Logo ${_companyNameController.text.trim().isEmpty ? 'empresa' : _companyNameController.text.trim()}',
-        description: 'Logo corporativo',
-      );
-
-      if (!mounted) {
-        return;
-      }
-
-      setState(() {
-        _companyLogoUrl = uploaded.fileUrl;
-      });
-      widget.onConfigUpdated();
-      _showMessage('Logo cargado correctamente.');
-    } catch (error) {
-      if (!mounted) {
-        return;
-      }
-      _showMessage(error.toString(), isError: true);
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isUploadingLogo = false;
-        });
-      }
-    }
-  }
-
   void _openSection(_ConfigSection section) {
     setState(() {
       _selectedSection = section;
     });
+    widget.onNavigationChanged?.call();
   }
 
   void _closeSection() {
     setState(() {
       _selectedSection = null;
     });
+    widget.onNavigationChanged?.call();
     _loadConfig();
   }
 
@@ -218,6 +109,23 @@ class _ConfigPageState extends State<ConfigPage>
   bool handleBackNavigation() {
     if (_selectedSection == null) {
       return false;
+    }
+
+    if (_selectedSection == _ConfigSection.company) {
+      final companyState =
+          _companyPageKey.currentState as CompanyContextPageStateAccess?;
+      final handled = companyState?.handleBackNavigation() ?? false;
+      if (handled) {
+        return true;
+      }
+    }
+
+    if (_selectedSection == _ConfigSection.tools) {
+      final toolsState = _toolsPageKey.currentState as ToolsPageStateAccess?;
+      final handled = toolsState?.handleBackNavigation() ?? false;
+      if (handled) {
+        return true;
+      }
     }
 
     if (_selectedSection == _ConfigSection.memory) {
@@ -233,6 +141,31 @@ class _ConfigPageState extends State<ConfigPage>
   }
 
   @override
+  bool canNavigateBack() => _selectedSection != null;
+
+  @override
+  String currentTitle() {
+    final selectedSection = _selectedSection;
+    if (selectedSection == null) {
+      return 'Configuracion';
+    }
+
+    switch (selectedSection) {
+      case _ConfigSection.channels:
+        return 'Canales';
+      case _ConfigSection.company:
+        final companyState =
+            _companyPageKey.currentState as CompanyContextPageStateAccess?;
+        return companyState?.currentTitle() ?? 'Empresa';
+      case _ConfigSection.tools:
+        final toolsState = _toolsPageKey.currentState as ToolsPageStateAccess?;
+        return toolsState?.currentTitle() ?? 'Herramientas';
+      case _ConfigSection.memory:
+        return 'Memoria';
+    }
+  }
+
+  @override
   Future<void> reloadCurrentSection() async {
     if (_selectedSection == null) {
       await _loadConfig();
@@ -245,6 +178,19 @@ class _ConfigPageState extends State<ConfigPage>
       return;
     }
 
+    if (_selectedSection == _ConfigSection.company) {
+      final companyState =
+          _companyPageKey.currentState as CompanyContextPageStateAccess?;
+      await (companyState?.reload() ?? Future<void>.value());
+      return;
+    }
+
+    if (_selectedSection == _ConfigSection.tools) {
+      final toolsState = _toolsPageKey.currentState as ToolsPageStateAccess?;
+      await (toolsState?.reload() ?? Future<void>.value());
+      return;
+    }
+
     await _loadConfig();
   }
 
@@ -253,16 +199,9 @@ class _ConfigPageState extends State<ConfigPage>
     _loadConfig();
   }
 
-  void _showMessage(String message, {bool isError = false}) {
-    final messenger = ScaffoldMessenger.of(context);
-    messenger.hideCurrentSnackBar();
-    messenger.showSnackBar(
-      SnackBar(
-        content: Text(message.replaceFirst('Exception: ', '')),
-        backgroundColor:
-            isError ? const Color(0xFF9F1239) : const Color(0xFF166534),
-      ),
-    );
+  void _handleNestedNavigationChanged() {
+    setState(() {});
+    widget.onNavigationChanged?.call();
   }
 
   @override
@@ -298,9 +237,9 @@ class _ConfigPageState extends State<ConfigPage>
       );
     }
 
-    final isBusy = _isSaving || _isUploadingLogo;
-
     return SecondaryPageLayout(
+      compactMaxWidth: 440,
+      expandedMaxWidth: 680,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
@@ -334,10 +273,6 @@ class _ConfigPageState extends State<ConfigPage>
                 'Ventana de memoria y datos recordados por contacto.',
             onTap: () => _openSection(_ConfigSection.memory),
           ),
-          if (isBusy) ...<Widget>[
-            const SizedBox(height: 18),
-            const LinearProgressIndicator(minHeight: 3),
-          ],
         ],
       ),
     );
@@ -346,30 +281,25 @@ class _ConfigPageState extends State<ConfigPage>
   Widget _buildSectionDetail() {
     switch (_selectedSection) {
       case _ConfigSection.channels:
-        return SecondaryPageLayout(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              _DetailBackButton(label: 'Atras', onTap: _closeSection),
-              const SizedBox(height: 14),
-              ConnectWhatsAppPage(
-                apiService: widget.apiService,
-                onConfigUpdated: _handleNestedConfigUpdated,
-              ),
-            ],
-          ),
+        return ConnectWhatsAppPage(
+          apiService: widget.apiService,
+          onConfigUpdated: _handleNestedConfigUpdated,
         );
       case _ConfigSection.company:
         return CompanyContextPage(
+          key: _companyPageKey,
           apiService: widget.apiService,
           onConfigUpdated: _handleNestedConfigUpdated,
           onRequestBack: _closeSection,
+          onMainViewChanged: (_) => _handleNestedNavigationChanged(),
         );
       case _ConfigSection.tools:
         return ToolsPage(
+          key: _toolsPageKey,
           apiService: widget.apiService,
           onConfigUpdated: _handleNestedConfigUpdated,
           onRequestBack: _closeSection,
+          onNavigationChanged: _handleNestedNavigationChanged,
         );
       case _ConfigSection.memory:
         return MemoryPage(
@@ -377,6 +307,7 @@ class _ConfigPageState extends State<ConfigPage>
           apiService: widget.apiService,
           onConfigUpdated: _handleNestedConfigUpdated,
           onRequestBack: _closeSection,
+          onNavigationChanged: _handleNestedNavigationChanged,
         );
       case null:
         return const SizedBox.shrink();
@@ -453,252 +384,6 @@ class _ConfigSectionTile extends StatelessWidget {
           ],
         ),
       ),
-    );
-  }
-}
-
-class _DetailBackButton extends StatelessWidget {
-  const _DetailBackButton({required this.label, required this.onTap});
-
-  final String label;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return TextButton.icon(
-      onPressed: onTap,
-      icon: const Icon(Icons.arrow_back_rounded),
-      label: Text(label),
-    );
-  }
-}
-
-class _DetailHeader extends StatelessWidget {
-  const _DetailHeader({required this.title, required this.description});
-
-  final String title;
-  final String description;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: <Widget>[
-        Text(
-          title,
-          style: const TextStyle(
-            color: Color(0xFF0F172A),
-            fontSize: 24,
-            fontWeight: FontWeight.w800,
-          ),
-        ),
-        const SizedBox(height: 8),
-        Text(
-          description,
-          style: const TextStyle(
-            color: Color(0xFF64748B),
-            fontSize: 14,
-            height: 1.5,
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _EditableLogoPreview extends StatelessWidget {
-  const _EditableLogoPreview({
-    required this.logoUrl,
-    required this.size,
-    required this.isBusy,
-    required this.onTap,
-  });
-
-  final String logoUrl;
-  final double size;
-  final bool isBusy;
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final radius = BorderRadius.circular(size * 0.26);
-
-    return MouseRegion(
-      cursor: onTap == null
-          ? SystemMouseCursors.basic
-          : SystemMouseCursors.click,
-      child: GestureDetector(
-        onTap: onTap,
-        child: Stack(
-          clipBehavior: Clip.none,
-          children: <Widget>[
-            AnimatedContainer(
-              duration: const Duration(milliseconds: 180),
-              width: size,
-              height: size,
-              decoration: BoxDecoration(
-                borderRadius: radius,
-                gradient: const LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: <Color>[Color(0xFF2563EB), Color(0xFF0EA5E9)],
-                ),
-                boxShadow: const <BoxShadow>[
-                  BoxShadow(
-                    color: Color(0x1F2563EB),
-                    blurRadius: 30,
-                    offset: Offset(0, 18),
-                  ),
-                ],
-              ),
-              child: ClipRRect(
-                borderRadius: radius,
-                child: Stack(
-                  fit: StackFit.expand,
-                  children: <Widget>[
-                    logoUrl.isEmpty
-                        ? const Icon(
-                            Icons.spa_rounded,
-                            color: Colors.white,
-                            size: 38,
-                          )
-                        : Image.network(
-                            logoUrl,
-                            fit: BoxFit.cover,
-                            errorBuilder: (context, error, stackTrace) {
-                              return const Icon(
-                                Icons.spa_rounded,
-                                color: Colors.white,
-                                size: 38,
-                              );
-                            },
-                          ),
-                    DecoratedBox(
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          begin: Alignment.bottomCenter,
-                          end: Alignment.topCenter,
-                          colors: <Color>[
-                            Colors.black.withValues(alpha: 0.18),
-                            Colors.transparent,
-                          ],
-                        ),
-                      ),
-                    ),
-                    if (isBusy)
-                      const ColoredBox(
-                        color: Color(0x550F172A),
-                        child: Center(
-                          child: SizedBox(
-                            width: 24,
-                            height: 24,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2.4,
-                              color: Colors.white,
-                            ),
-                          ),
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-            ),
-            Positioned(
-              right: -4,
-              bottom: -4,
-              child: Container(
-                width: 38,
-                height: 38,
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  shape: BoxShape.circle,
-                  border: Border.all(color: const Color(0xFFE2E8F0)),
-                  boxShadow: const <BoxShadow>[
-                    BoxShadow(
-                      color: Color(0x140F172A),
-                      blurRadius: 14,
-                      offset: Offset(0, 6),
-                    ),
-                  ],
-                ),
-                child: const Icon(
-                  Icons.edit_rounded,
-                  size: 18,
-                  color: Color(0xFF0F172A),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _ConfigInput extends StatelessWidget {
-  const _ConfigInput({
-    required this.label,
-    required this.controller,
-    required this.hintText,
-    required this.enabled,
-    required this.compact,
-    this.maxLines = 1,
-  });
-
-  final String label;
-  final TextEditingController controller;
-  final String hintText;
-  final bool enabled;
-  final bool compact;
-  final int maxLines;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: <Widget>[
-        Text(
-          label,
-          style: TextStyle(
-            color: Color(0xFF334155),
-            fontSize: compact ? 11.5 : 12,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-        const SizedBox(height: 10),
-        TextField(
-          controller: controller,
-          enabled: enabled,
-          maxLines: maxLines,
-          style: TextStyle(
-            fontSize: compact ? 13 : 13.5,
-            color: Color(0xFF0F172A),
-            height: 1.4,
-          ),
-          decoration: InputDecoration(
-            hintText: hintText,
-            isDense: true,
-            contentPadding: EdgeInsets.symmetric(
-              horizontal: compact ? 15 : 16,
-              vertical: compact ? 13 : 15,
-            ),
-            filled: true,
-            fillColor: const Color(0xFFF8FAFC),
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(compact ? 16 : 18),
-              borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
-            ),
-            enabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(compact ? 16 : 18),
-              borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
-            ),
-            focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(compact ? 16 : 18),
-              borderSide: const BorderSide(color: Color(0xFF2563EB)),
-            ),
-          ),
-        ),
-      ],
     );
   }
 }

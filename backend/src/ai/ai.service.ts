@@ -7,6 +7,7 @@ import OpenAI from 'openai';
 import { BotDecisionAction, BotDecisionIntent } from '../bot/bot-decision.types';
 import { AppConfigRecord } from '../config/config.types';
 import { StoredMessage } from '../memory/memory.types';
+import { PromptTransformEngine } from './prompt-transform.engine';
 import {
   AssistantReply,
   AssistantResponseCandidate,
@@ -20,6 +21,8 @@ import {
 export class AiService {
   private static readonly MIN_REPLY_MAX_TOKENS = 420;
   private static readonly RETRY_REPLY_MAX_TOKENS = 720;
+
+  constructor(private readonly promptTransformEngine: PromptTransformEngine) {}
 
   async generateResponses(params: GenerateReplyParams): Promise<AssistantResponseCandidate[]> {
     const {
@@ -55,6 +58,49 @@ export class AiService {
 
     try {
       const openai = this.createOpenAIClient(config.openaiKey);
+
+      const systemPromptEs = this.buildSystemPromptFromConfig({
+        fullPrompt,
+        contactId,
+        config,
+        classifiedIntent,
+        decisionAction,
+        purchaseIntentScore,
+        responseStyle,
+        leadStage,
+        replyObjective,
+      });
+
+      const requestedCandidates = Math.max(candidateCount ?? 3, 2);
+      const transformed = await this.promptTransformEngine.transform({
+        openai,
+        modelName,
+        systemPromptEs,
+        companyContextEs: companyContext,
+        contextEs: context,
+        regenerationInstructionEs: regenerationInstruction,
+        thinkingInstructionEs: thinkingInstruction,
+        candidateCount: 1,
+      });
+
+      if (process.env.PROMPT_DEBUG?.trim()) {
+        // eslint-disable-next-line no-console
+        console.log('[PROMPT_DEBUG]', {
+          original_spanish: transformed.debug.original_spanish,
+          translated_xml: transformed.debug.translated_xml,
+          modules_used: transformed.debug.modules_used,
+        });
+      }
+
+      if (process.env.COMPANY_DEBUG?.trim()) {
+        // eslint-disable-next-line no-console
+        console.log('[COMPANY_DEBUG]', {
+          company_used: transformed.debug.original_company,
+          included_in_xml: transformed.debug.included_in_xml,
+          validation: transformed.debug.company_validation,
+        });
+      }
+
       const messages = this.buildReplyMessages({
         config,
         fullPrompt,
@@ -69,9 +115,8 @@ export class AiService {
         responseStyle,
         leadStage,
         replyObjective,
-        regenerationInstruction,
-        thinkingInstruction,
         candidateCount,
+        systemPromptOverride: transformed.xmlEn,
       });
 
       let completion = await openai.chat.completions.create({
@@ -105,7 +150,7 @@ export class AiService {
         throw new InternalServerErrorException('OpenAI returned an empty response');
       }
 
-      return this.parseAssistantResponses(response, Math.max(candidateCount ?? 3, 2));
+      return this.parseAssistantResponses(response, 1);
     } catch (error) {
       if (error instanceof InternalServerErrorException) {
         throw error;
@@ -132,71 +177,27 @@ export class AiService {
     return new OpenAI({ apiKey });
   }
 
-  private buildReplyMessages(params: GenerateReplyParams) {
+  private buildReplyMessages(
+    params: GenerateReplyParams & { systemPromptOverride?: string },
+  ) {
     const memoryWindow = params.config.aiSettings?.memoryWindow ?? 6;
-    const requestedCandidates = Math.max(params.candidateCount ?? 3, 2);
 
     return [
       {
         role: 'system' as const,
-        content: this.buildSystemPromptFromConfig({
-          fullPrompt: params.fullPrompt,
-          contactId: params.contactId,
-          config: params.config,
-          classifiedIntent: params.classifiedIntent,
-          decisionAction: params.decisionAction,
-          purchaseIntentScore: params.purchaseIntentScore,
-          responseStyle: params.responseStyle,
-          leadStage: params.leadStage,
-          replyObjective: params.replyObjective,
-        }),
-      },
-      ...(params.companyContext.trim()
-        ? [
-            {
-              role: 'system' as const,
-              content: params.companyContext,
-            },
-          ]
-        : []),
-      ...(params.context.trim()
-        ? [
-            {
-              role: 'system' as const,
-              content: params.context,
-            },
-          ]
-        : []),
-      ...(params.regenerationInstruction?.trim()
-        ? [
-            {
-              role: 'system' as const,
-              content: [
-                'REGENERACION OBLIGATORIA:',
-                params.regenerationInstruction.trim(),
-              ].join('\n'),
-            },
-          ]
-        : []),
-      ...(params.thinkingInstruction?.trim()
-        ? [
-            {
-              role: 'system' as const,
-              content: params.thinkingInstruction.trim(),
-            },
-          ]
-        : []),
-      {
-        role: 'system' as const,
-        content: [
-          `Genera ${requestedCandidates} opciones distintas.` ,
-          'Devuelve JSON valido con la clave "responses".',
-          '"responses" debe ser un array de 2 o 3 objetos con las claves: "text", "videoId", "imageId" y "type".',
-          'Usa "type" = "text" normalmente. Usa "audio" solo si de verdad corresponde responder por voz.',
-          'Si no vas a usar media, omite videoId e imageId.',
-          'No inventes IDs de media: si eliges media, usa solo IDs o URLs disponibles en el contexto.',
-          'Cada opcion debe sonar diferente, no solo con comas o muletillas cambiadas.',
-        ].join('\n'),
+        content:
+          params.systemPromptOverride ??
+          this.buildSystemPromptFromConfig({
+            fullPrompt: params.fullPrompt,
+            contactId: params.contactId,
+            config: params.config,
+            classifiedIntent: params.classifiedIntent,
+            decisionAction: params.decisionAction,
+            purchaseIntentScore: params.purchaseIntentScore,
+            responseStyle: params.responseStyle,
+            leadStage: params.leadStage,
+            replyObjective: params.replyObjective,
+          }),
       },
       ...params.history.slice(-memoryWindow).map((item) => ({
         role: item.role,
@@ -208,6 +209,7 @@ export class AiService {
       },
     ];
   }
+
   private buildSystemPromptFromConfig(params: {
     fullPrompt: string;
     contactId: string;

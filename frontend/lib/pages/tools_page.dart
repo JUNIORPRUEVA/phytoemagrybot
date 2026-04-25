@@ -10,17 +10,25 @@ class ToolsPage extends StatefulWidget {
     required this.apiService,
     required this.onConfigUpdated,
     this.onRequestBack,
+    this.onNavigationChanged,
   });
 
   final ApiService apiService;
   final VoidCallback onConfigUpdated;
   final VoidCallback? onRequestBack;
+  final VoidCallback? onNavigationChanged;
 
   @override
   State<ToolsPage> createState() => _ToolsPageState();
 }
 
-class _ToolsPageState extends State<ToolsPage> {
+abstract class ToolsPageStateAccess {
+  bool handleBackNavigation();
+  String currentTitle();
+  Future<void> reload();
+}
+
+class _ToolsPageState extends State<ToolsPage> implements ToolsPageStateAccess {
   final TextEditingController _openAiKeyController = TextEditingController();
   final TextEditingController _elevenLabsKeyController =
       TextEditingController();
@@ -268,16 +276,32 @@ class _ToolsPageState extends State<ToolsPage> {
     }
   }
 
-  String _sectionSubtitle(_ToolSection section) {
-    switch (section) {
-      case _ToolSection.access:
-        return 'Configura las claves que habilitan texto y voz.';
-      case _ToolSection.voice:
-        return 'Ajusta el endpoint, la voz y el permiso para audio.';
-      case _ToolSection.followup:
-        return 'Define tiempos y reglas del seguimiento automatico.';
+  @override
+  bool handleBackNavigation() {
+    if (_selectedSection == null) {
+      return false;
     }
+
+    setState(() {
+      _selectedSection = null;
+    });
+    _scrollToTop();
+    widget.onNavigationChanged?.call();
+    return true;
   }
+
+  @override
+  String currentTitle() {
+    final selectedSection = _selectedSection;
+    if (selectedSection == null) {
+      return 'Herramientas';
+    }
+
+    return _sectionTitle(selectedSection);
+  }
+
+  @override
+  Future<void> reload() => _loadConfig();
 
   IconData _sectionIcon(_ToolSection section) {
     switch (section) {
@@ -337,14 +361,6 @@ class _ToolsPageState extends State<ToolsPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        if (widget.onRequestBack != null) ...<Widget>[
-          TextButton.icon(
-            onPressed: widget.onRequestBack,
-            icon: const Icon(Icons.arrow_back_rounded, size: 18),
-            label: const Text('Atras'),
-          ),
-          const SizedBox(height: 6),
-        ],
         if (_isLoading) ...<Widget>[
           const SizedBox(height: 4),
           const LinearProgressIndicator(minHeight: 2),
@@ -365,6 +381,7 @@ class _ToolsPageState extends State<ToolsPage> {
               _selectedSection = section;
             });
             _scrollToTop();
+            widget.onNavigationChanged?.call();
           },
         ),
       ],
@@ -375,25 +392,13 @@ class _ToolsPageState extends State<ToolsPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        _ToolDetailHeader(
-          title: _sectionTitle(section),
-          subtitle: _sectionSubtitle(section),
-          onBack: () {
-            setState(() {
-              _selectedSection = null;
-            });
-            _scrollToTop();
-          },
-          onReload: isBusy ? null : _loadConfig,
-        ),
         if (_loadError != null) ...<Widget>[
-          const SizedBox(height: 12),
           _MessageLine(
             message: _loadError!,
             color: const Color(0xFF9F1239),
           ),
+          const SizedBox(height: 12),
         ],
-        const SizedBox(height: 18),
         switch (section) {
           _ToolSection.access => _buildAccessSection(isBusy),
           _ToolSection.voice => _buildVoiceSection(isBusy),
@@ -409,15 +414,8 @@ class _ToolsPageState extends State<ToolsPage> {
               child: Text(_isSaving ? 'Guardando...' : 'Guardar cambios'),
             ),
             OutlinedButton(
-              onPressed: isBusy
-                  ? null
-                  : () {
-                      setState(() {
-                        _selectedSection = null;
-                      });
-                      _scrollToTop();
-                    },
-              child: const Text('Atras'),
+              onPressed: isBusy ? null : _loadConfig,
+              child: const Text('Recargar'),
             ),
           ],
         ),
@@ -656,6 +654,8 @@ class _ToolsPageState extends State<ToolsPage> {
     final selectedSection = _selectedSection;
 
     return SecondaryPageLayout(
+      compactMaxWidth: 440,
+      expandedMaxWidth: 680,
       caption: null,
       child: selectedSection == null
           ? _buildMenuView(isBusy)
@@ -776,61 +776,6 @@ class _ToolMenuTile extends StatelessWidget {
           ],
         ),
       ),
-    );
-  }
-}
-
-class _ToolDetailHeader extends StatelessWidget {
-  const _ToolDetailHeader({
-    required this.title,
-    required this.subtitle,
-    required this.onBack,
-    required this.onReload,
-  });
-
-  final String title;
-  final String subtitle;
-  final VoidCallback onBack;
-  final VoidCallback? onReload;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: <Widget>[
-        Row(
-          children: <Widget>[
-            TextButton.icon(
-              onPressed: onBack,
-              icon: const Icon(Icons.arrow_back_rounded, size: 18),
-              label: const Text('Atras'),
-            ),
-            const Spacer(),
-            TextButton(
-              onPressed: onReload,
-              child: const Text('Recargar'),
-            ),
-          ],
-        ),
-        const SizedBox(height: 8),
-        Text(
-          title,
-          style: const TextStyle(
-            color: Color(0xFF0F172A),
-            fontSize: 24,
-            fontWeight: FontWeight.w800,
-          ),
-        ),
-        const SizedBox(height: 6),
-        Text(
-          subtitle,
-          style: const TextStyle(
-            color: Color(0xFF64748B),
-            fontSize: 13,
-            height: 1.45,
-          ),
-        ),
-      ],
     );
   }
 }

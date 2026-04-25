@@ -897,7 +897,7 @@ class _GestionWhatsAppPageState extends State<GestionWhatsAppPage> {
     return LayoutBuilder(
       builder: (BuildContext context, BoxConstraints constraints) {
         final compact = constraints.maxWidth < 760;
-        final bodyWidth = compact ? 460.0 : 760.0;
+        final bodyWidth = compact ? 440.0 : 680.0;
 
         return Center(
           child: ConstrainedBox(

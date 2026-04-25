@@ -160,7 +160,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Ventana de memoria'), findsOneWidget);
-    expect(find.text('Memoria por contacto'), findsOneWidget);
+    expect(find.text('Contactos'), findsOneWidget);
 
     await tester.tap(find.text('Ventana de memoria'));
     await tester.pumpAndSettle();
@@ -190,11 +190,15 @@ void main() {
 
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Memoria por contacto'));
+    await tester.tap(find.text('Contactos'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Memoria por contacto'), findsOneWidget);
+    expect(find.text('Contactos'), findsOneWidget);
     expect(find.text('Maria'), findsWidgets);
+
+    await tester.tap(find.byTooltip('Buscar'));
+    await tester.pumpAndSettle();
+
     expect(find.text('Buscar contacto o conversación'), findsOneWidget);
 
     await tester.tap(find.text('Maria').first);

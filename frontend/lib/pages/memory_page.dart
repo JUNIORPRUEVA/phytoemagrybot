@@ -17,11 +17,13 @@ class MemoryPage extends StatefulWidget {
     required this.apiService,
     required this.onConfigUpdated,
     this.onRequestBack,
+    this.onNavigationChanged,
   });
 
   final ApiService apiService;
   final VoidCallback onConfigUpdated;
   final VoidCallback? onRequestBack;
+  final VoidCallback? onNavigationChanged;
 
   @override
   State<MemoryPage> createState() => _MemoryPageState();
@@ -36,6 +38,7 @@ class _MemoryPageState extends State<MemoryPage>
   final TextEditingController _lastIntentController = TextEditingController();
   final TextEditingController _notesController = TextEditingController();
   final TextEditingController _summaryController = TextEditingController();
+  final FocusNode _searchFocusNode = FocusNode();
 
   List<MemoryContactListItemData> _contacts = const <MemoryContactListItemData>[];
   List<StoredMessageData> _messages = const <StoredMessageData>[];
@@ -49,6 +52,7 @@ class _MemoryPageState extends State<MemoryPage>
   bool _isDeletingClientMemory = false;
   bool _isDeletingConversation = false;
   bool _isResettingAllMemory = false;
+  bool _isSearchVisible = false;
   String? _contactsError;
   String? _detailError;
   _MemorySection? _selectedSection;
@@ -75,9 +79,11 @@ class _MemoryPageState extends State<MemoryPage>
       _selectedSection = null;
       _selectedContactId = null;
       _detailError = null;
+      _isSearchVisible = false;
       _clearEditor();
     });
     _scrollToTop();
+    widget.onNavigationChanged?.call();
     return true;
   }
 
@@ -97,6 +103,7 @@ class _MemoryPageState extends State<MemoryPage>
     _searchDebounce?.cancel();
     _searchController.removeListener(_onSearchChanged);
     _searchController.dispose();
+    _searchFocusNode.dispose();
     _memoryWindowController.dispose();
     _nameController.dispose();
     _interestController.dispose();
@@ -186,6 +193,7 @@ class _MemoryPageState extends State<MemoryPage>
       _isLoadingDetail = true;
       _detailError = null;
     });
+    widget.onNavigationChanged?.call();
 
     try {
       final contextData = await widget.apiService.getMemoryContext(
@@ -519,10 +527,12 @@ class _MemoryPageState extends State<MemoryPage>
       if (section == _MemorySection.contacts) {
         _selectedContactId = null;
         _detailError = null;
+        _isSearchVisible = false;
         _clearEditor();
       }
     });
     _scrollToTop();
+    widget.onNavigationChanged?.call();
   }
 
   void _closeConversationDetail() {
@@ -531,6 +541,29 @@ class _MemoryPageState extends State<MemoryPage>
       _detailError = null;
       _messages = const <StoredMessageData>[];
     });
+    widget.onNavigationChanged?.call();
+  }
+
+  void _toggleSearchVisibility() {
+    final shouldShow = !_isSearchVisible;
+    setState(() {
+      _isSearchVisible = shouldShow;
+    });
+
+    if (shouldShow) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          _searchFocusNode.requestFocus();
+        }
+      });
+      return;
+    }
+
+    _searchFocusNode.unfocus();
+    if (_searchController.text.isNotEmpty) {
+      _searchController.clear();
+      _loadContacts();
+    }
   }
 
   String _sectionTitle(_MemorySection section) {
@@ -538,7 +571,7 @@ class _MemoryPageState extends State<MemoryPage>
       case _MemorySection.window:
         return 'Ventana de memoria';
       case _MemorySection.contacts:
-        return 'Memoria por contacto';
+        return 'Contactos';
     }
   }
 
@@ -583,7 +616,7 @@ class _MemoryPageState extends State<MemoryPage>
       ),
       _MemoryMenuItemData(
         section: _MemorySection.contacts,
-        title: 'Memoria por contacto',
+        title: 'Contactos',
         description: _sectionDescription(_MemorySection.contacts),
         status: _sectionStatus(_MemorySection.contacts),
         icon: _sectionIcon(_MemorySection.contacts),
@@ -698,51 +731,36 @@ class _MemoryPageState extends State<MemoryPage>
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        _MemoryDetailHeader(title: 'Memoria por contacto'),
-        const SizedBox(height: 18),
+        _buildContactsAppBar(),
+        AnimatedCrossFade(
+          firstChild: const SizedBox(height: 10),
+          secondChild: Padding(
+            padding: const EdgeInsets.only(top: 14),
+            child: _buildSearchField(),
+          ),
+          crossFadeState:
+              _isSearchVisible ? CrossFadeState.showSecond : CrossFadeState.showFirst,
+          duration: const Duration(milliseconds: 180),
+        ),
+        const SizedBox(height: 14),
         Container(
-          padding: const EdgeInsets.all(18),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
           decoration: BoxDecoration(
             color: Colors.white,
-            borderRadius: BorderRadius.circular(22),
+            borderRadius: BorderRadius.circular(18),
             border: Border.all(color: const Color(0xFFE2E8F0)),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
-              Container(
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(18),
-                  border: Border.all(color: const Color(0xFFE2E8F0)),
-                  color: const Color(0xFFF8FAFC),
-                ),
-                child: TextField(
-                  controller: _searchController,
-                  enabled: !_isLoadingContacts,
-                  decoration: const InputDecoration(
-                    hintText: 'Buscar contacto o conversación',
-                    prefixIcon: Icon(Icons.search_rounded),
-                    border: InputBorder.none,
-                    enabledBorder: InputBorder.none,
-                    focusedBorder: InputBorder.none,
-                    filled: false,
-                    contentPadding: EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 18,
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 14),
-              Container(height: 1, color: const Color(0xFFE2E8F0)),
               if (_contactsError != null) ...<Widget>[
-                const SizedBox(height: 14),
+                const SizedBox(height: 4),
                 _MemoryMessageLine(
                   message: _contactsError!,
                   color: const Color(0xFF9F1239),
                 ),
+                const SizedBox(height: 12),
               ],
-              const SizedBox(height: 18),
               if (_contacts.isEmpty && !_isLoadingContacts)
                 const Text(
                   'No hay contactos con memoria todavía.',
@@ -750,22 +768,25 @@ class _MemoryPageState extends State<MemoryPage>
                 )
               else
                 ConstrainedBox(
-                  constraints: const BoxConstraints(maxHeight: 720),
+                  constraints: const BoxConstraints(maxHeight: 720, maxWidth: 640),
                   child: ListView.separated(
                     shrinkWrap: true,
                     itemCount: _contacts.length,
-                    separatorBuilder: (_, __) => const SizedBox(height: 10),
+                    separatorBuilder: (_, __) => const SizedBox(height: 8),
                     itemBuilder: (BuildContext context, int index) {
                       final item = _contacts[index];
 
                       return InkWell(
                         onTap: isBusy ? null : () => _loadContact(item.contactId),
-                        borderRadius: BorderRadius.circular(18),
+                        borderRadius: BorderRadius.circular(16),
                         child: Container(
-                          padding: const EdgeInsets.all(16),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 14,
+                            vertical: 13,
+                          ),
                           decoration: BoxDecoration(
                             color: const Color(0xFFF8FAFC),
-                            borderRadius: BorderRadius.circular(18),
+                            borderRadius: BorderRadius.circular(16),
                             border: Border.all(color: const Color(0xFFE2E8F0)),
                           ),
                           child: Column(
@@ -781,39 +802,40 @@ class _MemoryPageState extends State<MemoryPage>
                                       style: const TextStyle(
                                         color: Color(0xFF0F172A),
                                         fontWeight: FontWeight.w700,
-                                        fontSize: 15,
+                                        fontSize: 14,
                                       ),
                                     ),
                                   ),
                                   const Icon(
                                     Icons.chevron_right_rounded,
                                     color: Color(0xFF94A3B8),
+                                    size: 20,
                                   ),
                                 ],
                               ),
-                              const SizedBox(height: 6),
+                              const SizedBox(height: 4),
                               Text(
                                 item.contactId,
                                 style: const TextStyle(
                                   color: Color(0xFF64748B),
-                                  fontSize: 12.5,
+                                  fontSize: 12,
                                 ),
                               ),
                               if (item.summary?.isNotEmpty == true) ...<Widget>[
-                                const SizedBox(height: 12),
+                                const SizedBox(height: 10),
                                 Text(
                                   item.summary!,
                                   maxLines: 2,
                                   overflow: TextOverflow.ellipsis,
                                   style: const TextStyle(
                                     color: Color(0xFF475569),
-                                    fontSize: 13,
-                                    height: 1.45,
+                                    fontSize: 12.5,
+                                    height: 1.35,
                                   ),
                                 ),
                               ],
                               if (item.interest?.isNotEmpty == true) ...<Widget>[
-                                const SizedBox(height: 10),
+                                const SizedBox(height: 8),
                                 _MemoryPill(label: item.interest!),
                               ],
                             ],
@@ -845,14 +867,14 @@ class _MemoryPageState extends State<MemoryPage>
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        _MemoryDetailHeader(title: 'Memoria por contacto'),
-        const SizedBox(height: 18),
+        _buildConversationAppBar(title),
+        const SizedBox(height: 14),
         Container(
           width: double.infinity,
-          padding: const EdgeInsets.all(18),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
           decoration: BoxDecoration(
             color: Colors.white,
-            borderRadius: BorderRadius.circular(22),
+            borderRadius: BorderRadius.circular(18),
             border: Border.all(color: const Color(0xFFE2E8F0)),
           ),
           child: Column(
@@ -865,19 +887,10 @@ class _MemoryPageState extends State<MemoryPage>
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: <Widget>[
                         Text(
-                          title,
-                          style: const TextStyle(
-                            color: Color(0xFF0F172A),
-                            fontSize: 22,
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                        const SizedBox(height: 6),
-                        Text(
                           _selectedContactId ?? '',
                           style: const TextStyle(
                             color: Color(0xFF64748B),
-                            fontSize: 13,
+                            fontSize: 12,
                           ),
                         ),
                       ],
@@ -895,10 +908,10 @@ class _MemoryPageState extends State<MemoryPage>
               const SizedBox(height: 18),
               Container(
                 width: double.infinity,
-                padding: const EdgeInsets.all(16),
+                padding: const EdgeInsets.all(14),
                 decoration: BoxDecoration(
                   color: const Color(0xFFF8FAFC),
-                  borderRadius: BorderRadius.circular(18),
+                  borderRadius: BorderRadius.circular(16),
                   border: Border.all(color: const Color(0xFFE2E8F0)),
                 ),
                 child: _isLoadingDetail
@@ -922,17 +935,17 @@ class _MemoryPageState extends State<MemoryPage>
                                     ? Alignment.centerLeft
                                     : Alignment.centerRight,
                                 child: ConstrainedBox(
-                                  constraints: const BoxConstraints(maxWidth: 520),
+                                  constraints: const BoxConstraints(maxWidth: 420),
                                   child: Container(
                                     padding: const EdgeInsets.symmetric(
-                                      horizontal: 14,
-                                      vertical: 12,
+                                      horizontal: 12,
+                                      vertical: 10,
                                     ),
                                     decoration: BoxDecoration(
                                       color: isUser
                                           ? const Color(0xFFFFFFFF)
                                           : const Color(0xFFEFF6FF),
-                                      borderRadius: BorderRadius.circular(16),
+                                      borderRadius: BorderRadius.circular(14),
                                       border: Border.all(
                                         color: isUser
                                             ? const Color(0xFFE2E8F0)
@@ -948,7 +961,7 @@ class _MemoryPageState extends State<MemoryPage>
                                             color: isUser
                                                 ? const Color(0xFF0F172A)
                                                 : const Color(0xFF1D4ED8),
-                                            fontSize: 12,
+                                            fontSize: 11.5,
                                             fontWeight: FontWeight.w700,
                                           ),
                                         ),
@@ -957,8 +970,8 @@ class _MemoryPageState extends State<MemoryPage>
                                           message.content,
                                           style: const TextStyle(
                                             color: Color(0xFF334155),
-                                            fontSize: 13.5,
-                                            height: 1.45,
+                                            fontSize: 12.5,
+                                            height: 1.35,
                                           ),
                                         ),
                                       ],
@@ -979,17 +992,20 @@ class _MemoryPageState extends State<MemoryPage>
   }
 
   Widget _buildEditorPanel(bool isBusy) {
+    final selectedName = _nameController.text.trim();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
         Row(
           children: <Widget>[
-            const Expanded(
+            Expanded(
               child: Text(
-                'Memoria del contacto',
-                style: TextStyle(
+                selectedName.isEmpty ? 'Memoria' : 'Memoria de $selectedName',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
                   color: Color(0xFF0F172A),
-                  fontSize: 18,
+                  fontSize: 16,
                   fontWeight: FontWeight.w700,
                 ),
               ),
@@ -1037,11 +1053,11 @@ class _MemoryPageState extends State<MemoryPage>
         LayoutBuilder(
           builder: (context, constraints) {
             final fullWidth = constraints.maxWidth;
-            final halfWidth = fullWidth > 640 ? (fullWidth - 16) / 2 : fullWidth;
+            final halfWidth = fullWidth > 560 ? (fullWidth - 12) / 2 : fullWidth;
 
             return Wrap(
-              spacing: 16,
-              runSpacing: 16,
+              spacing: 12,
+              runSpacing: 12,
               children: <Widget>[
                 SizedBox(
                   width: halfWidth,
@@ -1075,7 +1091,7 @@ class _MemoryPageState extends State<MemoryPage>
                   child: AppTextField(
                     label: 'Notas',
                     controller: _notesController,
-                    maxLines: 3,
+                    maxLines: 2,
                     hintText: 'Detalles útiles para seguimiento',
                     enabled: !isBusy,
                   ),
@@ -1085,7 +1101,7 @@ class _MemoryPageState extends State<MemoryPage>
                   child: AppTextField(
                     label: 'Resumen',
                     controller: _summaryController,
-                    maxLines: 4,
+                    maxLines: 3,
                     hintText: 'Resumen breve del contexto',
                     enabled: !isBusy,
                   ),
@@ -1095,6 +1111,78 @@ class _MemoryPageState extends State<MemoryPage>
           },
         ),
       ],
+    );
+  }
+
+  Widget _buildContactsAppBar() {
+    return Row(
+      children: <Widget>[
+        const Expanded(
+          child: Text(
+            'Contactos',
+            style: TextStyle(
+              color: Color(0xFF0F172A),
+              fontSize: 22,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ),
+        IconButton(
+          onPressed: _toggleSearchVisibility,
+          tooltip: _isSearchVisible ? 'Cerrar búsqueda' : 'Buscar',
+          icon: Icon(
+            _isSearchVisible ? Icons.close_rounded : Icons.search_rounded,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildConversationAppBar(String title) {
+    return Row(
+      children: <Widget>[
+        IconButton(
+          onPressed: _closeConversationDetail,
+          tooltip: 'Volver',
+          icon: const Icon(Icons.arrow_back_rounded),
+        ),
+        Expanded(
+          child: Text(
+            title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: Color(0xFF0F172A),
+              fontSize: 20,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSearchField() {
+    return Container(
+      constraints: const BoxConstraints(maxWidth: 420),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+        color: Colors.white,
+      ),
+      child: TextField(
+        controller: _searchController,
+        focusNode: _searchFocusNode,
+        enabled: !_isLoadingContacts,
+        decoration: const InputDecoration(
+          hintText: 'Buscar contacto o conversación',
+          prefixIcon: Icon(Icons.search_rounded),
+          border: InputBorder.none,
+          enabledBorder: InputBorder.none,
+          focusedBorder: InputBorder.none,
+          contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 14),
+        ),
+      ),
     );
   }
 }

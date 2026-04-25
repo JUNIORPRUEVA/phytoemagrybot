@@ -4,10 +4,14 @@ class SecondaryPageLayout extends StatelessWidget {
   const SecondaryPageLayout({
     super.key,
     this.caption,
+    this.compactMaxWidth = 460,
+    this.expandedMaxWidth = 760,
     required this.child,
   });
 
   final String? caption;
+  final double compactMaxWidth;
+  final double expandedMaxWidth;
   final Widget child;
 
   @override
@@ -19,7 +23,9 @@ class SecondaryPageLayout extends StatelessWidget {
         return Align(
           alignment: Alignment.topCenter,
           child: ConstrainedBox(
-            constraints: BoxConstraints(maxWidth: compact ? 460 : 760),
+            constraints: BoxConstraints(
+              maxWidth: compact ? compactMaxWidth : expandedMaxWidth,
+            ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: <Widget>[

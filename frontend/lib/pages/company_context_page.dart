@@ -24,6 +24,9 @@ class CompanyContextPage extends StatefulWidget {
 }
 
 abstract class CompanyContextPageStateAccess {
+  bool handleBackNavigation();
+  String currentTitle();
+  Future<void> reload();
   void openUsageRulesEditor();
 }
 
@@ -320,6 +323,29 @@ class _CompanyContextPageState extends State<CompanyContextPage>
   }
 
   @override
+  bool handleBackNavigation() {
+    if (_selectedSection == null) {
+      return false;
+    }
+
+    _closeSection();
+    return true;
+  }
+
+  @override
+  String currentTitle() {
+    final selectedSection = _selectedSection;
+    if (selectedSection == null) {
+      return 'Empresa';
+    }
+
+    return _sectionTitle(selectedSection);
+  }
+
+  @override
+  Future<void> reload() => _loadContext();
+
+  @override
   void openUsageRulesEditor() {
     _showUsageRulesSheet();
   }
@@ -457,21 +483,6 @@ class _CompanyContextPageState extends State<CompanyContextPage>
     }
   }
 
-  String _sectionDescription(_CompanySection section) {
-    switch (section) {
-      case _CompanySection.visualIdentity:
-        return 'Logo, URL e identidad cromatica.';
-      case _CompanySection.basicData:
-        return 'Nombre, telefono, WhatsApp, direccion y descripcion.';
-      case _CompanySection.workingHours:
-        return 'Dias disponibles y horario de atencion.';
-      case _CompanySection.bankAccounts:
-        return 'Cuentas bancarias disponibles para cobro.';
-      case _CompanySection.location:
-        return 'Coordenadas y enlace directo a Google Maps.';
-    }
-  }
-
   IconData _sectionIcon(_CompanySection section) {
     switch (section) {
       case _CompanySection.visualIdentity:
@@ -518,23 +529,14 @@ class _CompanyContextPageState extends State<CompanyContextPage>
     }
 
     return SecondaryPageLayout(
-      caption:
-          'Configura la informacion real de la empresa que el bot debe usar para responder sobre identidad, horarios, pagos y ubicacion.',
+      compactMaxWidth: 440,
+      expandedMaxWidth: 680,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
-          if (widget.onRequestBack != null) ...<Widget>[
-            TextButton.icon(
-              onPressed: widget.onRequestBack,
-              icon: const Icon(Icons.arrow_back_rounded, size: 18),
-              label: const Text('Atras'),
-            ),
-            const SizedBox(height: 8),
-          ],
           for (final section in _CompanySection.values) ...<Widget>[
             _SectionMenuTile(
               title: _sectionTitle(section),
-              description: _sectionDescription(section),
               icon: _sectionIcon(section),
               onTap: () => _openSection(section),
             ),
@@ -548,22 +550,11 @@ class _CompanyContextPageState extends State<CompanyContextPage>
 
   Widget _buildDetailView(_CompanySection section) {
     return SecondaryPageLayout(
+      compactMaxWidth: 440,
+      expandedMaxWidth: 680,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
-          TextButton.icon(
-            onPressed: _closeSection,
-            icon: const Icon(Icons.arrow_back_rounded),
-            label: const Text('Atras'),
-          ),
-          const SizedBox(height: 12),
-          Text(
-            _sectionTitle(section),
-            style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w800),
-          ),
-          const SizedBox(height: 8),
-          Text(_sectionDescription(section)),
-          const SizedBox(height: 20),
           _DetailCard(child: _buildSectionBody(section)),
           const SizedBox(height: 16),
           Wrap(
@@ -690,13 +681,11 @@ class _CompanyContextPageState extends State<CompanyContextPage>
 class _SectionMenuTile extends StatelessWidget {
   const _SectionMenuTile({
     required this.title,
-    required this.description,
     required this.icon,
     required this.onTap,
   });
 
   final String title;
-  final String description;
   final IconData icon;
   final VoidCallback onTap;
 
@@ -720,13 +709,21 @@ class _SectionMenuTile extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: <Widget>[
-                  Text(title, style: const TextStyle(fontWeight: FontWeight.w700)),
-                  const SizedBox(height: 4),
-                  Text(description),
+                  Text(
+                    title,
+                    style: const TextStyle(
+                      color: Color(0xFF0F172A),
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
                 ],
               ),
             ),
-            const Icon(Icons.chevron_right_rounded),
+            const Icon(
+              Icons.chevron_right_rounded,
+              color: Color(0xFF94A3B8),
+            ),
           ],
         ),
       ),

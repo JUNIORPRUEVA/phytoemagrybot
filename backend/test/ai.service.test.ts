@@ -4,7 +4,7 @@ import test from 'node:test';
 import { AiService } from '../src/ai/ai.service';
 
 test('system prompt enforces internal sales analysis and dominican human tone', () => {
-  const service = new AiService() as any;
+  const service = new AiService({} as any) as any;
 
   const prompt = service.buildSystemPromptFromConfig({
     fullPrompt: '',
@@ -34,7 +34,7 @@ test('system prompt enforces internal sales analysis and dominican human tone', 
 });
 
 test('system prompt keeps brief mode focused on direct answers', () => {
-  const service = new AiService() as any;
+  const service = new AiService({} as any) as any;
 
   const prompt = service.buildSystemPromptFromConfig({
     fullPrompt: '',
@@ -54,7 +54,7 @@ test('system prompt keeps brief mode focused on direct answers', () => {
 });
 
 test('system prompt includes structured instruction center context when configured', () => {
-  const service = new AiService() as any;
+  const service = new AiService({} as any) as any;
 
   const prompt = service.buildSystemPromptFromConfig({
     fullPrompt: '',
@@ -105,7 +105,7 @@ test('system prompt includes structured instruction center context when configur
 });
 
 test('system prompt enforces instructions and products as mandatory sources', () => {
-  const service = new AiService() as any;
+  const service = new AiService({} as any) as any;
 
   const prompt = service.buildSystemPromptFromConfig({
     fullPrompt: '',
@@ -146,7 +146,7 @@ test('system prompt enforces instructions and products as mandatory sources', ()
 });
 
 test('system prompt forces commercial replies to end with a clear next step', () => {
-  const service = new AiService() as any;
+  const service = new AiService({} as any) as any;
 
   const prompt = service.buildSystemPromptFromConfig({
     fullPrompt: '',
@@ -166,7 +166,7 @@ test('system prompt forces commercial replies to end with a clear next step', ()
 });
 
 test('parseAssistantReply keeps full text content without truncating lines or words', () => {
-  const service = new AiService() as any;
+  const service = new AiService({} as any) as any;
   const content =
     'Hola, claro. Te explico completo como funciona el producto, cuales beneficios tiene, como se toma, que resultados puedes esperar, el precio, el envio y como comprar hoy mismo sin dejarte nada importante fuera.';
   const longReply = JSON.stringify({
@@ -181,7 +181,7 @@ test('parseAssistantReply keeps full text content without truncating lines or wo
 });
 
 test('parseAssistantResponses supports multi-candidate JSON payloads', () => {
-  const service = new AiService() as any;
+  const service = new AiService({} as any) as any;
   const parsed = service.parseAssistantResponses(JSON.stringify({
     responses: [
       {
@@ -203,7 +203,38 @@ test('parseAssistantResponses supports multi-candidate JSON payloads', () => {
 });
 
 test('generateResponses forwards thinkingInstruction into OpenAI messages', async () => {
-  const service = new AiService() as any;
+  const engineMock = {
+    transform: async ({ thinkingInstructionEs, contextEs, companyContextEs }: any) => {
+      const xmlEn = [
+        '<prompts>',
+        '  <identity>Test</identity>',
+        '  <sales>Test</sales>',
+        '  <greeting>Test</greeting>',
+        '  <media>Test</media>',
+        '  <voice>Test</voice>',
+        '  <stop>Test</stop>',
+        `  <rules>${String(thinkingInstructionEs ?? '')}\n${String(contextEs ?? '')}</rules>`,
+        '  <company>',
+        `    <general>${String(companyContextEs ?? '')}</general>`,
+        '    <hours>Test</hours>',
+        '    <location>Test</location>',
+        '    <products>Test</products>',
+        '  </company>',
+        '</prompts>',
+      ].join('\n');
+
+      return {
+        xmlEn,
+        debug: {
+          original_spanish: '',
+          xml_generated: '',
+          translated_english: xmlEn,
+        },
+      };
+    },
+  };
+
+  const service = new AiService(engineMock as any) as any;
   let capturedMessages: Array<{ role: string; content: string }> = [];
 
   service.createOpenAIClient = () => ({
@@ -220,10 +251,6 @@ test('generateResponses forwards thinkingInstruction into OpenAI messages', asyn
                     responses: [
                       {
                         text: 'Te explico breve y avanzamos al siguiente paso.',
-                        type: 'text',
-                      },
-                      {
-                        text: 'Si quieres, te resumo y luego vemos precio.',
                         type: 'text',
                       },
                     ],
@@ -266,17 +293,16 @@ test('generateResponses forwards thinkingInstruction into OpenAI messages', asyn
     candidateCount: 2,
   });
 
-  assert.equal(responses.length, 2);
-  assert.ok(
-    capturedMessages.some((message) =>
-      message.role === 'system'
-      && /Analiza primero, luego responde sin repetir/i.test(message.content),
-    ),
-  );
-  assert.ok(
-    capturedMessages.some((message) =>
-      message.role === 'system'
-      && /\[THINKING_RESULT\]/.test(message.content),
-    ),
-  );
+  assert.equal(responses.length, 1);
+  assert.ok(capturedMessages.length > 0);
+  assert.equal(capturedMessages[0]?.role, 'system');
+  assert.match(capturedMessages[0]?.content ?? '', /<prompts>/i);
+  assert.match(capturedMessages[0]?.content ?? '', /<rules>/i);
+  assert.match(capturedMessages[0]?.content ?? '', /<company>/i);
+  assert.match(capturedMessages[0]?.content ?? '', /<general>/i);
+  assert.match(capturedMessages[0]?.content ?? '', /<hours>/i);
+  assert.match(capturedMessages[0]?.content ?? '', /<location>/i);
+  assert.match(capturedMessages[0]?.content ?? '', /<products>/i);
+  assert.match(capturedMessages[0]?.content ?? '', /Analiza primero, luego responde sin repetir/i);
+  assert.match(capturedMessages[0]?.content ?? '', /\[THINKING_RESULT\]/);
 });

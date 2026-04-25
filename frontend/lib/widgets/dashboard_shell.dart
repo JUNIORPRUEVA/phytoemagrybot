@@ -181,6 +181,11 @@ class _DashboardShellState extends State<DashboardShell> {
         key: _configPageKey,
         apiService: _apiService,
         onConfigUpdated: _refreshOverview,
+        onNavigationChanged: () {
+          if (mounted) {
+            setState(() {});
+          }
+        },
       ),
       if (isAdmin)
         UsersPage(
@@ -208,11 +213,19 @@ class _DashboardShellState extends State<DashboardShell> {
     ];
 
     final bool isMobile = MediaQuery.sizeOf(context).width < 900;
+    final configState = _configPageKey.currentState as ConfigPageStateAccess?;
+    final configTitle = configState?.currentTitle() ?? labels[_configPageIndex];
+    final canNavigateConfigBack = configState?.canNavigateBack() ?? false;
     final bool isMobileMainPage =
         isMobile && _selectedIndex == _mobileMainPageIndex;
     final int mobileNavIndex = _mobileBottomNavIndices.indexOf(
       _mobileLastPrimaryPageIndex,
     );
+    final bool showDesktopConfigBack =
+      !isMobile && _selectedIndex == _configPageIndex && canNavigateConfigBack;
+    final String currentAppBarTitle = _selectedIndex == _configPageIndex
+      ? configTitle
+      : labels[_selectedIndex];
 
     return Scaffold(
       drawer: isMobile
@@ -244,6 +257,16 @@ class _DashboardShellState extends State<DashboardShell> {
                         );
                       },
                     )
+                  : showDesktopConfigBack
+                  ? IconButton(
+                      onPressed: () {
+                        final state =
+                            _configPageKey.currentState as ConfigPageStateAccess?;
+                        state?.handleBackNavigation();
+                      },
+                      tooltip: 'Regresar',
+                      icon: const Icon(Icons.arrow_back_rounded),
+                    )
                   : isMobile
                   ? IconButton(
                       onPressed: _handleMobileBack,
@@ -255,8 +278,8 @@ class _DashboardShellState extends State<DashboardShell> {
                 future: _overviewFuture,
                 builder: (context, snapshot) {
                   final brandName = _resolveBrandName(snapshot.data);
-                  if (isMobile) {
-                    return Text(labels[_selectedIndex]);
+                  if (isMobile || _selectedIndex == _configPageIndex) {
+                    return Text(currentAppBarTitle);
                   }
 
                   return Text('Control Bot $brandName');
@@ -307,25 +330,39 @@ class _DashboardShellState extends State<DashboardShell> {
                               return;
                           }
                         },
-                        itemBuilder: (context) => const <PopupMenuEntry<_DashboardOverflowAction>>[
-                          PopupMenuItem<_DashboardOverflowAction>(
-                            value: _DashboardOverflowAction.reload,
-                            child: Text('Recargar'),
-                          ),
-                          PopupMenuItem<_DashboardOverflowAction>(
-                            value: _DashboardOverflowAction.deleteAllConversations,
-                            child: Text('Borrar todas las conversaciones'),
-                          ),
-                          PopupMenuItem<_DashboardOverflowAction>(
-                            value: _DashboardOverflowAction.resetAllMemory,
-                            child: Text('Resetear toda la memoria'),
-                          ),
-                          PopupMenuDivider(),
-                          PopupMenuItem<_DashboardOverflowAction>(
-                            value: _DashboardOverflowAction.back,
-                            child: Text('Atras'),
-                          ),
-                        ],
+                        itemBuilder: (context) {
+                          final items = <PopupMenuEntry<_DashboardOverflowAction>>[
+                            const PopupMenuItem<_DashboardOverflowAction>(
+                              value: _DashboardOverflowAction.reload,
+                              child: Text('Recargar'),
+                            ),
+                            const PopupMenuItem<_DashboardOverflowAction>(
+                              value: _DashboardOverflowAction.deleteAllConversations,
+                              child: Text('Borrar todas las conversaciones'),
+                            ),
+                            const PopupMenuItem<_DashboardOverflowAction>(
+                              value: _DashboardOverflowAction.resetAllMemory,
+                              child: Text('Resetear toda la memoria'),
+                            ),
+                          ];
+
+                          final canShowBackAction =
+                              isMobile ||
+                              (_selectedIndex == _configPageIndex &&
+                                  canNavigateConfigBack &&
+                                  !showDesktopConfigBack);
+                          if (canShowBackAction) {
+                            items.add(const PopupMenuDivider());
+                            items.add(
+                              const PopupMenuItem<_DashboardOverflowAction>(
+                                value: _DashboardOverflowAction.back,
+                                child: Text('Atras'),
+                              ),
+                            );
+                          }
+
+                          return items;
+                        },
                       ),
                     ),
                   ),
