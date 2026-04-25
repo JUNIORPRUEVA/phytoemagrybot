@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { MediaFile, Prisma } from '@prisma/client';
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { AiService } from '../ai/ai.service';
@@ -71,11 +72,67 @@ interface ThinkingAnalysis {
   responseStrategy: string;
 }
 
+interface IntentCacheEntry {
+  message: string;
+  intent: BotDecisionIntent;
+  source: BotDecisionState['classificationSource'];
+  updatedAt: number;
+}
+
+interface RedisStateSnapshot {
+  stage: ContactStage;
+  currentIntent: BotDecisionIntent;
+  purchaseIntentScore: number;
+  updatedAt: number;
+}
+
+interface AnalysisCacheEntry {
+  intent: string;
+  userState: ThinkingAnalysis['userState'];
+  alreadyExplained: boolean;
+  repetitionRisk: boolean;
+  nextBestAction: ThinkingAnalysis['nextBestAction'];
+  responseStrategy: string;
+  updatedAt: number;
+}
+
+interface NextBestActionCacheEntry {
+  action: ThinkingAnalysis['nextBestAction'];
+  reason: string;
+  updatedAt: number;
+}
+
+interface ResponseCacheEntry {
+  reply: string;
+  replyType: BotReplyResult['replyType'];
+  intent: BotIntent;
+  decisionIntent: BotDecisionIntent;
+  stage: ContactStage;
+  action: BotDecisionAction;
+  purchaseIntentScore: number;
+  hotLead: boolean;
+  source: BotReplyResult['source'];
+  updatedAt: number;
+}
+
+interface MediaCacheEntry {
+  images: string[];
+  videos: string[];
+  updatedAt: number;
+}
+
 @Injectable()
 export class BotService {
   private static readonly KNOWLEDGE_CONTEXT_CACHE_KEY = 'bot:knowledge-context:v2';
+  private static readonly COMPANY_RULES_CACHE_KEY = 'company_rules';
   private static readonly SENT_MEDIA_CACHE_KEY_PREFIX = 'bot:sent-media:';
   private static readonly CONVERSATION_MEMORY_TTL_SECONDS = 60 * 60 * 24;
+  private static readonly INTENT_CACHE_TTL_SECONDS = 60 * 60;
+  private static readonly STATE_CACHE_TTL_SECONDS = 60 * 60 * 24;
+  private static readonly ANALYSIS_CACHE_TTL_SECONDS = 60 * 60 * 24;
+  private static readonly NBA_CACHE_TTL_SECONDS = 60 * 60 * 24;
+  private static readonly MEDIA_CACHE_TTL_SECONDS = 60 * 60 * 6;
+  private static readonly RESPONSE_CACHE_TTL_SECONDS = 60 * 10;
   private static readonly MAX_REPLY_REGENERATION_ATTEMPTS = 2;
   private static readonly MEDIA_COOLDOWN_MS = 10 * 60 * 1000;
   private static readonly SHORT_TEXT_MESSAGE_MAX_CHARS = 40;
@@ -168,7 +225,7 @@ export class BotService {
         normalizedMessage,
       );
       const conversationMemory = await this.getConversationMemory(normalizedContactId, history);
-      const companyData = await this.companyContextService.getContext();
+      const companyData = await this.getCachedCompanyRules();
       const decision = await this.runDecisionEngine({
         contactId: normalizedContactId,
         message: normalizedMessage,
@@ -190,6 +247,14 @@ export class BotService {
         hotLead,
       });
       console.log('THINKING RESULT:', thinkingAnalysis);
+      await this.redisService.set(
+        this.getAnalysisCacheKey(normalizedContactId),
+        {
+          ...thinkingAnalysis,
+          updatedAt: Date.now(),
+        } satisfies AnalysisCacheEntry,
+        BotService.ANALYSIS_CACHE_TTL_SECONDS,
+      );
       const companyCheck = applyCompanyRules(
         normalizedMessage,
         thinkingAnalysis,
@@ -203,6 +268,15 @@ export class BotService {
       const leadStage = this.mapDecisionStageToLeadStage(decision.stage, hotLead);
       const replyObjective = this.mapDecisionActionToReplyObjective(decision.action);
       const usedMemory = this.hasUsefulMemory(memoryContext, history.length) || conversationMemory.lastMessages.length > 0;
+      await this.redisService.set(
+        this.getNextBestActionCacheKey(normalizedContactId),
+        {
+          action: thinkingAnalysis.nextBestAction,
+          reason: thinkingAnalysis.responseStrategy,
+          updatedAt: Date.now(),
+        } satisfies NextBestActionCacheEntry,
+        BotService.NBA_CACHE_TTL_SECONDS,
+      );
 
       if (!companyCheck.allowResponse && companyCheck.overrideResponse) {
         await this.memoryService.saveMessage({
@@ -215,6 +289,7 @@ export class BotService {
             messageText: companyCheck.overrideResponse,
             lastMessages: [normalizedMessage, companyCheck.overrideResponse],
             lastIntent: decision.intent,
+            state: decision.stage,
             lastSentHadVideo: false,
             cooldownMediaUntil: null,
           }),
@@ -245,7 +320,7 @@ export class BotService {
       const productMediaCandidates = relevantProducts.length > 0
         ? relevantProducts
         : allProducts;
-      const productMediaFiles = this.selectProductMedia(
+      const productMediaFiles = await this.selectProductMedia(
         productMediaCandidates,
         mediaIntent,
         decision.action,
@@ -253,6 +328,68 @@ export class BotService {
       const galleryMediaFiles = productMediaFiles.length > 0
         ? productMediaFiles
         : await this.selectMedia(normalizedMessage, intent);
+      const candidateMediaFiles = this.shouldAttachMediaToAiReply(
+        normalizedMessage,
+        intent,
+        mediaIntent,
+        decision.action,
+        allProducts.length > 0,
+        relevantProducts.length > 0,
+      )
+        ? this.filterConversationMediaFiles(
+            this.limitOutgoingMediaFiles(galleryMediaFiles, mediaIntent, sentMediaState),
+            conversationMemory,
+          )
+        : [];
+      const responseCacheKey = this.getResponseCacheKey(
+        this.buildResponseCacheHash(normalizedMessage, decision.intent, decision.stage),
+      );
+      const cachedResponse = await this.getCachedResponse(responseCacheKey, conversationMemory);
+      if (cachedResponse) {
+        const cachedDecision: BotDecisionState = {
+          ...decision,
+          intent: cachedResponse.decisionIntent,
+          stage: cachedResponse.stage,
+          action: cachedResponse.action,
+          purchaseIntentScore: cachedResponse.purchaseIntentScore,
+          currentIntent: cachedResponse.decisionIntent,
+        };
+        const cachedResult = this.createResult(
+          cachedResponse.reply,
+          'cache',
+          cachedResponse.intent,
+          cachedDecision,
+          cachedResponse.hotLead,
+          [],
+          cachedResponse.replyType,
+          usedMemory,
+          true,
+        );
+
+        await this.memoryService.saveMessage({
+          contactId: normalizedContactId,
+          role: 'assistant',
+          content: cachedResult.reply,
+        });
+        await this.saveConversationMemory(
+          recordConversationDelivery(conversationMemory, {
+            messageText: cachedResult.reply,
+            lastMessages: [normalizedMessage, cachedResult.reply],
+            lastIntent: cachedResponse.decisionIntent,
+            state: cachedResponse.stage,
+            lastSentHadVideo: false,
+            cooldownMediaUntil: null,
+          }),
+        );
+        await this.markBotResponseInDecisionState(
+          normalizedContactId,
+          cachedResult.reply,
+          cachedDecision,
+          [],
+        );
+        this.logReply(normalizedContactId, cachedResult);
+        return cachedResult;
+      }
 
       console.log('USANDO IA:', true);
       console.log('CONTEXTO LENGTH:', knowledgeContext.length);
@@ -276,19 +413,7 @@ export class BotService {
         companyData,
         companyCheck,
         conversationMemory,
-        candidateMediaFiles: this.shouldAttachMediaToAiReply(
-          normalizedMessage,
-          intent,
-          mediaIntent,
-          decision.action,
-          allProducts.length > 0,
-          relevantProducts.length > 0,
-        )
-          ? this.filterConversationMediaFiles(
-              this.limitOutgoingMediaFiles(galleryMediaFiles, mediaIntent, sentMediaState),
-              conversationMemory,
-            )
-          : [],
+        candidateMediaFiles,
         intent,
       });
       const preferredReplyType = this.resolvePreferredReplyType({
@@ -310,6 +435,7 @@ export class BotService {
           mediaIds: validatedReply.mediaFiles.map((file) => file.fileUrl),
           lastMessages: [normalizedMessage, validatedReply.reply.content],
           lastIntent: decision.intent,
+          state: decision.stage,
           lastSentHadVideo: validatedReply.mediaFiles.some((file) => file.fileType === 'video'),
           cooldownMediaUntil:
             validatedReply.mediaFiles.length > 0
@@ -328,6 +454,7 @@ export class BotService {
         preferredReplyType,
         usedMemory,
       );
+      await this.cacheResponseIfEligible(responseCacheKey, result, conversationMemory);
 
       await this.markBotResponseInDecisionState(
         normalizedContactId,
@@ -591,6 +718,7 @@ export class BotService {
         .filter((item) => item.role === 'assistant')
         .map((item) => item.content),
       lastMessages: history.map((item) => item.content),
+      state: '',
     });
   }
 
@@ -1528,8 +1656,16 @@ export class BotService {
   }
 
   private async selectMedia(message: string, intent: BotIntent) {
+    const queryCacheKey = `media_cache:query:${this.hashValue(this.normalizeTextForMatch(message))}`;
+    const cached = await this.readRedisCache<MediaFile[]>(queryCacheKey);
+    if (Array.isArray(cached) && cached.length > 0) {
+      return cached;
+    }
+
     const take = intent === 'catalogo' || this.isVisualRequest(message) ? 5 : 3;
-    return this.mediaService.getMediaByKeyword(message, take);
+    const media = await this.mediaService.getMediaByKeyword(message, take);
+    await this.redisService.set(queryCacheKey, media, BotService.MEDIA_CACHE_TTL_SECONDS);
+    return media;
   }
 
   private detectMediaIntent(message: string): MediaIntent {
@@ -1561,26 +1697,50 @@ export class BotService {
     return null;
   }
 
-  private selectProductMedia(
+  private async selectProductMedia(
     products: StructuredProduct[],
     mediaIntent: MediaIntent,
     action: BotDecisionAction,
-  ): MediaFile[] {
+  ): Promise<MediaFile[]> {
     if (products.length === 0) {
       return [];
     }
 
+    const cachedProducts = await Promise.all(products.map(async (product) => {
+      const key = `media_cache:${product.id}`;
+      const cached = await this.readRedisCache<MediaCacheEntry>(key);
+      if (cached) {
+        return {
+          ...product,
+          imagenes: cached.images,
+          videos: cached.videos,
+        };
+      }
+
+      await this.redisService.set(
+        key,
+        {
+          images: product.imagenes,
+          videos: product.videos,
+          updatedAt: Date.now(),
+        } satisfies MediaCacheEntry,
+        BotService.MEDIA_CACHE_TTL_SECONDS,
+      );
+
+      return product;
+    }));
+
     if (mediaIntent === 'VIDEO') {
-      return this.mapProductMedia(products, 'video', 1);
+      return this.mapProductMedia(cachedProducts, 'video', 1);
     }
 
     if (mediaIntent === 'IMAGEN') {
-      return this.mapProductMedia(products, 'image', 3);
+      return this.mapProductMedia(cachedProducts, 'image', 3);
     }
 
     if (mediaIntent === 'MEDIA') {
-      const images = this.mapProductMedia(products, 'image', 3);
-      return images.length > 0 ? images : this.mapProductMedia(products, 'video', 1);
+      const images = this.mapProductMedia(cachedProducts, 'image', 3);
+      return images.length > 0 ? images : this.mapProductMedia(cachedProducts, 'video', 1);
     }
 
     if (
@@ -1589,7 +1749,7 @@ export class BotService {
       action === 'persuadir' ||
       action === 'guiar'
     ) {
-      return this.mapProductMedia(products, 'image', 1);
+      return this.mapProductMedia(cachedProducts, 'image', 1);
     }
 
     return [];
@@ -1687,6 +1847,7 @@ export class BotService {
     mediaFiles: Awaited<ReturnType<BotService['getMediaByKeyword']>>,
     replyType: BotReplyResult['replyType'],
     usedMemory: boolean,
+    cached = false,
   ): BotReplyResult {
     return {
       reply,
@@ -1698,11 +1859,126 @@ export class BotService {
       action: decision.action,
       purchaseIntentScore: decision.purchaseIntentScore,
       hotLead,
-      cached: false,
+      cached,
       usedGallery: mediaFiles.length > 0,
       usedMemory,
       source,
     };
+  }
+
+  private getIntentCacheKey(contactId: string): string {
+    return `intent:${contactId}`;
+  }
+
+  private getStateCacheKey(contactId: string): string {
+    return `state:${contactId}`;
+  }
+
+  private getAnalysisCacheKey(contactId: string): string {
+    return `analysis:${contactId}`;
+  }
+
+  private getNextBestActionCacheKey(contactId: string): string {
+    return `nba:${contactId}`;
+  }
+
+  private getResponseCacheKey(hash: string): string {
+    return `response_cache:${hash}`;
+  }
+
+  private buildResponseCacheHash(
+    message: string,
+    intent: BotDecisionIntent,
+    stage: ContactStage,
+  ): string {
+    return this.hashValue(`${this.normalizeTextForMatch(message)}|${intent}|${stage}`);
+  }
+
+  private hashValue(value: string): string {
+    return createHash('sha1').update(value).digest('hex');
+  }
+
+  private async readRedisCache<T>(key: string): Promise<T | null> {
+    const value = await this.redisService.get<T>(key);
+    console.log(value === null ? 'REDIS MISS:' : 'REDIS HIT:', key);
+    return value;
+  }
+
+  private async getCachedCompanyRules(): Promise<Awaited<ReturnType<CompanyContextService['getContext']>>> {
+    const cached = await this.readRedisCache<Awaited<ReturnType<CompanyContextService['getContext']>>>(
+      BotService.COMPANY_RULES_CACHE_KEY,
+    );
+    if (cached) {
+      return cached;
+    }
+
+    const companyData = await this.companyContextService.getContext();
+    await this.redisService.set(
+      BotService.COMPANY_RULES_CACHE_KEY,
+      companyData,
+      BotService.STATE_CACHE_TTL_SECONDS,
+    );
+    return companyData;
+  }
+
+  private areMessagesSimilar(left: string, right: string): boolean {
+    const normalizedLeft = this.normalizeTextForMatch(left);
+    const normalizedRight = this.normalizeTextForMatch(right);
+
+    if (!normalizedLeft || !normalizedRight) {
+      return false;
+    }
+
+    return normalizedLeft === normalizedRight
+      || normalizedLeft.includes(normalizedRight)
+      || normalizedRight.includes(normalizedLeft);
+  }
+
+  private async getCachedResponse(
+    key: string,
+    conversationMemory: ConversationMemoryState,
+  ): Promise<ResponseCacheEntry | null> {
+    const cached = await this.readRedisCache<ResponseCacheEntry>(key);
+    if (!cached) {
+      return null;
+    }
+
+    if (conversationMemory.sentMessages.includes(cached.reply)) {
+      return null;
+    }
+
+    return cached;
+  }
+
+  private async cacheResponseIfEligible(
+    key: string,
+    result: BotReplyResult,
+    conversationMemory: ConversationMemoryState,
+  ): Promise<void> {
+    if (result.mediaFiles.length > 0 || result.source === 'fallback') {
+      return;
+    }
+
+    if (conversationMemory.sentMessages.includes(result.reply)) {
+      return;
+    }
+
+    await this.redisService.set(
+      key,
+      {
+        reply: result.reply,
+        replyType: result.replyType,
+        intent: result.intent,
+        decisionIntent: result.decisionIntent,
+        stage: result.stage,
+        action: result.action,
+        purchaseIntentScore: result.purchaseIntentScore,
+        hotLead: result.hotLead,
+        source: result.source,
+        updatedAt: Date.now(),
+      } satisfies ResponseCacheEntry,
+      BotService.RESPONSE_CACHE_TTL_SECONDS,
+    );
   }
 
   private resolvePreferredReplyType(params: {
@@ -2059,14 +2335,38 @@ export class BotService {
     config: Awaited<ReturnType<ClientConfigService['getConfig']>>;
   }): Promise<BotDecisionState> {
     const normalizedMessage = params.message.trim();
-    const currentState = await this.prisma.contactState.findUnique({
+    const cachedState = await this.readRedisCache<RedisStateSnapshot>(
+      this.getStateCacheKey(params.contactId),
+    );
+    const currentState = cachedState ?? await this.prisma.contactState.findUnique({
       where: { contactId: params.contactId },
     });
-    const intentResult = await this.classifyIntent(
-      normalizedMessage,
-      params.history,
-      params.config,
+    const cachedIntent = await this.readRedisCache<IntentCacheEntry>(
+      this.getIntentCacheKey(params.contactId),
     );
+    const intentResult = cachedIntent && this.areMessagesSimilar(cachedIntent.message, normalizedMessage)
+      ? {
+          intent: cachedIntent.intent,
+          source: cachedIntent.source,
+        }
+      : await this.classifyIntent(
+          normalizedMessage,
+          params.history,
+          params.config,
+        );
+
+    if (!cachedIntent || !this.areMessagesSimilar(cachedIntent.message, normalizedMessage)) {
+      await this.redisService.set(
+        this.getIntentCacheKey(params.contactId),
+        {
+          message: normalizedMessage,
+          intent: intentResult.intent,
+          source: intentResult.source,
+          updatedAt: Date.now(),
+        } satisfies IntentCacheEntry,
+        BotService.INTENT_CACHE_TTL_SECONDS,
+      );
+    }
     const purchaseIntentScore = this.calculatePurchaseIntentScore(
       currentState?.purchaseIntentScore ?? 0,
       normalizedMessage,
@@ -2131,6 +2431,17 @@ export class BotService {
         lastMessageId,
       },
     });
+
+    await this.redisService.set(
+      this.getStateCacheKey(params.contactId),
+      {
+        stage,
+        currentIntent: intentResult.intent,
+        purchaseIntentScore,
+        updatedAt: Date.now(),
+      } satisfies RedisStateSnapshot,
+      BotService.STATE_CACHE_TTL_SECONDS,
+    );
 
     return {
       intent: intentResult.intent,

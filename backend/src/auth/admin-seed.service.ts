@@ -1,4 +1,10 @@
-import { Injectable, InternalServerErrorException, Logger, OnModuleInit } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  InternalServerErrorException,
+  Logger,
+  OnModuleInit,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { UserRole } from '@prisma/client';
 import { UsersService } from '../users/users.service';
@@ -17,7 +23,6 @@ export class AdminSeedService implements OnModuleInit {
       return;
     }
 
-    const seedConfig = this.getSeedConfig();
     const activeUsers = await this.usersService.countActiveUsers();
 
     if (activeUsers > 0) {
@@ -25,14 +30,27 @@ export class AdminSeedService implements OnModuleInit {
       return;
     }
 
-    await this.usersService.create({
-      name: seedConfig.name,
-      email: seedConfig.email,
-      phone: seedConfig.phone,
-      password: seedConfig.password,
-      role: UserRole.admin,
-      isActive: true,
-    });
+    const seedConfig = this.getSeedConfig();
+
+    try {
+      await this.usersService.create({
+        name: seedConfig.name,
+        email: seedConfig.email,
+        phone: seedConfig.phone,
+        password: seedConfig.password,
+        role: UserRole.admin,
+        isActive: true,
+      });
+    } catch (error) {
+      if (error instanceof ConflictException) {
+        this.logger.warn(
+          `Admin seed skipped because another instance created ${seedConfig.email} first`,
+        );
+        return;
+      }
+
+      throw error;
+    }
 
     this.logger.log(`Initial admin user created for ${seedConfig.email}`);
   }

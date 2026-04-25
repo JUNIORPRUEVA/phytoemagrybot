@@ -46,8 +46,9 @@ function createService(options?: {
   classifyIntent?: (params: Record<string, unknown>) => string | Promise<string>;
   onGenerateReply?: (params: Record<string, unknown>) => void;
   onClassifyIntent?: (params: Record<string, unknown>) => void;
+  onMediaLookup?: (text: string, take: number) => void;
 }) {
-  const savedMessages: Array<{ role: string; content: string }> = [];
+  const savedMessagesByContact = new Map<string, Array<{ role: string; content: string }>>();
   const memoryState = {
     lastIntent: options?.lastIntent ?? null,
   };
@@ -172,6 +173,7 @@ function createService(options?: {
     } as any,
     {
       async getMediaByKeyword(_text: string, take = 3) {
+        options?.onMediaLookup?.(_text, take);
         return Array.from({ length: options?.mediaCount ?? 0 }).slice(0, take).map((_, index) => ({
           id: index + 1,
           title: `media-${index + 1}`,
@@ -183,8 +185,11 @@ function createService(options?: {
       },
     } as any,
     {
-      async saveMessage(entry: { role: string; content: string }) {
-        savedMessages.push(entry);
+      async saveMessage(entry: { contactId?: string; role: string; content: string }) {
+        const contactId = String(entry.contactId ?? 'test-contact');
+        const contactMessages = savedMessagesByContact.get(contactId) ?? [];
+        contactMessages.push({ role: entry.role, content: entry.content });
+        savedMessagesByContact.set(contactId, contactMessages);
         if (entry.role === 'user') {
           const normalized = entry.content.toLowerCase();
           if (normalized.includes('lo quiero')) {
@@ -198,8 +203,9 @@ function createService(options?: {
 
         return entry;
       },
-      async getConversationContext() {
+      async getConversationContext(contactId?: string) {
         const override = options?.memoryContext;
+        const storedMessages = savedMessagesByContact.get(String(contactId ?? 'test-contact')) ?? [];
         const clientMemory = {
           contactId: 'test-contact',
           name: 'Maria',
@@ -222,7 +228,7 @@ function createService(options?: {
         };
 
         return {
-          messages: override?.messages ?? savedMessages.map((item) => ({ role: item.role as 'user' | 'assistant', content: item.content })),
+          messages: override?.messages ?? storedMessages.map((item) => ({ role: item.role as 'user' | 'assistant', content: item.content })),
           clientMemory,
           summary,
         };
@@ -1886,4 +1892,66 @@ test('hello thanks k tal conversation stays varied and does not repeat media', a
 
   assert.equal(new Set(replies).size, 3);
   assert.equal(third.mediaFiles.length, 0);
+});
+
+test('response cache reuses a safe text reply for another contact with the same message state', async () => {
+  let aiCalls = 0;
+  const service = createService({
+    aiReply: 'Hola, dime con que te ayudo y te respondo rapido.',
+    generateResponses: async () => {
+      aiCalls += 1;
+      return [
+        {
+          text: 'Hola, dime con que te ayudo y te respondo rapido.',
+          type: 'text',
+        },
+      ];
+    },
+  });
+
+  const first = await service.processIncomingMessage('18095554444', 'hola');
+  const second = await service.processIncomingMessage('18095554445', 'hola');
+
+  assert.equal(first.cached, false);
+  assert.equal(second.cached, true);
+  assert.equal(second.source, 'cache');
+  assert.equal(aiCalls, 1);
+  assert.equal(second.reply, first.reply);
+});
+
+test('intent cache reuses classified intent for a similar message from the same contact', async () => {
+  let classifyCalls = 0;
+  const service = createService({
+    classifyIntent: async () => {
+      classifyCalls += 1;
+      return 'interesado';
+    },
+    aiReply: 'Claro, dime que te interesa y te ayudo.',
+  });
+
+  await service.processIncomingMessage('18095554446', 'hola buenas');
+  await service.processIncomingMessage('18095554446', 'hola buenas?');
+
+  assert.equal(classifyCalls, 1);
+});
+
+test('media cache reuses gallery lookup for the same visual request', async () => {
+  let mediaLookups = 0;
+  const service = createService({
+    mediaCount: 1,
+    onMediaLookup: () => {
+      mediaLookups += 1;
+    },
+    generateResponses: async () => ([
+      {
+        text: 'Te dejo una referencia para que lo veas mejor.',
+        type: 'text',
+      },
+    ]),
+  });
+
+  await service.processIncomingMessage('18095554447', 'muestrame fotos');
+  await service.processIncomingMessage('18095554448', 'muestrame fotos');
+
+  assert.equal(mediaLookups, 1);
 });

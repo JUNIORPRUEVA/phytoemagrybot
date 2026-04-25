@@ -5,6 +5,7 @@ export interface ConversationMemoryState {
   lastMessages: string[];
   lastSentHadVideo: boolean;
   lastIntent: string;
+  state: string;
   cooldownMediaUntil: number | null;
 }
 
@@ -75,6 +76,7 @@ export function createConversationMemory(
     lastMessages: mergeRecent([], seed?.lastMessages ?? []),
     lastSentHadVideo: seed?.lastSentHadVideo === true,
     lastIntent: typeof seed?.lastIntent === 'string' ? seed.lastIntent.trim() : '',
+    state: typeof seed?.state === 'string' ? seed.state.trim() : '',
     cooldownMediaUntil:
       typeof seed?.cooldownMediaUntil === 'number' && Number.isFinite(seed.cooldownMediaUntil)
         ? seed.cooldownMediaUntil
@@ -91,6 +93,7 @@ export function normalizeConversationMemory(
     lastMessages?: string[];
     lastSentHadVideo?: boolean;
     lastIntent?: string;
+    state?: string;
     cooldownMediaUntil?: number | null;
   },
 ): ConversationMemoryState {
@@ -110,6 +113,10 @@ export function normalizeConversationMemory(
       typeof raw.lastIntent === 'string' && raw.lastIntent.trim().length > 0
         ? raw.lastIntent.trim()
         : seed?.lastIntent ?? '',
+    state:
+      typeof raw.state === 'string' && raw.state.trim().length > 0
+        ? raw.state.trim()
+        : seed?.state ?? '',
     cooldownMediaUntil:
       typeof raw.cooldownMediaUntil === 'number' && Number.isFinite(raw.cooldownMediaUntil)
         ? raw.cooldownMediaUntil
@@ -124,6 +131,7 @@ export function recordConversationDelivery(
     mediaIds?: string[];
     lastMessages?: string[];
     lastIntent?: string | null;
+    state?: string | null;
     lastSentHadVideo?: boolean;
     cooldownMediaUntil?: number | null;
   },
@@ -138,6 +146,10 @@ export function recordConversationDelivery(
       typeof payload.lastIntent === 'string' && payload.lastIntent.trim().length > 0
         ? payload.lastIntent.trim()
         : memory.lastIntent,
+    state:
+      typeof payload.state === 'string' && payload.state.trim().length > 0
+        ? payload.state.trim()
+        : memory.state,
     cooldownMediaUntil:
       typeof payload.cooldownMediaUntil === 'number' || payload.cooldownMediaUntil === null
         ? payload.cooldownMediaUntil
