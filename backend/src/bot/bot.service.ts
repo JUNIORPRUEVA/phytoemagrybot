@@ -135,6 +135,11 @@ export class BotService {
   private static readonly KNOWLEDGE_CONTEXT_CACHE_KEY = 'bot:knowledge-context:v1';
   private static readonly COMPANY_RULES_CACHE_KEY = 'company_rules';
   private static readonly SENT_MEDIA_CACHE_KEY_PREFIX = 'bot:sent-media:';
+  private static readonly QUICK_REPLY_CACHE_KEY_PREFIX = 'quick_reply:v1:';
+  private static readonly QUICK_REPLY_CACHE_TTL_SECONDS = 60 * 60 * 6;
+  private static readonly SPEED_NO_AI_MAX_CHARS = 20;
+  private static readonly AI_TIMEOUT_MS = 2000;
+  private static readonly AI_CONTEXT_MAX_CHARS = 2000;
   private static readonly GREETING_TTL_SECONDS = 60 * 60 * 24;
   private static readonly GREETING_DAY_KEY_TTL_SECONDS = 60 * 60 * 24 * 4;
   private static readonly CONVERSATION_MEMORY_TTL_SECONDS = 60 * 60 * 24;
@@ -327,6 +332,68 @@ export class BotService {
         return finalizeResponse('stop_early', closureResult);
       }
 
+      if (this.isSpeedGreetingMessage(normalizedMessage)) {
+        if (responseGenerated && finalResult) {
+          logResponseDebug({ layer: 'hardcode_greeting', blocked: true, reason: 'response_already_generated' });
+          return finalResult;
+        }
+
+        await this.memoryService.saveMessage({
+          contactId: normalizedContactId,
+          role: 'user',
+          content: normalizedMessage,
+        });
+        userMessageStored = true;
+        await this.rememberLastMessageType(normalizedContactId, metadata?.messageType ?? 'text');
+
+        const conversationMemory = await this.getConversationMemory(normalizedContactId, []);
+        const reply = this.buildSpeedGreetingReply();
+        const decision = this.buildQuickDecisionState({
+          contactId: normalizedContactId,
+          message: normalizedMessage,
+          decisionIntent: 'otro',
+          stage: 'curioso',
+          action: 'guiar',
+          summary: 'Saludo rapido (sin IA).',
+        });
+
+        await this.memoryService.saveMessage({
+          contactId: normalizedContactId,
+          role: 'assistant',
+          content: reply,
+        });
+        await this.saveConversationMemory(
+          recordConversationDelivery(conversationMemory, {
+            messageText: reply,
+            lastMessages: [normalizedMessage, reply],
+            lastIntent: decision.intent,
+            state: decision.stage,
+            lastSentHadVideo: false,
+            cooldownMediaUntil: null,
+          }),
+        );
+
+        const result = this.createResult(
+          reply,
+          'hardcode',
+          'otro',
+          decision,
+          false,
+          [],
+          'text',
+          conversationMemory.lastMessages.length > 0,
+        );
+        await this.markBotResponseInDecisionState(normalizedContactId, result.reply, decision, []);
+        await this.persistMicroContext(
+          normalizedContactId,
+          decision.intent,
+          result.reply,
+          metadata?.messageType ?? 'text',
+        );
+        this.logReply(normalizedContactId, result);
+        return finalizeResponse('hardcode_greeting', result);
+      }
+
       const greetingOutcome = await this.getGreetingOutcome(normalizedContactId, normalizedMessage);
       if (greetingOutcome === 'first') {
         if (responseGenerated && finalResult) {
@@ -397,6 +464,295 @@ export class BotService {
       const relevantProducts = this.filterRelevantProducts(allProducts, normalizedMessage);
       console.log('PRODUCTOS:', allProducts);
       console.log('PRODUCTOS_RELEVANTES:', relevantProducts);
+
+      const relevantProduct = relevantProducts[0] ?? null;
+      const speedKind = this.detectSpeedKind(normalizedMessage);
+      if (speedKind === 'price') {
+        if (responseGenerated && finalResult) {
+          logResponseDebug({ layer: 'hardcode_price', blocked: true, reason: 'response_already_generated' });
+          return finalResult;
+        }
+
+        await this.memoryService.saveMessage({
+          contactId: normalizedContactId,
+          role: 'user',
+          content: normalizedMessage,
+        });
+        userMessageStored = true;
+        await this.rememberLastMessageType(normalizedContactId, metadata?.messageType ?? 'text');
+
+        const conversationMemory = await this.getConversationMemory(normalizedContactId, []);
+        const reply = this.buildQuickPriceReply(allProducts, relevantProducts);
+        await this.redisService.set(
+          this.getQuickReplyCacheKey('price', relevantProduct?.id ?? null),
+          reply,
+          BotService.QUICK_REPLY_CACHE_TTL_SECONDS,
+        );
+
+        const decision = this.buildQuickDecisionState({
+          contactId: normalizedContactId,
+          message: normalizedMessage,
+          decisionIntent: 'precio',
+          stage: 'curioso',
+          action: 'responder_precio_con_valor',
+          summary: 'Precio rapido (sin IA).',
+        });
+        const intent = this.mapDecisionIntentToBotIntent(decision.intent, normalizedMessage);
+
+        await this.memoryService.saveMessage({
+          contactId: normalizedContactId,
+          role: 'assistant',
+          content: reply,
+        });
+        await this.saveConversationMemory(
+          recordConversationDelivery(conversationMemory, {
+            messageText: reply,
+            lastMessages: [normalizedMessage, reply],
+            lastIntent: decision.intent,
+            state: decision.stage,
+            lastSentHadVideo: false,
+            cooldownMediaUntil: null,
+          }),
+        );
+
+        const result = this.createResult(
+          reply,
+          'hardcode',
+          intent,
+          decision,
+          false,
+          [],
+          'text',
+          conversationMemory.lastMessages.length > 0,
+        );
+        await this.markBotResponseInDecisionState(normalizedContactId, result.reply, decision, []);
+        await this.persistMicroContext(
+          normalizedContactId,
+          decision.intent,
+          result.reply,
+          metadata?.messageType ?? 'text',
+        );
+        this.logReply(normalizedContactId, result);
+        return finalizeResponse('hardcode_price', result);
+      }
+
+      if (speedKind === 'hours' || speedKind === 'location') {
+        if (responseGenerated && finalResult) {
+          logResponseDebug({ layer: 'hardcode_company_info', blocked: true, reason: 'response_already_generated' });
+          return finalResult;
+        }
+
+        await this.memoryService.saveMessage({
+          contactId: normalizedContactId,
+          role: 'user',
+          content: normalizedMessage,
+        });
+        userMessageStored = true;
+        await this.rememberLastMessageType(normalizedContactId, metadata?.messageType ?? 'text');
+
+        const conversationMemory = await this.getConversationMemory(normalizedContactId, []);
+        const companyData = await this.getCachedCompanyRules();
+        const companyCheck = applyCompanyRules(
+          normalizedMessage,
+          {
+            intent: 'otro',
+            userState: 'curioso',
+            alreadyExplained: false,
+            repetitionRisk: false,
+            nextBestAction: 'preguntar',
+            responseStrategy: 'speed_company_info',
+          },
+          companyData,
+          new Date(Date.now()),
+        );
+
+        const reply = companyCheck.overrideResponse
+          ? companyCheck.overrideResponse
+          : speedKind === 'hours'
+            ? 'Claro. En este momento no tengo el horario configurado. ¿Me confirmas tu ciudad?'
+            : 'Claro. En este momento no tengo la ubicacion configurada. ¿Me confirmas tu ciudad?';
+
+        const decision = this.buildQuickDecisionState({
+          contactId: normalizedContactId,
+          message: normalizedMessage,
+          decisionIntent: 'info',
+          stage: 'curioso',
+          action: 'guiar',
+          summary: 'Empresa info rapida (sin IA).',
+        });
+        const intent = this.mapDecisionIntentToBotIntent(decision.intent, normalizedMessage);
+
+        await this.memoryService.saveMessage({
+          contactId: normalizedContactId,
+          role: 'assistant',
+          content: reply,
+        });
+        await this.saveConversationMemory(
+          recordConversationDelivery(conversationMemory, {
+            messageText: reply,
+            lastMessages: [normalizedMessage, reply],
+            lastIntent: decision.intent,
+            state: decision.stage,
+            lastSentHadVideo: false,
+            cooldownMediaUntil: null,
+          }),
+        );
+
+        const result = this.createResult(
+          reply,
+          'hardcode',
+          intent,
+          decision,
+          false,
+          [],
+          'text',
+          conversationMemory.lastMessages.length > 0,
+        );
+        await this.markBotResponseInDecisionState(normalizedContactId, result.reply, decision, []);
+        await this.persistMicroContext(
+          normalizedContactId,
+          decision.intent,
+          result.reply,
+          metadata?.messageType ?? 'text',
+        );
+        this.logReply(normalizedContactId, result);
+        return finalizeResponse('hardcode_company_info', result);
+      }
+
+      const quickInfoKind = this.detectQuickInfoKind(normalizedMessage);
+      if (quickInfoKind) {
+        const cacheKey = this.getQuickReplyCacheKey(quickInfoKind, relevantProduct?.id ?? null);
+        const cachedQuickReply = await this.readRedisCache<string>(cacheKey);
+        if (cachedQuickReply?.trim()) {
+          if (responseGenerated && finalResult) {
+            logResponseDebug({ layer: 'quick_cache', blocked: true, reason: 'response_already_generated' });
+            return finalResult;
+          }
+
+          await this.memoryService.saveMessage({
+            contactId: normalizedContactId,
+            role: 'user',
+            content: normalizedMessage,
+          });
+          userMessageStored = true;
+          await this.rememberLastMessageType(normalizedContactId, metadata?.messageType ?? 'text');
+
+          const conversationMemory = await this.getConversationMemory(normalizedContactId, []);
+          const decision = this.buildQuickDecisionState({
+            contactId: normalizedContactId,
+            message: normalizedMessage,
+            decisionIntent: 'info',
+            stage: 'curioso',
+            action: 'guiar',
+            summary: 'Respuesta rapida (cache) sin IA.',
+          });
+          const intent = this.mapDecisionIntentToBotIntent(decision.intent, normalizedMessage);
+
+          await this.memoryService.saveMessage({
+            contactId: normalizedContactId,
+            role: 'assistant',
+            content: cachedQuickReply.trim(),
+          });
+          await this.saveConversationMemory(
+            recordConversationDelivery(conversationMemory, {
+              messageText: cachedQuickReply.trim(),
+              lastMessages: [normalizedMessage, cachedQuickReply.trim()],
+              lastIntent: decision.intent,
+              state: decision.stage,
+              lastSentHadVideo: false,
+              cooldownMediaUntil: null,
+            }),
+          );
+
+          const result = this.createResult(
+            cachedQuickReply.trim(),
+            'cache',
+            intent,
+            decision,
+            false,
+            [],
+            'text',
+            conversationMemory.lastMessages.length > 0,
+            true,
+          );
+          await this.markBotResponseInDecisionState(normalizedContactId, result.reply, decision, []);
+          await this.persistMicroContext(
+            normalizedContactId,
+            decision.intent,
+            result.reply,
+            metadata?.messageType ?? 'text',
+          );
+          this.logReply(normalizedContactId, result);
+          return finalizeResponse('quick_cache', result);
+        }
+
+        const reply =
+          quickInfoKind === 'benefits'
+            ? this.buildQuickBenefitsReply(relevantProduct)
+            : this.buildQuickUsageReply(relevantProduct);
+        await this.redisService.set(cacheKey, reply, BotService.QUICK_REPLY_CACHE_TTL_SECONDS);
+
+        if (responseGenerated && finalResult) {
+          logResponseDebug({ layer: 'quick_cache_miss', blocked: true, reason: 'response_already_generated' });
+          return finalResult;
+        }
+
+        await this.memoryService.saveMessage({
+          contactId: normalizedContactId,
+          role: 'user',
+          content: normalizedMessage,
+        });
+        userMessageStored = true;
+        await this.rememberLastMessageType(normalizedContactId, metadata?.messageType ?? 'text');
+
+        const conversationMemory = await this.getConversationMemory(normalizedContactId, []);
+        const decision = this.buildQuickDecisionState({
+          contactId: normalizedContactId,
+          message: normalizedMessage,
+          decisionIntent: 'info',
+          stage: 'curioso',
+          action: 'guiar',
+          summary: 'Respuesta rapida (sin IA).',
+        });
+        const intent = this.mapDecisionIntentToBotIntent(decision.intent, normalizedMessage);
+
+        await this.memoryService.saveMessage({
+          contactId: normalizedContactId,
+          role: 'assistant',
+          content: reply,
+        });
+        await this.saveConversationMemory(
+          recordConversationDelivery(conversationMemory, {
+            messageText: reply,
+            lastMessages: [normalizedMessage, reply],
+            lastIntent: decision.intent,
+            state: decision.stage,
+            lastSentHadVideo: false,
+            cooldownMediaUntil: null,
+          }),
+        );
+
+        const result = this.createResult(
+          reply,
+          'hardcode',
+          intent,
+          decision,
+          false,
+          [],
+          'text',
+          conversationMemory.lastMessages.length > 0,
+        );
+        await this.markBotResponseInDecisionState(normalizedContactId, result.reply, decision, []);
+        await this.persistMicroContext(
+          normalizedContactId,
+          decision.intent,
+          result.reply,
+          metadata?.messageType ?? 'text',
+        );
+        this.logReply(normalizedContactId, result);
+        return finalizeResponse('quick_cache_miss', result);
+      }
+
       const sentMediaState = await this.getSentMediaState(normalizedContactId);
       const knowledgeContext = await this.getRequiredKnowledgeContext(
         config,
@@ -551,6 +907,65 @@ export class BotService {
         );
         this.logReply(normalizedContactId, microResult);
         return finalizeResponse('micro', microResult);
+      }
+
+      if (normalizedMessage.length < BotService.SPEED_NO_AI_MAX_CHARS) {
+        if (responseGenerated && finalResult) {
+          logResponseDebug({ layer: 'short_no_ai', blocked: true, reason: 'response_already_generated' });
+          return finalResult;
+        }
+
+        const shortReply = 'Perfecto. ¿Quieres saber precio, beneficios, como se usa, horario o ubicacion?';
+        const quickDecision = this.buildQuickDecisionState({
+          contactId: normalizedContactId,
+          message: normalizedMessage,
+          decisionIntent: 'info',
+          stage: 'curioso',
+          action: 'guiar',
+          summary: 'Mensaje corto: respuesta rapida sin IA.',
+        });
+        const quickIntent = this.mapDecisionIntentToBotIntent(quickDecision.intent, normalizedMessage);
+
+        await this.memoryService.saveMessage({
+          contactId: normalizedContactId,
+          role: 'assistant',
+          content: shortReply,
+        });
+        await this.saveConversationMemory(
+          recordConversationDelivery(conversationMemory, {
+            messageText: shortReply,
+            lastMessages: [normalizedMessage, shortReply],
+            lastIntent: quickDecision.intent,
+            state: quickDecision.stage,
+            lastSentHadVideo: false,
+            cooldownMediaUntil: null,
+          }),
+        );
+
+        const shortResult = this.createResult(
+          shortReply,
+          'hardcode',
+          quickIntent,
+          quickDecision,
+          false,
+          [],
+          'text',
+          usedMemory,
+        );
+        await this.markBotResponseInDecisionState(
+          normalizedContactId,
+          shortResult.reply,
+          quickDecision,
+          [],
+        );
+        await this.persistMicroContext(
+          normalizedContactId,
+          quickDecision.intent,
+          shortResult.reply,
+          metadata?.messageType ?? 'text',
+        );
+        this.logReply(normalizedContactId, shortResult);
+        return finalizeResponse('short_no_ai', shortResult);
       }
 
       const companyData = await this.getCachedCompanyRules();
@@ -744,27 +1159,92 @@ export class BotService {
       console.log('CONTEXTO LENGTH:', knowledgeContext.length);
       console.log('EMPRESA CONTEXTO:', knowledgeContext);
 
-      const validatedReply = await this.generateValidatedReply({
+      const companyDataText = knowledgeContext.includes('[EMPRESA]')
+        ? knowledgeContext.split('[EMPRESA]').slice(1).join('[EMPRESA]').trim()
+        : '';
+      const compactKnowledgeContext = this.buildCompactKnowledgeContext({
         config,
-        fullPrompt: this.botConfigService.getFullPrompt(botConfig),
-        companyContext: knowledgeContext,
-        contactId: normalizedContactId,
-        message: normalizedMessage,
-        history,
-        context: this.buildCombinedConversationContext(knowledgeContext, memoryContext, thinkingAnalysis),
-        classifiedIntent: decision.intent,
-        decisionAction: decision.action,
-        purchaseIntentScore: decision.purchaseIntentScore,
-        responseStyle,
-        leadStage,
-        replyObjective,
-        thinkingAnalysis,
-        companyData,
-        companyCheck,
-        conversationMemory,
-        candidateMediaFiles,
-        intent,
+        botConfig,
+        relevantProduct: relevantProducts[0] ?? null,
+        companyDataText,
       });
+      const compactFullPrompt = this.limitText(this.botConfigService.getFullPrompt(botConfig), 1200);
+
+      let validatedReply: Awaited<ReturnType<BotService['generateValidatedReply']>>;
+      try {
+        validatedReply = await this.withTimeout(
+          this.generateValidatedReply({
+            config,
+            fullPrompt: compactFullPrompt,
+            companyContext: compactKnowledgeContext,
+            contactId: normalizedContactId,
+            message: normalizedMessage,
+            history,
+            context: this.buildCombinedConversationContext(compactKnowledgeContext, memoryContext, thinkingAnalysis),
+            classifiedIntent: decision.intent,
+            decisionAction: decision.action,
+            purchaseIntentScore: decision.purchaseIntentScore,
+            responseStyle,
+            leadStage,
+            replyObjective,
+            thinkingAnalysis,
+            companyData,
+            companyCheck,
+            conversationMemory,
+            candidateMediaFiles,
+            intent,
+          }),
+          BotService.AI_TIMEOUT_MS,
+          'ai_generate',
+        );
+      } catch (error) {
+        if (error instanceof Error && error.message.includes('ai_generate_timeout')) {
+          const timeoutReply = this.buildSalesActiveFallbackReply(config, normalizedMessage, conversationMemory);
+
+          await this.memoryService.saveMessage({
+            contactId: normalizedContactId,
+            role: 'assistant',
+            content: timeoutReply,
+          });
+          await this.saveConversationMemory(
+            recordConversationDelivery(conversationMemory, {
+              messageText: timeoutReply,
+              lastMessages: [normalizedMessage, timeoutReply],
+              lastIntent: decision.intent,
+              state: decision.stage,
+              lastSentHadVideo: false,
+              cooldownMediaUntil: null,
+            }),
+          );
+
+          const timeoutResult = this.createResult(
+            timeoutReply,
+            'fallback',
+            intent,
+            decision,
+            hotLead,
+            [],
+            'text',
+            usedMemory,
+          );
+          await this.markBotResponseInDecisionState(
+            normalizedContactId,
+            timeoutResult.reply,
+            decision,
+            [],
+          );
+          await this.persistMicroContext(
+            normalizedContactId,
+            decision.intent,
+            timeoutResult.reply,
+            metadata?.messageType ?? 'text',
+          );
+          this.logReply(normalizedContactId, timeoutResult);
+          return finalizeResponse('ai_timeout', timeoutResult);
+        }
+
+        throw error;
+      }
       const preferredReplyType = this.resolvePreferredReplyType({
         message: normalizedMessage,
         reply: validatedReply.reply.content,
@@ -1172,6 +1652,15 @@ export class BotService {
     let lastReason: ResponseValidationReason | null = null;
 
     for (let attempt = 0; attempt <= BotService.MAX_REPLY_REGENERATION_ATTEMPTS; attempt += 1) {
+      const mergedContext = [
+        params.context,
+        buildCompanyRuleInstruction(params.message, params.companyData, params.companyCheck),
+        buildConversationMemoryContext(params.conversationMemory),
+        this.buildMediaSelectionContext(params.candidateMediaFiles),
+      ]
+        .filter((item) => item.trim().length > 0)
+        .join('\n\n');
+
       const candidates = await this.aiService.generateResponses({
         config: params.config,
         fullPrompt: params.fullPrompt,
@@ -1179,14 +1668,7 @@ export class BotService {
         contactId: params.contactId,
         message: params.message,
         history: params.history,
-        context: [
-          params.context,
-          buildCompanyRuleInstruction(params.message, params.companyData, params.companyCheck),
-          buildConversationMemoryContext(params.conversationMemory),
-          this.buildMediaSelectionContext(params.candidateMediaFiles),
-        ]
-          .filter((item) => item.trim().length > 0)
-          .join('\n\n'),
+        context: this.limitText(mergedContext, BotService.AI_CONTEXT_MAX_CHARS),
         classifiedIntent: params.classifiedIntent,
         decisionAction: params.decisionAction,
         purchaseIntentScore: params.purchaseIntentScore,
@@ -1520,6 +2002,193 @@ export class BotService {
       keyFacts: {},
       lastMessageId: this.buildSyntheticMessageId(contactId, message),
     };
+  }
+
+  private buildQuickDecisionState(params: {
+    contactId: string;
+    message: string;
+    decisionIntent: BotDecisionIntent;
+    stage?: ContactStage;
+    action?: BotDecisionAction;
+    summary?: string;
+  }): BotDecisionState {
+    return {
+      intent: params.decisionIntent,
+      classificationSource: 'rules',
+      stage: params.stage ?? 'curioso',
+      action: params.action ?? 'guiar',
+      purchaseIntentScore: 0,
+      currentIntent: params.decisionIntent,
+      summaryText: params.summary ?? 'Respuesta rapida sin IA.',
+      keyFacts: {},
+      lastMessageId: this.buildSyntheticMessageId(params.contactId, params.message),
+    };
+  }
+
+  private isSpeedGreetingMessage(message: string): boolean {
+    const normalized = this.normalizeTextForMatch(message);
+    if (!normalized) {
+      return false;
+    }
+
+    const tokens = normalized.split(' ').filter((token) => token.length > 0);
+    if (tokens.some((token) => token.startsWith('hola'))) {
+      return true;
+    }
+
+    const greetingTokens = new Set(['buenas', 'saludos', 'hey']);
+    return tokens.some((token) => greetingTokens.has(token));
+  }
+
+  private detectSpeedKind(message: string): 'price' | 'hours' | 'location' | null {
+    const normalized = this.normalizeTextForMatch(message);
+    if (!normalized) {
+      return null;
+    }
+
+    if (normalized.includes('precio') || normalized.includes('cuanto cuesta') || normalized.includes('cuánto cuesta')) {
+      return 'price';
+    }
+
+    if (normalized.includes('horario')) {
+      return 'hours';
+    }
+
+    if (normalized.includes('donde estan') || normalized.includes('ubicacion') || normalized.includes('ubicados')) {
+      return 'location';
+    }
+
+    return null;
+  }
+
+  private detectQuickInfoKind(message: string): 'benefits' | 'usage' | null {
+    const normalized = this.normalizeTextForMatch(message);
+    if (!normalized) {
+      return null;
+    }
+
+    const usageTerms = ['como se usa', 'como se toma', 'modo de uso', 'como tomar', 'como lo tomo', 'como lo uso'];
+    if (usageTerms.some((term) => normalized.includes(term))) {
+      return 'usage';
+    }
+
+    const benefitTerms = ['beneficios', 'resultado', 'resultados', 'para que sirve', 'para que es', 'funciona', 'sirve'];
+    if (benefitTerms.some((term) => normalized.includes(term))) {
+      return 'benefits';
+    }
+
+    return null;
+  }
+
+  private getQuickReplyCacheKey(kind: string, productId: string | null): string {
+    const suffix = productId?.trim() ? `:${this.hashValue(productId.trim()).slice(0, 12)}` : '';
+    return `${BotService.QUICK_REPLY_CACHE_KEY_PREFIX}${kind}${suffix}`;
+  }
+
+  private limitText(value: string, maxChars: number): string {
+    const normalized = (value ?? '').trim();
+    if (!normalized) {
+      return '';
+    }
+
+    if (normalized.length <= maxChars) {
+      return normalized;
+    }
+
+    return `${normalized.slice(0, Math.max(0, maxChars - 3)).trim()}...`;
+  }
+
+  private async withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+    const ms = Math.max(1, timeoutMs);
+    let timeoutHandle: NodeJS.Timeout | null = null;
+
+    const timeoutPromise = new Promise<T>((_, reject) => {
+      timeoutHandle = setTimeout(() => {
+        reject(new Error(`${label}_timeout`));
+      }, ms);
+    });
+
+    try {
+      return await Promise.race([promise, timeoutPromise]);
+    } finally {
+      if (timeoutHandle) {
+        clearTimeout(timeoutHandle);
+      }
+    }
+  }
+
+  private buildSpeedGreetingReply(): string {
+    return 'Hola 👋\n¿Buscas bajar de peso o quieres info?';
+  }
+
+  private buildQuickPriceReply(products: StructuredProduct[], relevantProducts: StructuredProduct[]): string {
+    const featured = relevantProducts[0] ?? products[0] ?? null;
+    if (!featured) {
+      return 'Claro. ¿De cuál producto quieres el precio?';
+    }
+
+    const price = this.valueToText(featured.precio) || this.valueToText(featured.precioMinimo);
+    const title = featured.titulo.trim();
+
+    if (!price) {
+      return `${title}: ahora mismo no tengo el precio configurado. ¿Te interesa saber resultados o como se usa?`;
+    }
+
+    return `${title} cuesta ${price}. ¿Te interesa bajar de peso o quieres info?`;
+  }
+
+  private buildQuickBenefitsReply(product: StructuredProduct | null): string {
+    if (!product?.titulo?.trim()) {
+      return 'Perfecto. ¿De cuál producto quieres saber beneficios?';
+    }
+
+    const benefit = (product.descripcionCorta || product.descripcionCompleta || '').trim();
+    const snippet = this.limitText(benefit.replace(/[?¿]/g, ''), 140);
+
+    return snippet
+      ? `${product.titulo.trim()}: ${snippet}. ¿Quieres que te diga el precio o como se usa?`
+      : `${product.titulo.trim()}: ¿Quieres que te diga el precio o como se usa?`;
+  }
+
+  private buildQuickUsageReply(product: StructuredProduct | null): string {
+    if (!product?.titulo?.trim()) {
+      return 'Dale. ¿De cuál producto quieres saber como se usa?';
+    }
+
+    const details = (product.descripcionCompleta || product.descripcionCorta || '').trim();
+    const snippet = this.limitText(details.replace(/[?¿]/g, ''), 140);
+
+    return snippet
+      ? `${product.titulo.trim()}: ${snippet}. ¿Quieres que te diga el precio también?`
+      : `${product.titulo.trim()}: ¿Quieres que te diga el precio también?`;
+  }
+
+  private buildCompactKnowledgeContext(params: {
+    config: Awaited<ReturnType<ClientConfigService['getConfig']>>;
+    botConfig: Awaited<ReturnType<BotConfigService['getConfig']>>;
+    relevantProduct: StructuredProduct | null;
+    companyDataText: string;
+  }): string {
+    const instructions = this.buildInstructionsKnowledgeBlock(params.config, params.botConfig);
+    const productBlock = params.relevantProduct ? this.formatProductKnowledgeBlock(params.relevantProduct) : '';
+
+    const sections: string[] = [];
+    if (instructions.trim()) {
+      sections.push('[INSTRUCCIONES]');
+      sections.push(this.limitText(instructions.trim(), 900));
+    }
+
+    if (productBlock.trim()) {
+      sections.push('[PRODUCTO_RELEVANTE]');
+      sections.push(this.limitText(productBlock.trim(), 700));
+    }
+
+    if (params.companyDataText.trim()) {
+      sections.push('[EMPRESA]');
+      sections.push(this.limitText(params.companyDataText.trim(), 600));
+    }
+
+    return this.limitText(sections.join('\n\n').trim(), BotService.AI_CONTEXT_MAX_CHARS);
   }
 
   private pickProductSnippet(product: StructuredProduct | null): string {
