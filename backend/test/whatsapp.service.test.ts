@@ -2461,6 +2461,40 @@ test('processAndDeliverMessage rewrites the text before generating voice', async
   assert.equal(sentAudios.length, 1);
 });
 
+test('processAndDeliverMessage sends audio when user explicitly asks for a voice note (no prior preference)', async () => {
+  const { service, sentTexts, sentAudios, botService } = createAudioFlowService();
+
+  botService.processIncomingMessage = async () => ({
+    reply: 'Te ayudo ahora mismo',
+    replyType: 'text',
+    mediaFiles: [],
+    intent: 'otro',
+    decisionIntent: 'curioso',
+    stage: 'curioso',
+    action: 'guiar',
+    purchaseIntentScore: 0,
+    hotLead: false,
+    cached: false,
+    usedGallery: false,
+    usedMemory: false,
+    source: 'ai',
+  });
+
+  await service.processAndDeliverMessage(
+    createResolvedConfig(),
+    '18095559999',
+    'mandame una nota de voz por favor',
+    'text',
+    {
+      outboundAddress: '18095559999@s.whatsapp.net',
+    },
+  );
+
+  assert.equal(sentTexts.length, 0);
+  assert.equal(sentAudios.length, 1);
+  assert.equal(sentAudios[0]?.to, '18095559999@s.whatsapp.net');
+});
+
 test('processIncomingAudioMessage remembers voice preference after a successful audio flow', async () => {
   const { service, getRememberedVoicePreferences } = createAudioFlowService();
 

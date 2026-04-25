@@ -940,12 +940,17 @@ export class WhatsAppService implements OnModuleInit {
       conversationSendState,
     );
 
+    const explicitVoiceRequest = this.detectExplicitVoicePreference(message);
+
     const sendAs = await this.shouldSendAudioReply(
       resolved,
       contactId,
       botReply.replyType,
       {
-        voicePreferred: options?.preferAudioReply === true || await this.hasVoiceReplyPreference(contactId),
+        voicePreferred:
+          options?.preferAudioReply === true ||
+          explicitVoiceRequest ||
+          (await this.hasVoiceReplyPreference(contactId)),
         incomingMessage: message,
         reply: replyToSend,
       },
@@ -1693,10 +1698,15 @@ export class WhatsAppService implements OnModuleInit {
       return Promise.resolve(false);
     }
 
-    const shouldUseAudio = replyType === 'audio' || (
-      options?.voicePreferred === true &&
-      this.shouldPromoteTextReplyToVoice(options.incomingMessage ?? '', options.reply ?? '')
-    );
+    const explicitVoiceRequest = this.detectExplicitVoicePreference(options?.incomingMessage ?? '');
+
+    const shouldUseAudio =
+      replyType === 'audio' ||
+      explicitVoiceRequest ||
+      (
+        options?.voicePreferred === true &&
+        this.shouldPromoteTextReplyToVoice(options.incomingMessage ?? '', options.reply ?? '')
+      );
 
     if (!shouldUseAudio) {
       return Promise.resolve(false);
