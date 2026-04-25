@@ -18,6 +18,8 @@ class _FakeConfigApiService extends ApiService {
     required String companyName,
     required String companyDetails,
     required String companyLogoUrl,
+    String companyPrimaryColor = '',
+    String companySecondaryColor = '',
   }) async {
     _config = ClientConfigData(
       id: _config.id,
@@ -57,6 +59,8 @@ class _FakeConfigApiService extends ApiService {
       companyName: companyName,
       companyDetails: companyDetails,
       companyLogoUrl: companyLogoUrl,
+      companyPrimaryColor: companyPrimaryColor,
+      companySecondaryColor: companySecondaryColor,
     );
 
     return _config;
@@ -82,7 +86,6 @@ void main() {
 
     await tester.pumpAndSettle();
 
-    expect(find.text('Identidad visual'), findsOneWidget);
     expect(find.text('Canales'), findsOneWidget);
     expect(find.text('Empresa'), findsOneWidget);
     expect(find.text('Herramientas'), findsOneWidget);
@@ -97,7 +100,6 @@ void main() {
     await tester.tap(find.widgetWithText(TextButton, 'Atras').first);
     await tester.pumpAndSettle();
 
-    expect(find.text('Identidad visual'), findsOneWidget);
     expect(find.text('Canales'), findsOneWidget);
     expect(find.text('Empresa'), findsOneWidget);
     expect(find.text('Herramientas'), findsOneWidget);

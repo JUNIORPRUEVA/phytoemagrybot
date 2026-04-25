@@ -60,6 +60,8 @@ export class WhatsAppService implements OnModuleInit {
   private static readonly AUTO_WEBHOOK_EVENTS = ['messages.upsert'];
   private static readonly SHORT_AUDIO_MAX_SECONDS = 12;
   private static readonly MAX_AUDIO_DURATION_SECONDS = 60;
+  private static readonly AUDIO_REPLY_TIMEOUT_MS = 3000;
+  private static readonly AUDIO_REPLY_MAX_WORDS = 90;
   private static readonly AUDIO_TRANSCRIPT_CACHE_TTL_SECONDS = 60 * 60 * 6;
   private static readonly VOICE_PREFERENCE_TTL_SECONDS = 60 * 60 * 24 * 30;
   private static readonly INBOUND_MESSAGE_DEDUP_TTL_SECONDS = 60 * 10;
@@ -477,6 +479,11 @@ export class WhatsAppService implements OnModuleInit {
       `/message/sendMedia/${resolved.whatsapp.instanceName}`,
       {
         number: to,
+        mediaMessage: {
+          mediatype: 'image',
+          media: imageUrl,
+          caption,
+        },
         mediatype: 'image',
         mimetype: 'image/jpeg',
         media: imageUrl,
@@ -500,6 +507,11 @@ export class WhatsAppService implements OnModuleInit {
       `/message/sendMedia/${resolved.whatsapp.instanceName}`,
       {
         number: to,
+        mediaMessage: {
+          mediatype: 'video',
+          media: videoUrl,
+          caption,
+        },
         mediatype: 'video',
         mimetype: 'video/mp4',
         media: videoUrl,
@@ -787,8 +799,6 @@ export class WhatsAppService implements OnModuleInit {
     const fallbackMessage =
       resolved.whatsapp.fallbackMessage ??
       'En este momento no pude procesar tu mensaje. Intenta nuevamente en unos minutos.';
-    const preferAudioReply =
-      options?.preferAudioReply ?? (await this.hasVoiceReplyPreference(contactId));
     const outboundAddress = options?.outboundAddress?.trim() || '';
     const diagnostic = this.mergeDeliveryDiagnosticContext(options?.diagnostic, {
       contactId,
@@ -820,7 +830,10 @@ export class WhatsAppService implements OnModuleInit {
     this.logDeliveryStage('ai_processing_started', diagnostic);
     let botReply: Awaited<ReturnType<BotService['processIncomingMessage']>>;
     try {
-      botReply = await this.botService.processIncomingMessage(contactId, message);
+      botReply = await this.botService.processIncomingMessage(contactId, message, {
+        messageType,
+        transcript: messageType === 'audio' ? message : undefined,
+      });
     } catch (error) {
       this.logDeliveryFailure('ai_processing', error, diagnostic);
       this.logger.error(
@@ -846,16 +859,46 @@ export class WhatsAppService implements OnModuleInit {
     }
 
     this.logDeliveryStage('ai_processing_completed', diagnostic, {
-      replyType: 'text',
+      replyType: botReply.replyType,
       mediaCount: botReply.mediaFiles.length,
       intent: botReply.intent,
       hotLead: botReply.hotLead,
     });
 
-    const replyType = 'text';
-    const sendAs = 'text';
+    const sendAs = await this.shouldSendAudioReply(resolved, contactId, botReply.replyType)
+      ? 'audio'
+      : 'text';
     let usedGallery = false;
     let mediaDelivered = false;
+
+    if (sendAs === 'text') {
+      console.log('SEND MODE:', sendAs);
+      console.log({
+        replyType: botReply.replyType,
+        sendAs,
+        message: botReply.reply,
+      });
+      this.logDeliveryStage('evolution_send_attempt', diagnostic, {
+        sendAs,
+      });
+      try {
+        await this.sendTextReliably(resolved, outboundAddress, botReply.reply, diagnostic, {
+          contactId,
+          reason: 'primary_text_reply',
+          fallbackText:
+            botReply.reply.trim() === fallbackMessage.trim() ? undefined : fallbackMessage,
+        });
+      } catch (error) {
+        this.logDeliveryFailure('evolution_send', error, diagnostic, {
+          sendAs,
+        });
+        throw error;
+      }
+      this.logDeliveryStage('evolution_send_completed', diagnostic, {
+        sendAs,
+      });
+      await this.rememberLastBotReplyModality(contactId, 'text');
+    }
 
     if (botReply.mediaFiles.length > 0) {
       this.logDeliveryStage('evolution_send_attempt', diagnostic, {
@@ -894,31 +937,33 @@ export class WhatsAppService implements OnModuleInit {
       }
 
     }
-    console.log('SEND MODE:', sendAs);
-    console.log({
-      replyType,
-      sendAs,
-      message: botReply.reply,
-    });
-    this.logDeliveryStage('evolution_send_attempt', diagnostic, {
-      sendAs,
-    });
-    try {
-      await this.sendTextReliably(resolved, outboundAddress, botReply.reply, diagnostic, {
-        contactId,
-        reason: 'primary_text_reply',
-        fallbackText:
-          botReply.reply.trim() === fallbackMessage.trim() ? undefined : fallbackMessage,
+    if (sendAs === 'audio') {
+      console.log('SEND MODE:', sendAs);
+      console.log({
+        replyType: botReply.replyType,
+        sendAs,
+        message: botReply.reply,
       });
-    } catch (error) {
-      this.logDeliveryFailure('evolution_send', error, diagnostic, {
+      this.logDeliveryStage('evolution_send_attempt', diagnostic, {
         sendAs,
       });
-      throw error;
+      try {
+        await this.sendVoiceReply(resolved, outboundAddress, botReply.reply, diagnostic, {
+          contactId,
+          fallbackText:
+            botReply.reply.trim() === fallbackMessage.trim() ? undefined : fallbackMessage,
+        });
+      } catch (error) {
+        this.logDeliveryFailure('evolution_send', error, diagnostic, {
+          sendAs,
+        });
+        throw error;
+      }
+      this.logDeliveryStage('evolution_send_completed', diagnostic, {
+        sendAs,
+      });
+      await this.rememberLastBotReplyModality(contactId, 'audio');
     }
-    this.logDeliveryStage('evolution_send_completed', diagnostic, {
-      sendAs,
-    });
     this.logger.log(
       JSON.stringify({
         event: 'whatsapp_reply_sent',
@@ -927,7 +972,7 @@ export class WhatsAppService implements OnModuleInit {
         intent: botReply.intent,
         hotLead: botReply.hotLead,
         usedGallery,
-        replyType: 'text',
+        replyType: botReply.replyType,
       }),
     );
     await this.followupService.registerBotReply({
@@ -1259,6 +1304,18 @@ export class WhatsAppService implements OnModuleInit {
     return Boolean(incoming.audio?.ptt || incoming.audio);
   }
 
+  private shouldSendAudioReply(
+    resolved: ResolvedWhatsAppClient,
+    contactId: string,
+    replyType: 'text' | 'audio',
+  ): Promise<boolean> {
+    if (resolved.config.botSettings?.allowAudioReplies === false || replyType !== 'audio') {
+      return Promise.resolve(false);
+    }
+
+    return this.wasLastBotReplyAudio(contactId).then((wasAudio) => !wasAudio);
+  }
+
   private prepareReplyForVoice(reply: string): string {
     const withoutEmoji = reply.replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, ' ');
     const normalized = withoutEmoji
@@ -1280,6 +1337,94 @@ export class WhatsAppService implements OnModuleInit {
       .replace(/\bte lo dejo listo\b/i, 'te lo dejo listo');
 
     return /[.!?]$/.test(spoken) ? spoken : `${spoken}.`;
+  }
+
+  private limitVoiceReplyLength(reply: string): string {
+    const words = reply.trim().split(/\s+/).filter((word) => word.length > 0);
+    if (words.length <= WhatsAppService.AUDIO_REPLY_MAX_WORDS) {
+      return reply.trim();
+    }
+
+    return `${words.slice(0, WhatsAppService.AUDIO_REPLY_MAX_WORDS).join(' ')}.`;
+  }
+
+  private async sendVoiceReply(
+    resolved: ResolvedWhatsAppClient,
+    to: string,
+    reply: string,
+    diagnostic?: DeliveryDiagnosticContext,
+    options?: {
+      contactId?: string;
+      fallbackText?: string;
+    },
+  ): Promise<void> {
+    const prepared = this.prepareReplyForVoice(reply);
+
+    try {
+      const audio = await this.buildVoiceReplyWithTimeout(resolved, prepared);
+      await this.sendAudioWithRetry(
+        resolved,
+        to,
+        audio.buffer,
+        {
+          fileName: audio.fileName,
+          mimetype: audio.mimetype,
+          ptt: true,
+        },
+        diagnostic,
+      );
+      return;
+    } catch (error) {
+      this.logger.warn(
+        JSON.stringify({
+          event: 'whatsapp_audio_reply_fallback_to_text',
+          traceId: diagnostic?.traceId ?? null,
+          contactId: options?.contactId ?? null,
+          error: error instanceof Error ? error.message : 'Unknown error',
+        }),
+      );
+    }
+
+    await this.sendTextReliably(resolved, to, reply, diagnostic, {
+      contactId: options?.contactId,
+      reason: 'audio_reply_fallback_to_text',
+      fallbackText: options?.fallbackText,
+    });
+  }
+
+  private async buildVoiceReplyWithTimeout(
+    resolved: ResolvedWhatsAppClient,
+    reply: string,
+  ): Promise<{ buffer: Buffer; fileName: string; mimetype: string }> {
+    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+
+    try {
+      return await Promise.race([
+        (async () => {
+          const spokenReply = await this.voiceService.prepareSpokenReply({
+            text: this.limitVoiceReplyLength(reply),
+            openAiKey: resolved.config.openaiKey ?? undefined,
+          });
+
+          return this.voiceService.generateVoice({
+            text: this.limitVoiceReplyLength(spokenReply),
+            openAiKey: resolved.config.openaiKey ?? undefined,
+            elevenLabsKey: resolved.config.elevenlabsKey ?? undefined,
+            voiceId: resolved.whatsapp.audioVoiceId ?? undefined,
+            baseUrl: resolved.whatsapp.elevenLabsBaseUrl ?? undefined,
+          });
+        })(),
+        new Promise<never>((_, reject) => {
+          timeoutHandle = setTimeout(() => {
+            reject(new Error('Audio reply generation exceeded 3 seconds'));
+          }, WhatsAppService.AUDIO_REPLY_TIMEOUT_MS);
+        }),
+      ]);
+    } finally {
+      if (timeoutHandle) {
+        clearTimeout(timeoutHandle);
+      }
+    }
   }
 
   private async sendAudioWithRetry(
@@ -1383,6 +1528,25 @@ export class WhatsAppService implements OnModuleInit {
 
   private async hasVoiceReplyPreference(contactId: string): Promise<boolean> {
     return (await this.redisService.get<string>(this.getVoiceReplyPreferenceKey(contactId))) === '1';
+  }
+
+  private async rememberLastBotReplyModality(
+    contactId: string,
+    modality: 'text' | 'audio',
+  ): Promise<void> {
+    await this.redisService.set(
+      this.getLastBotReplyModalityKey(contactId),
+      modality,
+      WhatsAppService.VOICE_PREFERENCE_TTL_SECONDS,
+    );
+  }
+
+  private async wasLastBotReplyAudio(contactId: string): Promise<boolean> {
+    return (await this.redisService.get<string>(this.getLastBotReplyModalityKey(contactId))) === 'audio';
+  }
+
+  private getLastBotReplyModalityKey(contactId: string): string {
+    return `last-bot-reply:${this.normalizeNumber(contactId)}`;
   }
 
   private getVoiceReplyPreferenceKey(contactId: string): string {

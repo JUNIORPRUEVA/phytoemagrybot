@@ -104,6 +104,67 @@ test('system prompt includes structured instruction center context when configur
   assert.match(prompt, /RD\$1,500/i);
 });
 
+test('system prompt enforces instructions and products as mandatory sources', () => {
+  const service = new AiService() as any;
+
+  const prompt = service.buildSystemPromptFromConfig({
+    fullPrompt: '',
+    contactId: '18095551234',
+    config: {
+      configurations: {
+        instructions: {
+          products: [
+            {
+              id: 'detox-1',
+              titulo: 'Te Detox Premium',
+              descripcion_corta: 'Ayuda a digestion y bienestar.',
+              descripcion_completa: 'Infusion herbal para apoyar digestion y desinflamar.',
+              precio: 1500,
+              precio_minimo: 1300,
+              imagenes: ['https://example.com/detox-1.jpg'],
+              videos: ['https://example.com/detox-1.mp4'],
+              activo: true,
+            },
+          ],
+        },
+      },
+    },
+    classifiedIntent: 'info',
+    decisionAction: 'guiar',
+    purchaseIntentScore: 30,
+    responseStyle: 'balanced',
+    leadStage: 'interesado',
+    replyObjective: 'avanzar_conversacion',
+  });
+
+  assert.match(prompt, /Fuentes obligatorias antes de responder/i);
+  assert.match(prompt, /Lee y obedece INSTRUCCIONES/i);
+  assert.match(prompt, /Lee PRODUCTOS completos/i);
+  assert.match(prompt, /imagenes o videos disponibles/i);
+  assert.match(prompt, /Descripcion corta/i);
+  assert.match(prompt, /Videos/i);
+});
+
+test('system prompt forces commercial replies to end with a clear next step', () => {
+  const service = new AiService() as any;
+
+  const prompt = service.buildSystemPromptFromConfig({
+    fullPrompt: '',
+    contactId: '18095551234',
+    config: { configurations: {} },
+    classifiedIntent: 'interesado',
+    decisionAction: 'guiar',
+    purchaseIntentScore: 45,
+    responseStyle: 'balanced',
+    leadStage: 'interesado',
+    replyObjective: 'avanzar_conversacion',
+  });
+
+  assert.match(prompt, /termina con una accion clara para avanzar/i);
+  assert.match(prompt, /te lo envio\?|cuantas quieres\?|te gustaria pedirlo\?/i);
+  assert.match(prompt, /si es una respuesta comercial, termina con un siguiente paso claro/i);
+});
+
 test('parseAssistantReply keeps full text content without truncating lines or words', () => {
   const service = new AiService() as any;
   const content =

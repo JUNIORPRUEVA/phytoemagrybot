@@ -7,6 +7,12 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum UserRole {
+  admin
+  vendedor
+  soporte
+}
+
 model Client {
   id             String                  @id @default(cuid())
   name           String
@@ -17,6 +23,21 @@ model Client {
   createdAt      DateTime                @default(now()) @map("created_at")
 
   @@map("clients")
+}
+
+model User {
+  id           String    @id @default(uuid()) @db.Uuid
+  name         String
+  email        String    @unique
+  phone        String?   @unique
+  passwordHash String    @map("password_hash")
+  role         UserRole  @default(vendedor)
+  isActive     Boolean   @default(true) @map("is_active")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+  deletedAt    DateTime? @map("deleted_at")
+
+  @@map("users")
 }
 
 model Config {
@@ -87,7 +108,7 @@ model CompanyContext {
   latitude        Float? 
   longitude       Float?
   googleMapsLink  String   @default("") @map("google_maps_link")
-  workingHoursJson Json    @default("{}") @map("working_hours_json")
+  workingHoursJson Json    @default("[]") @map("working_hours_json")
   bankAccountsJson Json    @default("[]") @map("bank_accounts_json")
   imagesJson      Json    @default("[]") @map("images_json")
   usageRulesJson  Json    @default("{}") @map("usage_rules_json")

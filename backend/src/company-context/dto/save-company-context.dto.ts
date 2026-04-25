@@ -1,10 +1,12 @@
 import { Type } from 'class-transformer';
 import {
   IsArray,
+  IsBoolean,
   IsNumber,
   IsObject,
   IsOptional,
   IsString,
+  Matches,
   ValidateNested,
 } from 'class-validator';
 
@@ -29,6 +31,24 @@ class SaveCompanyBankAccountDto {
 class SaveCompanyImageDto {
   @IsString()
   url!: string;
+}
+
+class SaveCompanyWorkingHourDto {
+  @IsString()
+  day!: string;
+
+  @IsBoolean()
+  open!: boolean;
+
+  @IsString()
+  @Matches(/^([01]\d|2[0-3]):[0-5]\d$/)
+  @IsOptional()
+  from?: string;
+
+  @IsString()
+  @Matches(/^([01]\d|2[0-3]):[0-5]\d$/)
+  @IsOptional()
+  to?: string;
 }
 
 export class SaveCompanyContextDto {
@@ -66,9 +86,11 @@ export class SaveCompanyContextDto {
   @IsOptional()
   longitude?: number | null;
 
-  @IsObject()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => SaveCompanyWorkingHourDto)
   @IsOptional()
-  workingHoursJson?: Record<string, unknown>;
+  workingHoursJson?: SaveCompanyWorkingHourDto[];
 
   @IsArray()
   @ValidateNested({ each: true })

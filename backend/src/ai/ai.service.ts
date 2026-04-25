@@ -152,6 +152,7 @@ export class AiService {
         'Eres un asistente de ventas por WhatsApp. Responde claro, natural y con tono humano. Mantente breve, pero si el cliente pide explicacion o detalles, explica con naturalidad sin sonar robotico. Habla como una persona real dominicana y enfocate en vender bien.',
       ...promptSections,
       `Contacto actual: ${params.contactId}`,
+      this.buildKnowledgePriorityInstruction(),
       this.buildThinkingFrameworkInstruction(),
       this.buildHumanSalesInstruction(),
       this.buildDecisionInstruction(
@@ -170,6 +171,16 @@ export class AiService {
       'Usa type="text" para respuestas normales.',
       'Usa type="audio" solo cuando el usuario pida explicitamente una respuesta en audio o voz.',
     ].join('\n\n');
+  }
+
+  private buildKnowledgePriorityInstruction(): string {
+    return [
+      'Fuentes obligatorias antes de responder:',
+      '1. Lee y obedece INSTRUCCIONES.',
+      '2. Lee PRODUCTOS completos antes de redactar.',
+      '3. Si existe un producto relevante, usa siempre sus datos reales como fuente principal.',
+      '4. Si el producto trae imagenes o videos disponibles, asume que el bot puede usarlos para vender y no digas que no hay media sin revisar esas URLs.',
+    ].join('\n');
   }
 
   private buildThinkingFrameworkInstruction(): string {
@@ -192,6 +203,7 @@ export class AiService {
       'Detecta emocion, duda e intencion de compra. Si el cliente esta frio, calienta la conversacion. Si esta dudoso, responde con seguridad. Si esta listo, cierra suave sin presion.',
       'Usa la memoria para aprovechar nombre, interes y dudas previas. No repitas informacion ya dada salvo que ayude a cerrar.',
       'Si preguntan precio, responde directo y con valor. Si tienen duda, responde con confianza. Si piden explicacion, explica sin sonar tecnico. Si toca cerrar, guia la compra con suavidad.',
+      'Si la respuesta es de venta, interes o presentacion de producto, termina con una accion clara para avanzar: por ejemplo "te lo envio?", "cuantas quieres?" o "te gustaria pedirlo?".',
       'Evita respuestas largas, lenguaje formal, preguntas innecesarias y frases roboticas.',
       'La respuesta final debe sonar humana y vender con tacto. Ve al punto, pero completa bien la idea cuando el cliente necesite contexto, explicacion o pasos claros.',
     ].join('\n');
@@ -301,6 +313,7 @@ export class AiService {
       '- No suena robotico.',
       '- Ayuda a vender o avanzar la conversacion.',
       '- Conecta con lo que el cliente realmente necesita en este momento.',
+      '- Si es una respuesta comercial, termina con un siguiente paso claro.',
       'Si no cumple, reescribela antes de devolverla.',
     ].join('\n');
   }
@@ -415,7 +428,7 @@ export class AiService {
 
   private formatProductBlock(value: unknown): string | null {
     const product = this.asRecord(value);
-    const name = this.asString(product.name);
+    const name = this.asString(product.titulo) || this.asString(product.title) || this.asString(product.name);
 
     if (!name) {
       return null;
@@ -423,9 +436,15 @@ export class AiService {
 
     const lines = [
       name,
+      this.formatProductField('ID', product.id),
+      this.formatProductField('Descripcion corta', product.descripcion_corta ?? product.descripcionCorta ?? product.summary),
+      this.formatProductField('Descripcion completa', product.descripcion_completa ?? product.descripcionCompleta ?? product.description),
+      this.formatProductField('Precio', product.precio ?? product.price),
+      this.formatProductField('Precio minimo', product.precio_minimo ?? product.precioMinimo),
+      this.formatProductField('Imagenes', this.asStringList(product.imagenes).join(', ')),
+      this.formatProductField('Videos', this.asStringList(product.videos).join(', ')),
       this.formatProductField('Categoria', product.category),
       this.formatProductField('Resumen', product.summary),
-      this.formatProductField('Precio', product.price),
       this.formatProductField('CTA', product.cta),
       this.formatProductField('Beneficios', product.benefits),
       this.formatProductField('Uso recomendado', product.usage),
@@ -437,7 +456,12 @@ export class AiService {
   }
 
   private formatProductField(label: string, value: unknown): string {
-    const content = typeof value === 'string' ? value.trim() : '';
+    const content =
+      typeof value === 'number'
+        ? value.toString()
+        : typeof value === 'string'
+          ? value.trim()
+          : '';
     return content ? `- ${label}: ${content}` : '';
   }
 

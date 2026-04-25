@@ -42,6 +42,8 @@ class ClientConfigData {
     required this.companyName,
     required this.companyDetails,
     required this.companyLogoUrl,
+    this.companyPrimaryColor = '',
+    this.companySecondaryColor = '',
     this.botIdentity = const BotIdentityConfigData(),
     this.botRules = const <String>[],
     this.salesPrompts = const SalesPromptBundleData(),
@@ -85,6 +87,8 @@ class ClientConfigData {
   final String companyName;
   final String companyDetails;
   final String companyLogoUrl;
+  final String companyPrimaryColor;
+  final String companySecondaryColor;
   final BotIdentityConfigData botIdentity;
   final List<String> botRules;
   final SalesPromptBundleData salesPrompts;
@@ -182,6 +186,8 @@ class ClientConfigData {
       companyName: companyName,
       companyDetails: companyDetails,
       companyLogoUrl: companyLogoUrl,
+      companyPrimaryColor: companyPrimaryColor,
+      companySecondaryColor: companySecondaryColor,
       botIdentity: botIdentity,
       botRules: botRules,
       salesPrompts: salesPrompts,
@@ -229,6 +235,8 @@ class ClientConfigData {
       companyName: '',
       companyDetails: '',
       companyLogoUrl: '',
+      companyPrimaryColor: '',
+      companySecondaryColor: '',
       botIdentity: const BotIdentityConfigData(),
       botRules: const <String>[],
       salesPrompts: const SalesPromptBundleData(),
@@ -313,6 +321,8 @@ class ClientConfigData {
       companyName: (branding['companyName'] as String?) ?? '',
       companyDetails: (branding['companyDetails'] as String?) ?? '',
       companyLogoUrl: (branding['companyLogoUrl'] as String?) ?? '',
+      companyPrimaryColor: (branding['companyPrimaryColor'] as String?) ?? '',
+      companySecondaryColor: (branding['companySecondaryColor'] as String?) ?? '',
       botIdentity: BotIdentityConfigData.fromJson(identity),
       botRules: rules,
       salesPrompts: SalesPromptBundleData.fromJson(salesPrompts),
@@ -587,7 +597,7 @@ class CompanyContextData {
   final double? latitude;
   final double? longitude;
   final String googleMapsLink;
-  final Map<String, dynamic> workingHoursJson;
+  final List<Map<String, dynamic>> workingHoursJson;
   final List<CompanyBankAccountData> bankAccountsJson;
   final List<CompanyImageData> imagesJson;
   final Map<String, dynamic> usageRulesJson;
@@ -603,7 +613,7 @@ class CompanyContextData {
       latitude: null,
       longitude: null,
       googleMapsLink: '',
-      workingHoursJson: <String, dynamic>{},
+      workingHoursJson: <Map<String, dynamic>>[],
       bankAccountsJson: <CompanyBankAccountData>[],
       imagesJson: <CompanyImageData>[],
       usageRulesJson: <String, dynamic>{},
@@ -624,7 +634,9 @@ class CompanyContextData {
       latitude: (json['latitude'] as num?)?.toDouble(),
       longitude: (json['longitude'] as num?)?.toDouble(),
       googleMapsLink: (json['googleMapsLink'] as String?) ?? '',
-      workingHoursJson: _asJsonMap(json['workingHoursJson']),
+        workingHoursJson: _asJsonList(json['workingHoursJson'])
+          .map((item) => Map<String, dynamic>.from(item))
+          .toList(),
       bankAccountsJson: bankAccounts
           .map(CompanyBankAccountData.fromJson)
           .toList(),
@@ -1356,7 +1368,7 @@ class ApiService {
     required String googleMapsLink,
     required double? latitude,
     required double? longitude,
-    required Map<String, dynamic> workingHoursJson,
+    required List<Map<String, dynamic>> workingHoursJson,
     required List<Map<String, dynamic>> bankAccountsJson,
     required List<Map<String, dynamic>> imagesJson,
     required Map<String, dynamic> usageRulesJson,
@@ -1404,6 +1416,8 @@ class ApiService {
     String? companyName,
     String? companyDetails,
     String? companyLogoUrl,
+    String? companyPrimaryColor,
+    String? companySecondaryColor,
   }) async {
     final payload = <String, dynamic>{
       'configurations': <String, dynamic>{
@@ -1436,11 +1450,17 @@ class ApiService {
         },
         if (companyName != null ||
             companyDetails != null ||
-            companyLogoUrl != null)
+            companyLogoUrl != null ||
+            companyPrimaryColor != null ||
+            companySecondaryColor != null)
           'branding': <String, dynamic>{
             if (companyName != null) 'companyName': companyName,
             if (companyDetails != null) 'companyDetails': companyDetails,
             if (companyLogoUrl != null) 'companyLogoUrl': companyLogoUrl,
+            if (companyPrimaryColor != null)
+              'companyPrimaryColor': companyPrimaryColor,
+            if (companySecondaryColor != null)
+              'companySecondaryColor': companySecondaryColor,
           },
       },
     };
@@ -1462,6 +1482,8 @@ class ApiService {
     required String companyName,
     required String companyDetails,
     required String companyLogoUrl,
+    String companyPrimaryColor = '',
+    String companySecondaryColor = '',
   }) async {
     final current = await getConfig();
     return saveConfig(
@@ -1489,6 +1511,8 @@ class ApiService {
       companyName: companyName,
       companyDetails: companyDetails,
       companyLogoUrl: companyLogoUrl,
+      companyPrimaryColor: companyPrimaryColor,
+      companySecondaryColor: companySecondaryColor,
     );
   }
 

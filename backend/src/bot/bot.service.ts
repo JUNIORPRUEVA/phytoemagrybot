@@ -1,4 +1,4 @@
-import { Prisma } from '@prisma/client';
+import { MediaFile, Prisma } from '@prisma/client';
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { AiService } from '../ai/ai.service';
 import {
@@ -27,9 +27,31 @@ import {
   BotTestStepResult,
 } from './bot.types';
 
+type MediaIntent = 'IMAGEN' | 'VIDEO' | 'MEDIA' | null;
+
+interface StructuredProduct {
+  id: string;
+  titulo: string;
+  descripcionCorta: string;
+  descripcionCompleta: string;
+  precio: string | number | null;
+  precioMinimo: string | number | null;
+  imagenes: string[];
+  videos: string[];
+  activo: boolean;
+}
+
+interface SentMediaState {
+  sentMediaUrls: string[];
+}
+
 @Injectable()
 export class BotService {
-  private static readonly KNOWLEDGE_CONTEXT_CACHE_KEY = 'bot:knowledge-context:v1';
+  private static readonly KNOWLEDGE_CONTEXT_CACHE_KEY = 'bot:knowledge-context:v2';
+  private static readonly SENT_MEDIA_CACHE_KEY_PREFIX = 'bot:sent-media:';
+  private static readonly SHORT_TEXT_MESSAGE_MAX_CHARS = 40;
+  private static readonly LONG_AUDIO_TRANSCRIPT_MIN_CHARS = 80;
+  private static readonly LONG_REPLY_MIN_CHARS = 160;
   private static readonly DEFAULT_AI_CONTEXT = [
     'Eres un asistente de ventas por WhatsApp.',
     'Responde de forma natural, clara y humana.',
@@ -37,6 +59,8 @@ export class BotService {
   ].join('\n');
 
   private readonly logger = new Logger(BotService.name);
+
+  private readonly productMediaTimestamp = new Date('2026-04-24T00:00:00.000Z');
 
   constructor(
     private readonly aiService: AiService,
@@ -49,7 +73,14 @@ export class BotService {
     private readonly prisma: PrismaService,
   ) {}
 
-  async processIncomingMessage(contactId: string, message: string): Promise<BotReplyResult> {
+  async processIncomingMessage(
+    contactId: string,
+    message: string,
+    metadata?: {
+      messageType?: 'text' | 'audio' | 'image';
+      transcript?: string | null;
+    },
+  ): Promise<BotReplyResult> {
     const normalizedContactId = contactId.trim();
     const normalizedMessage = message.trim();
 
@@ -78,10 +109,16 @@ export class BotService {
     const config = await this.clientConfigService.getConfig();
     const botConfig = await this.botConfigService.getConfig();
     const memoryWindow = config.aiSettings?.memoryWindow ?? 6;
+    const allProducts = this.getProductsFromConfig(config);
+    const relevantProducts = this.filterRelevantProducts(allProducts, normalizedMessage);
+    console.log('PRODUCTOS:', allProducts);
+    console.log('PRODUCTOS_RELEVANTES:', relevantProducts);
+    const sentMediaState = await this.getSentMediaState(normalizedContactId);
     const knowledgeContext = await this.getRequiredKnowledgeContext(
       config,
       botConfig,
       normalizedMessage,
+      relevantProducts,
     );
 
     await this.memoryService.saveMessage({
@@ -111,15 +148,26 @@ export class BotService {
       intent,
       memoryContext.clientMemory.lastIntent,
     ) || decision.stage === 'listo';
-    const preferredReplyType = this.resolvePreferredReplyType(normalizedMessage);
     const responseStyle = this.resolveResponseStyleFromDecision(decision, normalizedMessage, intent);
     const leadStage = this.mapDecisionStageToLeadStage(decision.stage, hotLead);
     const replyObjective = this.mapDecisionActionToReplyObjective(decision.action);
     const usedMemory = this.hasUsefulMemory(memoryContext, history.length);
-    const galleryMediaFiles = await this.selectMedia(normalizedMessage, intent);
+    const mediaIntent = this.detectMediaIntent(normalizedMessage);
+    const productMediaCandidates = relevantProducts.length > 0
+      ? relevantProducts
+      : allProducts;
+    const productMediaFiles = this.selectProductMedia(
+      productMediaCandidates,
+      mediaIntent,
+      decision.action,
+    );
+    const galleryMediaFiles = productMediaFiles.length > 0
+      ? productMediaFiles
+      : await this.selectMedia(normalizedMessage, intent);
 
     console.log('USANDO IA:', true);
     console.log('CONTEXTO LENGTH:', knowledgeContext.length);
+    console.log('EMPRESA CONTEXTO:', knowledgeContext);
 
     const reply = await this.aiService.generateReply({
       config,
@@ -137,9 +185,23 @@ export class BotService {
       replyObjective,
     });
 
-    const mediaFiles = this.shouldAttachMediaToAiReply(normalizedMessage, intent)
-      ? galleryMediaFiles
+    const mediaFiles = this.shouldAttachMediaToAiReply(
+      normalizedMessage,
+      intent,
+      mediaIntent,
+      decision.action,
+      allProducts.length > 0,
+      relevantProducts.length > 0,
+    )
+      ? this.limitOutgoingMediaFiles(galleryMediaFiles, mediaIntent, sentMediaState)
       : [];
+    const preferredReplyType = this.resolvePreferredReplyType({
+      message: normalizedMessage,
+      reply: reply.content,
+      intent,
+      action: decision.action,
+      metadata,
+    });
 
     await this.memoryService.saveMessage({
       contactId: normalizedContactId,
@@ -149,7 +211,7 @@ export class BotService {
 
     const result: BotReplyResult = {
       reply: reply.content,
-      replyType: preferredReplyType === 'audio' ? 'audio' : reply.type,
+      replyType: preferredReplyType,
       mediaFiles,
       intent,
       decisionIntent: decision.intent,
@@ -163,7 +225,7 @@ export class BotService {
       source: 'ai',
     };
 
-    await this.markBotResponseInDecisionState(normalizedContactId, reply.content, decision);
+    await this.markBotResponseInDecisionState(normalizedContactId, reply.content, decision, mediaFiles);
     console.log('RESPUESTA:', result.reply);
     this.logReply(normalizedContactId, result);
     return result;
@@ -390,16 +452,17 @@ export class BotService {
     config: Awaited<ReturnType<ClientConfigService['getConfig']>>,
     botConfig: Awaited<ReturnType<BotConfigService['getConfig']>>,
     message: string,
+    relevantProducts: StructuredProduct[],
   ): Promise<string> {
     const cached = await this.redisService.get<string>(BotService.KNOWLEDGE_CONTEXT_CACHE_KEY);
     const baseContext = cached?.trim() || (await this.buildAndCacheBaseKnowledgeContext(config, botConfig));
-    const filteredProductsBlock = this.buildProductsKnowledgeBlock(config, message);
+    const relevantProductsBlock = this.buildProductsKnowledgeBlock(relevantProducts);
 
-    if (!filteredProductsBlock || !baseContext.includes('[PRODUCTOS]')) {
+    if (!relevantProductsBlock || !baseContext.includes('[PRODUCTOS]')) {
       return baseContext;
     }
 
-    return this.replaceProductsSection(baseContext, filteredProductsBlock);
+    return this.appendRelevantProductsSection(baseContext, relevantProductsBlock);
   }
 
   private async buildAndCacheBaseKnowledgeContext(
@@ -412,31 +475,27 @@ export class BotService {
     }
 
     const instructionsBlock = this.buildInstructionsKnowledgeBlock(config, botConfig);
-    const productsBlock = this.buildProductsKnowledgeBlock(config, '');
+    const productsBlock = this.buildProductsKnowledgeBlock(this.getProductsFromConfig(config));
     const companyBlock = (await this.companyContextService.buildAgentContext()).trim();
 
-    const sections: string[] = [];
+    const sections: string[] = [
+      '[INSTRUCCIONES]',
+      instructionsBlock || 'Sin instrucciones configuradas. Usa el prompt base sin inventar datos ni romper el tono comercial.',
+      '[PRODUCTOS]',
+      productsBlock || 'Catalogo no configurado. No inventes productos ni beneficios.',
+      '[EMPRESA]',
+      companyBlock || 'Informacion de empresa no configurada. Si preguntan horario, ubicacion, pago o contacto, responde solo con lo que este disponible sin inventar.',
+    ];
 
-    if (instructionsBlock) {
-      sections.push('[INSTRUCCIONES]', instructionsBlock);
-    }
-
-    if (productsBlock) {
-      sections.push('[PRODUCTOS]', productsBlock);
-    }
-
-    if (companyBlock) {
-      sections.push('[EMPRESA]', companyBlock);
-    }
-
-    if (sections.length === 0) {
-      await this.redisService.set(
-        BotService.KNOWLEDGE_CONTEXT_CACHE_KEY,
-        BotService.DEFAULT_AI_CONTEXT,
-      );
-      return BotService.DEFAULT_AI_CONTEXT;
-    }
-
+    sections.push(
+      'Regla critica: antes de responder, usa SIEMPRE [INSTRUCCIONES] como comportamiento y [PRODUCTOS] como fuente principal de datos.',
+    );
+    sections.push(
+      'Lee el catalogo completo antes de responder. Si existe un producto relevante, usa siempre su titulo, descripcion, precio, imagenes y videos antes de inferir o improvisar.',
+    );
+    sections.push(
+      'Si hay media disponible en productos o galeria y ayuda a vender, priorizala. No digas que no hay fotos o videos sin revisar primero las URLs disponibles.',
+    );
     sections.push(
       'Usa el contexto disponible como base de la respuesta. Si falta alguna parte, responde natural, clara y orientada a vender sin inventar datos.',
     );
@@ -492,27 +551,36 @@ export class BotService {
     return sections.join('\n\n').trim();
   }
 
-  private buildProductsKnowledgeBlock(
+  private buildProductsKnowledgeBlock(products: StructuredProduct[]): string {
+    return products
+      .map((item) => this.formatProductKnowledgeBlock(item))
+      .filter((item): item is string => item.length > 0)
+      .join('\n\n')
+      .trim();
+  }
+
+  private getRelevantProducts(
     config: Awaited<ReturnType<ClientConfigService['getConfig']>>,
     message: string,
-  ): string {
+  ): StructuredProduct[] {
+    return this.filterRelevantProducts(this.getProductsFromConfig(config), message);
+  }
+
+  private getProductsFromConfig(
+    config: Awaited<ReturnType<ClientConfigService['getConfig']>>,
+  ): StructuredProduct[] {
     const configurations = this.asRecord(config.configurations);
     const structuredInstructions = this.asRecord(configurations.instructions);
     const rawProducts = Array.isArray(structuredInstructions.products)
       ? structuredInstructions.products
       : [];
 
-    const filteredRawProducts = this.filterRelevantProducts(rawProducts, message);
-    const sourceProducts = filteredRawProducts.length > 0 ? filteredRawProducts : rawProducts;
-
-    const products = sourceProducts
-      .map((item) => this.formatProductKnowledgeBlock(item))
-      .filter((item): item is string => item.length > 0);
-
-    return products.join('\n\n').trim();
+    return rawProducts
+      .map((value) => this.normalizeProduct(value))
+      .filter((product): product is StructuredProduct => Boolean(product && product.activo));
   }
 
-  private filterRelevantProducts(values: unknown[], message: string): unknown[] {
+  private filterRelevantProducts(values: StructuredProduct[], message: string): StructuredProduct[] {
     const normalizedMessage = this.normalizeTextForMatch(message);
     if (!normalizedMessage) {
       return [];
@@ -527,64 +595,134 @@ export class BotService {
       return [];
     }
 
-    return values.filter((value) => {
-      const product = this.asRecord(value);
+    const matchedProducts = values.filter((value) => {
       const haystack = this.normalizeTextForMatch(
         [
-          product.name,
-          product.category,
-          product.summary,
-          product.price,
-          product.cta,
-          product.benefits,
-          product.usage,
-          product.notes,
-          ...this.asStringList(product.keywords),
+          value.titulo,
+          value.descripcionCorta,
+          value.descripcionCompleta,
+          this.valueToText(value.precio),
+          this.valueToText(value.precioMinimo),
         ]
-          .map((item) => this.asString(item))
+          .map((item) => item.trim())
           .join(' '),
       );
 
       return terms.some((term) => haystack.includes(term));
     });
+
+    if (matchedProducts.length > 0) {
+      return matchedProducts;
+    }
+
+    if (
+      values.length === 1 &&
+      this.isGenericPriceQuestion(normalizedMessage) &&
+      (values[0]?.imagenes.length ?? 0) + (values[0]?.videos.length ?? 0) > 0
+    ) {
+      return values;
+    }
+
+    return [];
   }
 
-  private replaceProductsSection(baseContext: string, productsBlock: string): string {
-    return baseContext.replace(
-      /\[PRODUCTOS\][\s\S]*?\n\n\[EMPRESA\]/,
-      `[PRODUCTOS]\n\n${productsBlock}\n\n[EMPRESA]`,
-    );
+  private isGenericPriceQuestion(message: string): boolean {
+    return ['precio', 'precio?', 'cuanto cuesta', 'cuánto cuesta', 'cuanto vale', 'cuánto vale'].includes(message);
+  }
+
+  private appendRelevantProductsSection(baseContext: string, productsBlock: string): string {
+    if (!productsBlock.trim()) {
+      return baseContext;
+    }
+
+    const relevantSection = [
+      '[PRODUCTOS_RELEVANTES]',
+      productsBlock,
+      'Usa primero estos productos relevantes para responder y vender. Si vas a enviar media, toma primero sus imagenes o videos.',
+    ].join('\n\n');
+
+    if (baseContext.includes('[PRODUCTOS_RELEVANTES]')) {
+      return baseContext.replace(
+        /\[PRODUCTOS_RELEVANTES\][\s\S]*?(?=\n\n\[EMPRESA\]|$)/,
+        relevantSection,
+      );
+    }
+
+    if (baseContext.includes('[EMPRESA]')) {
+      return baseContext.replace(/\n\n\[EMPRESA\]/, `\n\n${relevantSection}\n\n[EMPRESA]`);
+    }
+
+    return `${baseContext}\n\n${relevantSection}`;
   }
 
   private normalizeTextForMatch(value: string): string {
     return value
       .normalize('NFD')
       .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-zA-Z0-9\s]/g, ' ')
+      .replace(/\s+/g, ' ')
       .toLowerCase()
       .trim();
   }
 
-  private formatProductKnowledgeBlock(value: unknown): string {
-    const product = this.asRecord(value);
-    const name = this.asString(product.name);
-
-    if (!name) {
+  private formatProductKnowledgeBlock(product: StructuredProduct): string {
+    if (!product.titulo) {
       return '';
     }
 
     const lines = [
-      name,
-      this.formatKnowledgeField('Categoria', product.category),
-      this.formatKnowledgeField('Resumen', product.summary),
-      this.formatKnowledgeField('Precio', product.price),
-      this.formatKnowledgeField('CTA', product.cta),
-      this.formatKnowledgeField('Beneficios', product.benefits),
-      this.formatKnowledgeField('Uso', product.usage),
-      this.formatKnowledgeField('Notas', product.notes),
-      this.formatKnowledgeField('Palabras clave', this.asStringList(product.keywords).join(', ')),
+      product.titulo,
+      this.formatKnowledgeField('ID', product.id),
+      this.formatKnowledgeField('Descripcion corta', product.descripcionCorta),
+      this.formatKnowledgeField('Descripcion completa', product.descripcionCompleta),
+      this.formatKnowledgeField('Precio', this.valueToText(product.precio)),
+      this.formatKnowledgeField('Precio minimo', this.valueToText(product.precioMinimo)),
+      this.formatKnowledgeField('Imagenes', product.imagenes.join(', ')),
+      this.formatKnowledgeField('Videos', product.videos.join(', ')),
+      this.formatKnowledgeField('Activo', product.activo ? 'si' : 'no'),
     ].filter((line) => line.length > 0);
 
     return lines.join('\n');
+  }
+
+  private normalizeProduct(value: unknown): StructuredProduct | null {
+    const product = this.asRecord(value);
+    const titulo =
+      this.asString(product.titulo) ||
+      this.asString(product.title) ||
+      this.asString(product.name);
+
+    if (!titulo) {
+      return null;
+    }
+
+    const descripcionCorta =
+      this.asString(product.descripcion_corta) ||
+      this.asString(product.descripcionCorta) ||
+      this.asString(product.summary);
+    const descripcionCompleta =
+      this.asString(product.descripcion_completa) ||
+      this.asString(product.descripcionCompleta) ||
+      this.asString(product.description) ||
+      [
+        this.asString(product.benefits),
+        this.asString(product.usage),
+        this.asString(product.notes),
+      ]
+        .filter((item) => item.length > 0)
+        .join(' ');
+
+    return {
+      id: this.asString(product.id) || titulo,
+      titulo,
+      descripcionCorta,
+      descripcionCompleta,
+      precio: this.readScalarValue(product.precio, product.price),
+      precioMinimo: this.readScalarValue(product.precio_minimo, product.precioMinimo),
+      imagenes: this.asStringList(product.imagenes),
+      videos: this.asStringList(product.videos),
+      activo: this.readBoolean(product.activo, product.active, true),
+    };
   }
 
   private appendLabeledValue(sections: string[], label: string, value: unknown): void {
@@ -601,6 +739,26 @@ export class BotService {
     return content ? `- ${label}: ${content}` : '';
   }
 
+  private async getSentMediaState(contactId: string): Promise<SentMediaState> {
+    const cachedSentMediaUrls = await this.redisService.get<string[]>(
+      `${BotService.SENT_MEDIA_CACHE_KEY_PREFIX}${contactId}`,
+    );
+    if (Array.isArray(cachedSentMediaUrls) && cachedSentMediaUrls.length > 0) {
+      return {
+        sentMediaUrls: cachedSentMediaUrls.filter((url) => typeof url === 'string' && url.trim().length > 0),
+      };
+    }
+
+    const currentState = await this.prisma.contactState.findUnique({
+      where: { contactId },
+    });
+    const notes = this.asRecord(currentState?.notesJson);
+
+    return {
+      sentMediaUrls: this.asStringList(notes.sentMediaUrls),
+    };
+  }
+
   private asRecord(value: unknown): Record<string, unknown> {
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
       return {};
@@ -611,6 +769,38 @@ export class BotService {
 
   private asString(value: unknown): string {
     return typeof value === 'string' ? value.trim() : '';
+  }
+
+  private readScalarValue(...values: unknown[]): string | number | null {
+    for (const value of values) {
+      if (typeof value === 'number' && Number.isFinite(value)) {
+        return value;
+      }
+
+      if (typeof value === 'string' && value.trim()) {
+        return value.trim();
+      }
+    }
+
+    return null;
+  }
+
+  private readBoolean(...values: unknown[]): boolean {
+    for (const value of values) {
+      if (typeof value === 'boolean') {
+        return value;
+      }
+    }
+
+    return true;
+  }
+
+  private valueToText(value: string | number | null): string {
+    if (typeof value === 'number') {
+      return value.toString();
+    }
+
+    return value?.trim() || '';
   }
 
   private asStringList(value: unknown): string[] {
@@ -627,6 +817,115 @@ export class BotService {
   private async selectMedia(message: string, intent: BotIntent) {
     const take = intent === 'catalogo' || this.isVisualRequest(message) ? 5 : 3;
     return this.mediaService.getMediaByKeyword(message, take);
+  }
+
+  private detectMediaIntent(message: string): MediaIntent {
+    const normalized = this.normalizeTextForMatch(message);
+    if (!normalized) {
+      return null;
+    }
+
+    const wantsImage = ['foto', 'fotos', 'imagen', 'imagenes', 'ver'].some((keyword) => normalized.includes(keyword));
+    const wantsVideo = ['video', 'videos'].some((keyword) => normalized.includes(keyword));
+    const wantsMedia = ['muestra', 'muestrame', 'como es', 'cómo es'].some((keyword) => normalized.includes(keyword));
+
+    if (wantsImage && wantsVideo) {
+      return 'MEDIA';
+    }
+
+    if (wantsVideo) {
+      return 'VIDEO';
+    }
+
+    if (wantsImage) {
+      return 'IMAGEN';
+    }
+
+    if (wantsMedia) {
+      return 'MEDIA';
+    }
+
+    return null;
+  }
+
+  private selectProductMedia(
+    products: StructuredProduct[],
+    mediaIntent: MediaIntent,
+    action: BotDecisionAction,
+  ): MediaFile[] {
+    if (products.length === 0) {
+      return [];
+    }
+
+    if (mediaIntent === 'VIDEO') {
+      return this.mapProductMedia(products, 'video', 1);
+    }
+
+    if (mediaIntent === 'IMAGEN') {
+      return this.mapProductMedia(products, 'image', 3);
+    }
+
+    if (mediaIntent === 'MEDIA') {
+      const images = this.mapProductMedia(products, 'image', 3);
+      return images.length > 0 ? images : this.mapProductMedia(products, 'video', 1);
+    }
+
+    if (
+      action === 'cerrar' ||
+      action === 'responder_precio_con_valor' ||
+      action === 'persuadir' ||
+      action === 'guiar'
+    ) {
+      return this.mapProductMedia(products, 'image', 1);
+    }
+
+    return [];
+  }
+
+  private mapProductMedia(
+    products: StructuredProduct[],
+    fileType: 'image' | 'video',
+    take: number,
+  ): MediaFile[] {
+    const urls = products.flatMap((product) => {
+      const mediaUrls = fileType === 'image' ? product.imagenes : product.videos;
+      return mediaUrls.map((url) => ({ product, url }));
+    });
+
+    return urls.slice(0, take).map(({ product, url }, index) => ({
+      id: -1 - index,
+      title: product.titulo,
+      description: product.descripcionCorta || product.descripcionCompleta || null,
+      fileUrl: url,
+      fileType,
+      createdAt: this.productMediaTimestamp,
+    }));
+  }
+
+  private limitOutgoingMediaFiles(
+    mediaFiles: MediaFile[],
+    mediaIntent: MediaIntent,
+    sentMediaState: SentMediaState,
+  ): MediaFile[] {
+    const unseenMediaFiles = mediaFiles.filter(
+      (file) => !sentMediaState.sentMediaUrls.includes(file.fileUrl),
+    );
+    const sourceFiles = unseenMediaFiles.length > 0 ? unseenMediaFiles : mediaFiles;
+
+    if (mediaIntent === 'VIDEO') {
+      return sourceFiles.filter((file) => file.fileType === 'video').slice(0, 1);
+    }
+
+    if (mediaIntent === 'IMAGEN' || mediaIntent === 'MEDIA') {
+      return sourceFiles.filter((file) => file.fileType === 'image').slice(0, 2);
+    }
+
+    const images = sourceFiles.filter((file) => file.fileType === 'image').slice(0, 2);
+    if (images.length > 0) {
+      return images;
+    }
+
+    return sourceFiles.filter((file) => file.fileType === 'video').slice(0, 1);
   }
 
   private buildFastLaneReply(params: {
@@ -693,12 +992,255 @@ export class BotService {
     };
   }
 
-  private resolvePreferredReplyType(message: string): BotReplyResult['replyType'] {
-    return this.prefersVoiceReply(message) ? 'audio' : 'text';
+  private resolvePreferredReplyType(params: {
+    message: string;
+    reply: string;
+    intent: BotIntent;
+    action: BotDecisionAction;
+    metadata?: {
+      messageType?: 'text' | 'audio' | 'image';
+      transcript?: string | null;
+    };
+  }): BotReplyResult['replyType'] {
+    const incoming = this.analyzeIncomingMessage(params.message, params.metadata);
+    const modalityIntent = this.detectReplyModalityIntent(
+      params.message,
+      params.intent,
+      params.action,
+    );
+
+    if (
+      modalityIntent === 'precio' ||
+      modalityIntent === 'confirmacion' ||
+      modalityIntent === 'compra' ||
+      modalityIntent === 'cierre'
+    ) {
+      return 'text';
+    }
+
+    if (modalityIntent === 'explicacion') {
+      if (
+        incoming.messageType === 'audio' &&
+        incoming.messageLength === 'largo' &&
+        this.shouldUseAudioReply(params.message, params.reply, params.action, incoming)
+      ) {
+        return 'audio';
+      }
+
+      return 'text';
+    }
+
+    if (
+      incoming.messageType === 'audio' &&
+      incoming.messageLength === 'largo' &&
+      this.shouldUseAudioReply(params.message, params.reply, params.action, incoming)
+    ) {
+      return 'audio';
+    }
+
+    return 'text';
   }
 
-  private shouldAttachMediaToAiReply(message: string, intent: BotIntent): boolean {
-    return intent === 'catalogo' || this.isVisualRequest(message);
+  private detectReplyModalityIntent(
+    message: string,
+    intent: BotIntent,
+    action: BotDecisionAction,
+  ): 'precio' | 'confirmacion' | 'compra' | 'cierre' | 'explicacion' | 'general' {
+    const normalized = this.normalizeTextForMatch(message);
+
+    if (!normalized) {
+      return 'general';
+    }
+
+    if (action === 'cerrar' || intent === 'cierre') {
+      return 'cierre';
+    }
+
+    if (['precio', 'cuanto', 'cuánto', 'vale'].some((keyword) => normalized.includes(keyword))) {
+      return 'precio';
+    }
+
+    if (['ok', 'dale', 'perfecto', 'listo'].includes(normalized)) {
+      return 'confirmacion';
+    }
+
+    if (
+      ['como funciona', 'cómo funciona', 'explicame', 'explícame', 'que es', 'qué es']
+        .some((keyword) => normalized.includes(keyword))
+    ) {
+      return 'explicacion';
+    }
+
+    if (
+      ['quiero comprar', 'lo quiero', 'enviamelo', 'enviamelo']
+        .some((keyword) => normalized.includes(keyword))
+    ) {
+      return 'compra';
+    }
+
+    return 'general';
+  }
+
+  private analyzeIncomingMessage(
+    message: string,
+    metadata?: {
+      messageType?: 'text' | 'audio' | 'image';
+      transcript?: string | null;
+    },
+  ): {
+    messageType: 'text' | 'audio' | 'image';
+    messageLength: 'corto' | 'medio' | 'largo';
+  } {
+    const messageType = metadata?.messageType === 'audio' || metadata?.messageType === 'image'
+      ? metadata.messageType
+      : 'text';
+    const normalizedTranscript = (metadata?.transcript ?? message).trim();
+    const size = normalizedTranscript.length;
+
+    if (messageType === 'audio') {
+      if (size > BotService.LONG_AUDIO_TRANSCRIPT_MIN_CHARS) {
+        return { messageType, messageLength: 'largo' };
+      }
+
+      if (size >= BotService.SHORT_TEXT_MESSAGE_MAX_CHARS) {
+        return { messageType, messageLength: 'medio' };
+      }
+
+      return { messageType, messageLength: 'corto' };
+    }
+
+    if (size < BotService.SHORT_TEXT_MESSAGE_MAX_CHARS) {
+      return { messageType, messageLength: 'corto' };
+    }
+
+    if (size >= BotService.LONG_REPLY_MIN_CHARS) {
+      return { messageType, messageLength: 'largo' };
+    }
+
+    return { messageType, messageLength: 'medio' };
+  }
+
+  private shouldUseTextReply(
+    message: string,
+    intent: BotIntent,
+    action: BotDecisionAction,
+    incoming: { messageType: 'text' | 'audio' | 'image'; messageLength: 'corto' | 'medio' | 'largo' },
+  ): boolean {
+    const normalized = this.normalizeTextForMatch(message);
+
+    if (!normalized) {
+      return true;
+    }
+
+    if (action === 'cerrar' || intent === 'cierre') {
+      return true;
+    }
+
+    if (this.requiresSpecificDirectAnswer(message, intent)) {
+      return true;
+    }
+
+    if (this.isSimpleConfirmation(normalized) || this.isGreetingMessage(normalized)) {
+      return true;
+    }
+
+    return incoming.messageType === 'text' && incoming.messageLength === 'corto' && !this.requiresDetailedResponse(message);
+  }
+
+  private shouldUseAudioReply(
+    message: string,
+    reply: string,
+    action: BotDecisionAction,
+    incoming: { messageType: 'text' | 'audio' | 'image'; messageLength: 'corto' | 'medio' | 'largo' },
+  ): boolean {
+    if (incoming.messageType === 'audio' && incoming.messageLength !== 'corto') {
+      if (action === 'persuadir' || this.requiresDetailedResponse(message)) {
+        return true;
+      }
+    }
+
+    if (!this.isLongOrDetailedReply(reply)) {
+      return false;
+    }
+
+    if (action === 'persuadir') {
+      return true;
+    }
+
+    if (incoming.messageType === 'audio' && incoming.messageLength !== 'corto') {
+      return true;
+    }
+
+    return this.requiresDetailedResponse(message);
+  }
+
+  private isSimpleConfirmation(message: string): boolean {
+    return [
+      'ok',
+      'oka',
+      'okey',
+      'si',
+      'sí',
+      'dale',
+      'perfecto',
+      'listo',
+      'gracias',
+      'precio',
+      'tienes',
+      'hay',
+    ].includes(message);
+  }
+
+  private isGreetingMessage(message: string): boolean {
+    return ['hola', 'hola!', 'buenas', 'buenos dias', 'buenos dias!', 'buenas tardes', 'buenas noches'].includes(message);
+  }
+
+  private isLongOrDetailedReply(reply: string): boolean {
+    const normalized = reply.trim();
+    if (!normalized) {
+      return false;
+    }
+
+    if (normalized.length >= BotService.LONG_REPLY_MIN_CHARS) {
+      return true;
+    }
+
+    const sentenceCount = normalized
+      .split(/[.!?]+/)
+      .map((sentence) => sentence.trim())
+      .filter((sentence) => sentence.length > 0)
+      .length;
+
+    return sentenceCount >= 3;
+  }
+
+  private shouldAttachMediaToAiReply(
+    message: string,
+    intent: BotIntent,
+    mediaIntent: MediaIntent,
+    action: BotDecisionAction,
+    hasProductCatalog: boolean,
+    hasRelevantProducts: boolean,
+  ): boolean {
+    if (mediaIntent !== null) {
+      return true;
+    }
+
+    if (!hasProductCatalog) {
+      return intent === 'catalogo' || this.isVisualRequest(message);
+    }
+
+    if (hasRelevantProducts && (intent === 'interes' || this.requiresDetailedResponse(message))) {
+      return true;
+    }
+
+    return (
+      intent === 'catalogo' ||
+      this.isVisualRequest(message) ||
+      action === 'cerrar' ||
+      action === 'responder_precio_con_valor' ||
+      action === 'persuadir'
+    );
   }
 
   private resolveResponseStyle(
@@ -894,8 +1436,25 @@ export class BotService {
     contactId: string,
     reply: string,
     decision: BotDecisionState,
+    mediaFiles: MediaFile[],
   ): Promise<void> {
     const now = new Date();
+    const existingState = await this.prisma.contactState.findUnique({
+      where: { contactId },
+    });
+    const existingNotes = this.asRecord(existingState?.notesJson);
+    const sentMediaUrls = Array.from(
+      new Set([
+        ...this.asStringList(existingNotes.sentMediaUrls),
+        ...mediaFiles.map((file) => file.fileUrl).filter((url) => url.trim().length > 0),
+      ]),
+    ).slice(-12);
+
+    await this.redisService.set(
+      `${BotService.SENT_MEDIA_CACHE_KEY_PREFIX}${contactId}`,
+      sentMediaUrls,
+    );
+
     await this.prisma.contactState.updateMany({
       where: { contactId },
       data: {
@@ -904,6 +1463,7 @@ export class BotService {
           ...(decision.keyFacts as Record<string, unknown>),
           lastBotReply: reply,
           lastAction: decision.action,
+          sentMediaUrls,
         },
       },
     });

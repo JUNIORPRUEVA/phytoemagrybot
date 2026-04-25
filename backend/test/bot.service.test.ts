@@ -254,8 +254,8 @@ test('price message uses ai with a brief answer style', async () => {
   });
   const result = await service.processIncomingMessage('18095551234', 'precio');
 
-  assert.equal(result.usedGallery, false);
-  assert.equal(result.mediaFiles.length, 0);
+  assert.equal(result.usedGallery, true);
+  assert.equal(result.mediaFiles.length, 1);
   assert.equal(result.source, 'ai');
   assert.equal((capturedParams as { responseStyle?: string } | null)?.responseStyle, 'brief');
   assert.match(result.reply.toLowerCase(), /cuesta|pesos/);
@@ -298,6 +298,137 @@ test('always injects the mandatory combined knowledge context before replying', 
   assert.match(companyContext, /\[EMPRESA\]/);
   assert.match(companyContext, /Te Detox Premium/);
   assert.match(companyContext, /Phyto Emagry/);
+});
+
+test('uses real company data for location, schedule, and payment questions', async () => {
+  const capturedContexts: string[] = [];
+  const companyContextText = [
+    '[INSTRUCCIONES]',
+    'Responder con datos reales.',
+    '',
+    '[PRODUCTOS]',
+    'Te Detox Premium',
+    '',
+    '[EMPRESA]',
+    'EMPRESA:',
+    'Nombre: Phyto Emagry',
+    'Direccion: Santo Domingo',
+    'Google Maps: https://maps.app.goo.gl/demo123',
+    '',
+    'HORARIO:',
+    '- Lunes: 08:00 - 18:00',
+    '',
+    'CUENTAS:',
+    '- Banco: Banreservas | Tipo: Ahorro | Numero: 123456789 | Titular: Empresa Demo',
+  ].join('\n');
+
+  const service = createService({
+    companyContextText,
+    generateReply: (params) => {
+      const message = String(params.message ?? '').toLowerCase();
+      const context = String(params.companyContext ?? '');
+      capturedContexts.push(context);
+
+      if (message.includes('donde estan')) {
+        return {
+          type: 'text',
+          content: context.includes('Santo Domingo')
+            ? 'Estamos en Santo Domingo. Ubicacion: https://maps.app.goo.gl/demo123'
+            : 'No tengo ubicacion.',
+        };
+      }
+
+      if (message.includes('horario')) {
+        return {
+          type: 'text',
+          content: context.includes('08:00 - 18:00')
+            ? 'Nuestro horario es de 08:00 a 18:00 los lunes.'
+            : 'No tengo horario.',
+        };
+      }
+
+      if (message.includes('como pago')) {
+        return {
+          type: 'text',
+          content: context.includes('Banreservas')
+            ? 'Puedes pagar por Banreservas, cuenta 123456789.'
+            : 'No tengo cuentas.',
+        };
+      }
+
+      return {
+        type: 'text',
+        content: 'Claro, te ayudo con eso.',
+      };
+    },
+  });
+
+  const locationReply = await service.processIncomingMessage('18095551234', 'donde estan');
+  const scheduleReply = await service.processIncomingMessage('18095551234', 'cual es su horario');
+  const paymentReply = await service.processIncomingMessage('18095551234', 'como pago');
+
+  assert.match(locationReply.reply, /Santo Domingo/);
+  assert.match(locationReply.reply, /maps\.app\.goo\.gl/);
+  assert.match(scheduleReply.reply, /08:00 a 18:00/);
+  assert.match(paymentReply.reply, /Banreservas/);
+  assert.match(paymentReply.reply, /123456789/);
+
+  for (const context of capturedContexts) {
+    assert.match(context, /Nombre: Phyto Emagry/);
+    assert.match(context, /HORARIO:/);
+    assert.match(context, /CUENTAS:/);
+  }
+});
+
+test('keeps full product catalog and highlights relevant products separately', async () => {
+  let capturedParams: Record<string, unknown> | null = null;
+  const service = createService({
+    configConfigurations: {
+      instructions: {
+        identity: {
+          assistantName: 'Aura',
+        },
+        products: [
+          {
+            id: 'detox-1',
+            titulo: 'Te Detox Premium',
+            descripcion_corta: 'Ayuda a digestion y bienestar.',
+            descripcion_completa: 'Infusion herbal para apoyar digestion y desinflamar.',
+            precio: 1500,
+            precio_minimo: 1300,
+            imagenes: ['https://example.com/detox-1.jpg'],
+            videos: ['https://example.com/detox-1.mp4'],
+            activo: true,
+          },
+          {
+            id: 'cafe-1',
+            titulo: 'Cafe Slim',
+            descripcion_corta: 'Cafe funcional para energia.',
+            descripcion_completa: 'Cafe pensado para apoyar control de apetito y enfoque.',
+            precio: 1750,
+            precio_minimo: 1500,
+            imagenes: ['https://example.com/cafe-1.jpg'],
+            videos: [],
+            activo: true,
+          },
+        ],
+      },
+    },
+    onGenerateReply: (params) => {
+      capturedParams = params;
+    },
+  });
+
+  await service.processIncomingMessage('18095551234', 'quiero ver foto del cafe slim');
+
+  const companyContext = String(
+    (capturedParams as { companyContext?: string } | null)?.companyContext ?? '',
+  );
+
+  assert.match(companyContext, /\[PRODUCTOS\]/);
+  assert.match(companyContext, /Te Detox Premium/);
+  assert.match(companyContext, /Cafe Slim/);
+  assert.match(companyContext, /\[PRODUCTOS_RELEVANTES\]/);
 });
 
 test('uses AI with available context when mandatory knowledge sources are incomplete', async () => {
@@ -353,8 +484,40 @@ test('uses AI with partial context when some knowledge sources exist', async () 
 
   assert.equal(result.source, 'ai');
   assert.match(companyContext, /\[INSTRUCCIONES\]/);
+  assert.match(companyContext, /^\[PRODUCTOS\]$/m);
   assert.match(companyContext, /\[EMPRESA\]/);
-  assert.doesNotMatch(companyContext, /\[PRODUCTOS\]/);
+});
+
+test('mandatory knowledge context always includes instructions products and company in order', async () => {
+  let capturedParams: Record<string, unknown> | null = null;
+  const service = createService({
+    configConfigurations: {
+      instructions: {
+        identity: {
+          assistantName: 'Aura',
+        },
+        products: [],
+      },
+    },
+    companyContextText: '',
+    onGenerateReply: (params) => {
+      capturedParams = params;
+    },
+  });
+
+  await service.processIncomingMessage('18095551234', 'hola');
+
+  const companyContext = String(
+    (capturedParams as { companyContext?: string } | null)?.companyContext ?? '',
+  );
+
+  assert.match(companyContext, /^\[INSTRUCCIONES\]/m);
+  assert.match(companyContext, /^\[PRODUCTOS\]/m);
+  assert.match(companyContext, /^\[EMPRESA\]/m);
+  assert.ok(
+    companyContext.indexOf('[INSTRUCCIONES]') < companyContext.indexOf('[PRODUCTOS]') &&
+    companyContext.indexOf('[PRODUCTOS]') < companyContext.indexOf('[EMPRESA]'),
+  );
 });
 
 test('location question injects only location business context', async () => {
@@ -482,26 +645,132 @@ test('repeated message still goes through AI and does not use reply cache shortc
   assert.equal(second.source, 'ai');
 });
 
-test('catalog request returns multiple media when available', async () => {
+test('catalog request limits outgoing images to avoid saturating the client', async () => {
   const service = createService({ mediaCount: 5 });
   const result = await service.processIncomingMessage('18095551234', 'quiero catálogo');
 
   assert.equal(result.intent, 'catalogo');
   assert.equal(result.usedGallery, true);
-  assert.equal(result.mediaFiles.length, 5);
+  assert.equal(result.mediaFiles.length, 2);
 });
 
-test('voice request prefers audio replies', async () => {
+test('voice request by text still stays as text', async () => {
   const service = createService();
   const result = await service.processIncomingMessage(
     '18095551234',
     'explicame por voz como funciona',
   );
 
+  assert.equal(result.replyType, 'text');
+});
+
+test('short price text always stays as text reply', async () => {
+  const service = createService({
+    generateReply: async () => ({
+      type: 'audio',
+      content: 'Cuesta RD$1,500 y te lo puedo dejar listo hoy mismo.',
+    }),
+  });
+
+  const result = await service.processIncomingMessage('18095551234', 'precio');
+
+  assert.equal(result.replyType, 'text');
+});
+
+test('long inbound audio prefers audio reply', async () => {
+  const service = createService({
+    generateReply: async () => ({
+      type: 'text',
+      content: 'Claro, te explico como funciona paso por paso, que beneficios suele notar la gente y como se usa para sacarle mejor resultado sin complicarte.',
+    }),
+  });
+
+  const result = await service.processIncomingMessage(
+    '18095551234',
+    'quiero saber bien como funciona y si de verdad ayuda a rebajar porque tengo varias dudas antes de decidirme',
+    {
+      messageType: 'audio',
+      transcript: 'quiero saber bien como funciona y si de verdad ayuda a rebajar porque tengo varias dudas antes de decidirme',
+    },
+  );
+
   assert.equal(result.replyType, 'audio');
 });
 
-test('visual request requests more gallery media', async () => {
+test('price intent overrides long inbound audio and stays text', async () => {
+  const service = createService({
+    generateReply: async () => ({
+      type: 'audio',
+      content: 'Cuesta RD$1,500 y te llega hoy si lo quieres pedir.',
+    }),
+  });
+
+  const result = await service.processIncomingMessage(
+    '18095551234',
+    'cuanto vale exactamente porque quiero saber el precio antes de comprar',
+    {
+      messageType: 'audio',
+      transcript: 'cuanto vale exactamente porque quiero saber el precio antes de comprar y necesito ese dato ahora mismo',
+    },
+  );
+
+  assert.equal(result.replyType, 'text');
+});
+
+test('purchase intent overrides long inbound audio and stays text', async () => {
+  const service = createService({
+    generateReply: async () => ({
+      type: 'audio',
+      content: 'Perfecto, te lo dejo listo ahora mismo para cerrar el pedido.',
+    }),
+  });
+
+  const result = await service.processIncomingMessage(
+    '18095551234',
+    'me interesa comprarlo y quiero pedirlo hoy mismo',
+    {
+      messageType: 'audio',
+      transcript: 'me interesa comprarlo y quiero pedirlo hoy mismo pero primero dime como seguimos con el pedido por favor',
+    },
+  );
+
+  assert.equal(result.replyType, 'text');
+});
+
+test('explanation intent uses audio only when the answer is long enough', async () => {
+  const service = createService({
+    generateReply: async () => ({
+      type: 'text',
+      content: 'Claro, te explico paso por paso como funciona, que beneficios suele notar la gente, como se usa mejor y por que conviene seguirlo bien para que realmente veas resultado.',
+    }),
+  });
+
+  const result = await service.processIncomingMessage(
+    '18095551234',
+    'explicame como funciona',
+    {
+      messageType: 'audio',
+      transcript: 'explicame como funciona porque quiero entenderlo completo antes de tomar una decision y necesito la explicacion completa',
+    },
+  );
+
+  assert.equal(result.replyType, 'audio');
+});
+
+test('explanation by text stays text even with a detailed answer', async () => {
+  const service = createService({
+    generateReply: async () => ({
+      type: 'audio',
+      content: 'Claro, te explico paso por paso como funciona, que beneficios suele notar la gente, como se usa mejor y por que conviene seguirlo bien para que realmente veas resultado.',
+    }),
+  });
+
+  const result = await service.processIncomingMessage('18095551234', 'que es exactamente este producto');
+
+  assert.equal(result.replyType, 'text');
+});
+
+test('visual request limits outgoing images to two items', async () => {
   const service = createService({ mediaCount: 5 });
   const result = await service.processIncomingMessage(
     '18095551234',
@@ -509,7 +778,335 @@ test('visual request requests more gallery media', async () => {
   );
 
   assert.equal(result.usedGallery, true);
-  assert.equal(result.mediaFiles.length, 5);
+  assert.equal(result.mediaFiles.length, 2);
+});
+
+test('image request uses product images before gallery results', async () => {
+  const service = createService({
+    mediaCount: 5,
+    configConfigurations: {
+      instructions: {
+        identity: {
+          assistantName: 'Aura',
+        },
+        products: [
+          {
+            id: 'detox-1',
+            titulo: 'Te Detox Premium',
+            descripcion_corta: 'Ayuda a digestion y bienestar.',
+            descripcion_completa: 'Infusion herbal para apoyar digestion y desinflamar.',
+            precio: 1500,
+            precio_minimo: 1300,
+            imagenes: [
+              'https://example.com/product-detox-1.jpg',
+              'https://example.com/product-detox-2.jpg',
+              'https://example.com/product-detox-3.jpg',
+            ],
+            videos: ['https://example.com/product-detox.mp4'],
+            activo: true,
+          },
+        ],
+      },
+    },
+  });
+
+  const result = await service.processIncomingMessage(
+    '18095551234',
+    'tienes fotos del te detox?',
+  );
+
+  assert.equal(result.usedGallery, true);
+  assert.equal(result.mediaFiles.length, 2);
+  assert.equal(result.mediaFiles[0]?.fileUrl, 'https://example.com/product-detox-1.jpg');
+  assert.equal(result.mediaFiles[1]?.fileUrl, 'https://example.com/product-detox-2.jpg');
+});
+
+test('generic image request sends images and does not say it has none', async () => {
+  const service = createService({
+    mediaCount: 0,
+    aiReply: 'Claro, mira 👇',
+    configConfigurations: {
+      instructions: {
+        identity: {
+          assistantName: 'Aura',
+        },
+        products: [
+          {
+            id: 'detox-1',
+            titulo: 'Te Detox Premium',
+            descripcion_corta: 'Ayuda a digestion y bienestar.',
+            descripcion_completa: 'Infusion herbal para apoyar digestion y desinflamar.',
+            precio: 1500,
+            precio_minimo: 1300,
+            imagenes: [
+              'https://example.com/product-detox-1.jpg',
+              'https://example.com/product-detox-2.jpg',
+            ],
+            videos: ['https://example.com/product-detox.mp4'],
+            activo: true,
+          },
+        ],
+      },
+    },
+  });
+
+  const result = await service.processIncomingMessage('18095551234', 'tienes fotos?');
+
+  assert.equal(result.usedGallery, true);
+  assert.equal(result.mediaFiles.length, 2);
+  assert.equal(result.mediaFiles[0]?.fileType, 'image');
+  assert.doesNotMatch(result.reply.toLowerCase(), /no tengo/);
+});
+
+test('does not repeat images that were already sent to the same contact', async () => {
+  const service = createService({
+    mediaCount: 0,
+    aiReply: 'Claro, mira 👇',
+    configConfigurations: {
+      instructions: {
+        identity: {
+          assistantName: 'Aura',
+        },
+        products: [
+          {
+            id: 'detox-1',
+            titulo: 'Te Detox Premium',
+            descripcion_corta: 'Ayuda a digestion y bienestar.',
+            descripcion_completa: 'Infusion herbal para apoyar digestion y desinflamar.',
+            precio: 1500,
+            precio_minimo: 1300,
+            imagenes: [
+              'https://example.com/product-detox-1.jpg',
+              'https://example.com/product-detox-2.jpg',
+              'https://example.com/product-detox-3.jpg',
+            ],
+            videos: [],
+            activo: true,
+          },
+        ],
+      },
+    },
+  });
+
+  const first = await service.processIncomingMessage('18095551234', 'tienes fotos?');
+  const second = await service.processIncomingMessage('18095551234', 'tienes fotos?');
+
+  assert.equal(first.mediaFiles.length, 2);
+  assert.deepEqual(
+    first.mediaFiles.map((file) => file.fileUrl),
+    [
+      'https://example.com/product-detox-1.jpg',
+      'https://example.com/product-detox-2.jpg',
+    ],
+  );
+  assert.equal(second.mediaFiles.length, 1);
+  assert.equal(second.mediaFiles[0]?.fileUrl, 'https://example.com/product-detox-3.jpg');
+});
+
+test('video request uses product videos when available', async () => {
+  const service = createService({
+    mediaCount: 5,
+    configConfigurations: {
+      instructions: {
+        identity: {
+          assistantName: 'Aura',
+        },
+        products: [
+          {
+            id: 'detox-1',
+            titulo: 'Te Detox Premium',
+            descripcion_corta: 'Ayuda a digestion y bienestar.',
+            descripcion_completa: 'Infusion herbal para apoyar digestion y desinflamar.',
+            precio: 1500,
+            precio_minimo: 1300,
+            imagenes: ['https://example.com/product-detox-1.jpg'],
+            videos: ['https://example.com/product-detox.mp4'],
+            activo: true,
+          },
+        ],
+      },
+    },
+  });
+
+  const result = await service.processIncomingMessage(
+    '18095551234',
+    'mandame un video del te detox',
+  );
+
+  assert.equal(result.usedGallery, true);
+  assert.equal(result.mediaFiles.length, 1);
+  assert.equal(result.mediaFiles[0]?.fileType, 'video');
+  assert.equal(result.mediaFiles[0]?.fileUrl, 'https://example.com/product-detox.mp4');
+});
+
+test('generic video request sends a product video when available', async () => {
+  const service = createService({
+    mediaCount: 0,
+    aiReply: 'Claro, te lo mando ahora.',
+    configConfigurations: {
+      instructions: {
+        identity: {
+          assistantName: 'Aura',
+        },
+        products: [
+          {
+            id: 'detox-1',
+            titulo: 'Te Detox Premium',
+            descripcion_corta: 'Ayuda a digestion y bienestar.',
+            descripcion_completa: 'Infusion herbal para apoyar digestion y desinflamar.',
+            precio: 1500,
+            precio_minimo: 1300,
+            imagenes: ['https://example.com/product-detox-1.jpg'],
+            videos: ['https://example.com/product-detox.mp4'],
+            activo: true,
+          },
+        ],
+      },
+    },
+  });
+
+  const result = await service.processIncomingMessage('18095551234', 'tienes video?');
+
+  assert.equal(result.usedGallery, true);
+  assert.equal(result.mediaFiles.length, 1);
+  assert.equal(result.mediaFiles[0]?.fileType, 'video');
+});
+
+test('sales response attaches one product image when it helps sell', async () => {
+  const service = createService({
+    configConfigurations: {
+      instructions: {
+        identity: {
+          assistantName: 'Aura',
+        },
+        products: [
+          {
+            id: 'detox-1',
+            titulo: 'Te Detox Premium',
+            descripcion_corta: 'Ayuda a digestion y bienestar.',
+            descripcion_completa: 'Infusion herbal para apoyar digestion y desinflamar.',
+            precio: 1500,
+            precio_minimo: 1300,
+            imagenes: ['https://example.com/product-detox-1.jpg'],
+            videos: [],
+            activo: true,
+          },
+        ],
+      },
+    },
+  });
+
+  const result = await service.processIncomingMessage('18095551234', 'precio del te detox');
+
+  assert.equal(result.usedGallery, true);
+  assert.equal(result.mediaFiles.length, 1);
+  assert.equal(result.mediaFiles[0]?.fileType, 'image');
+});
+
+test('generic price question responds with price and sends one image if available', async () => {
+  const service = createService({
+    aiReply: 'Cuesta 1,500 pesos y te puede ayudar bastante si quieres rebajar.',
+    configConfigurations: {
+      instructions: {
+        identity: {
+          assistantName: 'Aura',
+        },
+        products: [
+          {
+            id: 'detox-1',
+            titulo: 'Te Detox Premium',
+            descripcion_corta: 'Ayuda a digestion y bienestar.',
+            descripcion_completa: 'Infusion herbal para apoyar digestion y desinflamar.',
+            precio: 1500,
+            precio_minimo: 1300,
+            imagenes: ['https://example.com/product-detox-1.jpg'],
+            videos: [],
+            activo: true,
+          },
+        ],
+      },
+    },
+  });
+
+  const result = await service.processIncomingMessage('18095551234', 'precio?');
+
+  assert.match(result.reply.toLowerCase(), /cuesta|pesos|precio/);
+  assert.equal(result.usedGallery, true);
+  assert.equal(result.mediaFiles.length, 1);
+  assert.equal(result.mediaFiles[0]?.fileType, 'image');
+});
+
+test('product curiosity sends an image automatically when catalog data exists', async () => {
+  const service = createService({
+    aiReply: 'Claro, esa pastilla ayuda bastante con el apetito. Te gustaria pedirla?',
+    configConfigurations: {
+      instructions: {
+        identity: {
+          assistantName: 'Aura',
+        },
+        products: [
+          {
+            id: 'pastilla-1',
+            titulo: 'Pastilla Slim',
+            descripcion_corta: 'Ayuda a controlar el apetito.',
+            descripcion_completa: 'Producto pensado para apoyar el control de apetito y la rutina diaria.',
+            precio: 1600,
+            precio_minimo: 1400,
+            imagenes: ['https://example.com/pastilla-1.jpg'],
+            videos: [],
+            activo: true,
+          },
+        ],
+      },
+    },
+  });
+
+  const result = await service.processIncomingMessage('18095551234', 'hablame de la pastilla');
+
+  assert.equal(result.usedGallery, true);
+  assert.equal(result.mediaFiles.length, 1);
+  assert.equal(result.mediaFiles[0]?.fileType, 'image');
+});
+
+test('logs the loaded products for traceability', async () => {
+  const originalConsoleLog = console.log;
+  const capturedLogs: string[] = [];
+  console.log = (...args: unknown[]) => {
+    capturedLogs.push(args.map((arg) => String(typeof arg === 'string' ? arg : JSON.stringify(arg))).join(' '));
+  };
+
+  try {
+    const service = createService({
+      configConfigurations: {
+        instructions: {
+          identity: {
+            assistantName: 'Aura',
+          },
+          products: [
+            {
+              id: 'detox-1',
+              titulo: 'Te Detox Premium',
+              descripcion_corta: 'Ayuda a digestion y bienestar.',
+              descripcion_completa: 'Infusion herbal para apoyar digestion y desinflamar.',
+              precio: 1500,
+              precio_minimo: 1300,
+              imagenes: ['https://example.com/product-detox-1.jpg'],
+              videos: ['https://example.com/product-detox.mp4'],
+              activo: true,
+            },
+          ],
+        },
+      },
+    });
+
+    await service.processIncomingMessage('18095551234', 'tienes fotos?');
+  } finally {
+    console.log = originalConsoleLog;
+  }
+
+  const joined = capturedLogs.join('\n');
+  assert.match(joined, /PRODUCTOS:/);
+  assert.match(joined, /Te Detox Premium/);
 });
 
 test('informational request after a hot lead uses AI instead of the hot close', async () => {

@@ -3,16 +3,26 @@ import 'package:flutter/material.dart';
 import '../pages/bot_prompt_config_page.dart';
 import '../pages/config_page.dart';
 import '../pages/products_page.dart';
+import '../pages/users_page.dart';
+import '../services/auth_service.dart';
 import '../services/api_client.dart';
 import '../services/api_service.dart';
 
 const String _appVersionLabel = 'v1.0.0';
 
 class DashboardShell extends StatefulWidget {
-  const DashboardShell({super.key, ApiService? apiService})
-    : _apiService = apiService;
+  const DashboardShell({
+    super.key,
+    required this.currentUser,
+    required this.authService,
+    required this.onLogout,
+    ApiService? apiService,
+  }) : _apiService = apiService;
 
   final ApiService? _apiService;
+  final AuthService authService;
+  final AuthUserData currentUser;
+  final Future<void> Function() onLogout;
 
   @override
   State<DashboardShell> createState() => _DashboardShellState();
@@ -22,6 +32,7 @@ class _DashboardShellState extends State<DashboardShell> {
   static const int _promptPageIndex = 0;
   static const int _galleryPageIndex = 1;
   static const int _configPageIndex = 2;
+  static const int _usersPageIndex = 3;
 
   int _selectedIndex = 0;
   int _mobileLastPrimaryPageIndex = 0;
@@ -35,7 +46,6 @@ class _DashboardShellState extends State<DashboardShell> {
   late Future<ClientConfigData> _overviewFuture;
 
   static const List<int> _mobileBottomNavIndices = <int>[_galleryPageIndex, _promptPageIndex];
-  static const List<int> _mobileDrawerIndices = <int>[_configPageIndex];
   static const int _mobileMainPageIndex = _promptPageIndex;
 
   @override
@@ -53,6 +63,7 @@ class _DashboardShellState extends State<DashboardShell> {
 
   @override
   Widget build(BuildContext context) {
+    final isAdmin = widget.currentUser.isAdmin;
     final pages = <Widget>[
       BotPromptConfigPage(
         key: _promptPageKey,
@@ -71,18 +82,29 @@ class _DashboardShellState extends State<DashboardShell> {
         apiService: _apiService,
         onConfigUpdated: _refreshOverview,
       ),
+      if (isAdmin)
+        UsersPage(
+          authService: widget.authService,
+          currentUser: widget.currentUser,
+        ),
     ];
 
     final labels = <String>[
       'Instrucciones',
       'Productos',
       'Configuracion',
+      if (isAdmin) 'Usuarios',
     ];
 
     final icons = <IconData>[
       Icons.auto_awesome_rounded,
       Icons.inventory_2_rounded,
       Icons.settings_rounded,
+      if (isAdmin) Icons.group_rounded,
+    ];
+    final mobileDrawerIndices = <int>[
+      if (isAdmin) _usersPageIndex,
+      _configPageIndex,
     ];
 
     final bool isMobile = MediaQuery.sizeOf(context).width < 900;
@@ -100,7 +122,7 @@ class _DashboardShellState extends State<DashboardShell> {
               selectedIndex: _selectedIndex,
               labels: labels,
               icons: icons,
-              itemIndices: _mobileDrawerIndices,
+              itemIndices: mobileDrawerIndices,
               onSelect: _selectPage,
             )
           : null,
@@ -408,16 +430,51 @@ class _DashboardShellState extends State<DashboardShell> {
                       ),
                       const SizedBox(width: 14),
                       Expanded(
-                        child: Text(
-                          'Panel de control del bot y accesos rapidos de marca.',
-                          style: const TextStyle(
-                            color: Color(0xFF334155),
-                            fontSize: 13,
-                            height: 1.45,
-                          ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: <Widget>[
+                            Text(
+                              widget.currentUser.name,
+                              style: const TextStyle(
+                                color: Color(0xFF0F172A),
+                                fontSize: 15,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              widget.currentUser.email,
+                              style: const TextStyle(
+                                color: Color(0xFF334155),
+                                fontSize: 13,
+                                height: 1.45,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              'Rol: ${widget.currentUser.role}',
+                              style: const TextStyle(
+                                color: Color(0xFF64748B),
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                     ],
+                  ),
+                  const SizedBox(height: 18),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: () async {
+                        Navigator.of(context).pop();
+                        await widget.onLogout();
+                      },
+                      icon: const Icon(Icons.logout_rounded),
+                      label: const Text('Cerrar sesión'),
+                    ),
                   ),
                 ],
               ),

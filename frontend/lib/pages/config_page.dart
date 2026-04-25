@@ -26,7 +26,7 @@ abstract class ConfigPageStateAccess {
   bool handleBackNavigation();
 }
 
-enum _ConfigSection { branding, channels, company, tools, memory }
+enum _ConfigSection { channels, company, tools, memory }
 
 class _ConfigPageState extends State<ConfigPage>
     implements ConfigPageStateAccess {
@@ -279,13 +279,6 @@ class _ConfigPageState extends State<ConfigPage>
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
           _ConfigSectionTile(
-            icon: Icons.palette_rounded,
-            title: 'Identidad visual',
-            subtitle: 'Nombre, logo y descripcion general de la marca.',
-            onTap: () => _openSection(_ConfigSection.branding),
-          ),
-          const SizedBox(height: 12),
-          _ConfigSectionTile(
             icon: Icons.hub_rounded,
             title: 'Canales',
             subtitle: 'Conexion, QR, webhook e instancias de WhatsApp.',
@@ -326,8 +319,6 @@ class _ConfigPageState extends State<ConfigPage>
 
   Widget _buildSectionDetail() {
     switch (_selectedSection) {
-      case _ConfigSection.branding:
-        return _buildBrandingDetail();
       case _ConfigSection.channels:
         return SecondaryPageLayout(
           child: Column(
@@ -363,138 +354,6 @@ class _ConfigPageState extends State<ConfigPage>
       case null:
         return const SizedBox.shrink();
     }
-  }
-
-  Widget _buildBrandingDetail() {
-    final isBusy = _isLoading || _isSaving || _isUploadingLogo;
-
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final compact = constraints.maxWidth < 640;
-        final horizontalPadding = compact ? 20.0 : 32.0;
-        final logoSize = compact ? 104.0 : 118.0;
-
-        return SecondaryPageLayout(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              _DetailBackButton(
-                label: 'Atras',
-                onTap: _closeSection,
-              ),
-              const SizedBox(height: 14),
-              const _DetailHeader(
-                title: 'Identidad visual',
-                description:
-                    'Define como se presenta la marca en el panel y en el bot.',
-              ),
-              const SizedBox(height: 18),
-              Center(
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 640),
-                  child: Padding(
-                    padding: EdgeInsets.fromLTRB(
-                      horizontalPadding,
-                      compact ? 8 : 18,
-                      horizontalPadding,
-                      16,
-                    ),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: compact
-                          ? CrossAxisAlignment.start
-                          : CrossAxisAlignment.center,
-                      children: <Widget>[
-                        Align(
-                          alignment: compact
-                              ? Alignment.centerLeft
-                              : Alignment.center,
-                          child: _EditableLogoPreview(
-                            logoUrl: _companyLogoUrl,
-                            size: logoSize,
-                            isBusy: isBusy,
-                            onTap: isBusy ? null : _pickAndUploadLogo,
-                          ),
-                        ),
-                        SizedBox(height: compact ? 18 : 20),
-                        ConstrainedBox(
-                          constraints: BoxConstraints(
-                            maxWidth: compact ? 420 : 360,
-                          ),
-                          child: Text(
-                            _isUploadingLogo
-                                ? 'Actualizando logo...'
-                                : 'Toca el logo para cambiarlo.',
-                            textAlign:
-                                compact ? TextAlign.start : TextAlign.center,
-                            style: TextStyle(
-                              color: const Color(0xFF64748B),
-                              fontSize: compact ? 11.5 : 12,
-                              fontWeight: FontWeight.w500,
-                              height: 1.4,
-                            ),
-                          ),
-                        ),
-                        SizedBox(height: compact ? 28 : 34),
-                        _ConfigInput(
-                          label: 'Nombre de la empresa',
-                          controller: _companyNameController,
-                          hintText: 'PhytoEmagry',
-                          enabled: !isBusy,
-                          compact: compact,
-                        ),
-                        SizedBox(height: compact ? 16 : 18),
-                        _ConfigInput(
-                          label: 'Informacion relevante',
-                          controller: _companyDetailsController,
-                          hintText:
-                              'Breve descripcion, propuesta de valor o datos clave.',
-                          maxLines: compact ? 5 : 4,
-                          enabled: !isBusy,
-                          compact: compact,
-                        ),
-                        SizedBox(height: compact ? 22 : 26),
-                        Wrap(
-                          alignment: compact
-                              ? WrapAlignment.start
-                              : WrapAlignment.center,
-                          spacing: 12,
-                          runSpacing: 12,
-                          children: <Widget>[
-                            ElevatedButton(
-                              onPressed: isBusy ? null : _saveConfig,
-                              style: ElevatedButton.styleFrom(
-                                padding: EdgeInsets.symmetric(
-                                  horizontal: compact ? 18 : 22,
-                                  vertical: 16,
-                                ),
-                              ),
-                              child: Text(
-                                _isSaving ? 'Guardando...' : 'Guardar cambios',
-                              ),
-                            ),
-                            OutlinedButton(
-                              onPressed: isBusy ? null : _loadConfig,
-                              style: OutlinedButton.styleFrom(
-                                padding: EdgeInsets.symmetric(
-                                  horizontal: compact ? 18 : 22,
-                                  vertical: 16,
-                                ),
-                              ),
-                              child: const Text('Recargar'),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        );
-      },
-    );
   }
 }
 

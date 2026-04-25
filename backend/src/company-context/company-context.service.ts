@@ -7,10 +7,9 @@ import {
   CompanyBankAccount,
   CompanyContextRecord,
   CompanyImageItem,
+  CompanyWorkingHour,
   DEFAULT_COMPANY_CONTEXT,
 } from './company-context.types';
-
-type CompanyContextTopic = 'location' | 'payment' | 'schedule' | 'contact';
 
 @Injectable()
 export class CompanyContextService implements OnModuleInit {
@@ -59,7 +58,7 @@ export class CompanyContextService implements OnModuleInit {
         longitude,
         googleMapsLink,
         workingHoursJson: this.asJsonValue(
-          this.normalizeObject(data.workingHoursJson, current.workingHoursJson),
+          this.normalizeWorkingHours(data.workingHoursJson, current.workingHoursJson),
         ),
         bankAccountsJson: this.asJsonValue(
           this.normalizeBankAccounts(data.bankAccountsJson, current.bankAccountsJson),
@@ -81,7 +80,7 @@ export class CompanyContextService implements OnModuleInit {
         longitude,
         googleMapsLink,
         workingHoursJson: this.asJsonValue(
-          this.normalizeObject(data.workingHoursJson, current.workingHoursJson),
+          this.normalizeWorkingHours(data.workingHoursJson, current.workingHoursJson),
         ),
         bankAccountsJson: this.asJsonValue(
           this.normalizeBankAccounts(data.bankAccountsJson, current.bankAccountsJson),
@@ -100,267 +99,104 @@ export class CompanyContextService implements OnModuleInit {
 
   async buildAgentContext(): Promise<string> {
     const context = await this.getContext();
-    const topics = this.getTopicsWithAvailableData(context);
-
-    return this.buildContextMessage(context, topics);
+    return this.buildCompanyContext(context);
   }
 
   async buildAgentContextForMessage(message: string): Promise<string> {
     const context = await this.getContext();
-    const requestedTopics = this.detectRequestedTopics(message);
+    return this.buildCompanyContext(context);
+  }
 
-    if (requestedTopics.length === 0) {
+  buildCompanyContext(context: CompanyContextRecord): string {
+    const sections: string[] = [];
+    const companyLines: string[] = [];
+
+    if (context.companyName.trim()) {
+      companyLines.push(`Nombre: ${context.companyName.trim()}`);
+    }
+    if (context.phone.trim()) {
+      companyLines.push(`Telefono: ${context.phone.trim()}`);
+    }
+    if (context.address.trim()) {
+      companyLines.push(`Direccion: ${context.address.trim()}`);
+    }
+    if (context.description.trim()) {
+      companyLines.push(`Descripcion: ${context.description.trim()}`);
+    }
+    if (context.googleMapsLink.trim()) {
+      companyLines.push(`Google Maps: ${context.googleMapsLink.trim()}`);
+    }
+
+    if (companyLines.length > 0) {
+      sections.push('EMPRESA:\n' + companyLines.join('\n'));
+    }
+
+    const scheduleBlock = this.formatWorkingHours(context.workingHoursJson);
+    if (scheduleBlock.length > 0) {
+      sections.push(`HORARIO:\n${scheduleBlock}`);
+    }
+
+    const accountsBlock = this.formatBankAccounts(context.bankAccountsJson);
+    if (accountsBlock.length > 0) {
+      sections.push(`CUENTAS:\n${accountsBlock}`);
+    }
+
+    if (sections.length === 0) {
       return '';
     }
 
-    const allowedTopics = requestedTopics.filter((topic) =>
-      this.isTopicAllowed(topic, context.usageRulesJson),
+    sections.push(
+      'Esta informacion de empresa es obligatoria dentro del conocimiento del bot. Si el cliente pregunta ubicacion, horario o pago, debes responder usando estos datos reales. Nunca ignores esta informacion cuando sea relevante y nunca inventes datos.',
     );
 
-    if (allowedTopics.length === 0) {
-      return '';
-    }
-
-    return this.buildContextMessage(context, allowedTopics);
+    return sections.join('\n\n');
   }
 
-  private buildContextMessage(
-    context: CompanyContextRecord,
-    topics: CompanyContextTopic[],
-  ): string {
-    const payload = {
-      company_name: context.companyName,
-      ...(topics.includes('contact')
-        ? {
-            phone: context.phone,
-            whatsapp: context.whatsapp,
-          }
-        : {}),
-      ...(topics.includes('location')
-        ? {
-            address: context.address,
-            latitude: context.latitude,
-            longitude: context.longitude,
-            google_maps_link: context.googleMapsLink,
-          }
-        : {}),
-      ...(topics.includes('schedule')
-        ? {
-            working_hours_json: context.workingHoursJson,
-          }
-        : {}),
-      ...(topics.includes('payment')
-        ? {
-            bank_accounts_json: context.bankAccountsJson,
-          }
-        : {}),
-      usage_rules_json: this.pickUsageRules(context.usageRulesJson, topics),
-    };
+  private formatWorkingHours(value: CompanyWorkingHour[]): string {
+    const lines = value
+      .map((item) => {
+        const day = this.normalizeUnknownText(item.day);
+        if (!day) {
+          return '';
+        }
 
-    if (!this.hasUsefulScopedPayload(payload)) {
-      return '';
-    }
+        if (!item.open) {
+          return `- ${this.formatDayLabel(day)}: cerrado`;
+        }
 
-    return [
-      'CONTEXTO_EMPRESA',
-      'Este bloque es contexto dinamico complementario. No reemplaza el prompt principal del bot.',
-      'Antes de usar cualquier dato, lee usage_rules_json, detecta la intencion del cliente y decide si corresponde usar la informacion.',
-      'No uses informacion de la empresa si no hace falta. No repitas datos innecesarios.',
-      this.buildScopedUsageHint(topics),
-      JSON.stringify(payload, null, 2),
-    ].join('\n\n');
+        const from = this.normalizeUnknownText(item.from);
+        const to = this.normalizeUnknownText(item.to);
+        if (from && to) {
+          return `- ${this.formatDayLabel(day)}: ${from} - ${to}`;
+        }
+
+        return `- ${this.formatDayLabel(day)}: abierto`;
+      })
+      .filter((line) => line.length > 0);
+
+    return lines.join('\n');
   }
 
-  private buildScopedUsageHint(topics: CompanyContextTopic[]): string {
-    const hints: string[] = [];
+  private formatBankAccounts(value: CompanyBankAccount[]): string {
+    const blocks = value
+      .map((item) => {
+        const lines = [
+          item.bank ? `Banco: ${item.bank}` : '',
+          item.accountType ? `Tipo: ${item.accountType}` : '',
+          item.number ? `Numero: ${item.number}` : '',
+          item.holder ? `Titular: ${item.holder}` : '',
+          item.image ? `Soporte: ${item.image}` : '',
+        ].filter((line) => line.length > 0);
 
-    if (topics.includes('location')) {
-      hints.push('Si el cliente pide ubicacion, prioriza google_maps_link y la direccion.');
-    }
+        if (lines.length === 0) {
+          return '';
+        }
 
-    if (topics.includes('schedule')) {
-      hints.push('Si el cliente pregunta horario, usa working_hours_json.');
-    }
+        return `- ${lines.join(' | ')}`;
+      })
+      .filter((item) => item.length > 0);
 
-    if (topics.includes('payment')) {
-      hints.push('Si el cliente quiere pagar o pregunta como pagar, usa bank_accounts_json.');
-    }
-
-    if (topics.includes('contact')) {
-      hints.push('Si el cliente pide contacto directo, usa phone y whatsapp.');
-    }
-
-    return hints.join(' ');
-  }
-
-  private hasUsefulScopedPayload(payload: Record<string, unknown>): boolean {
-    return Object.entries(payload).some(([key, value]) => {
-      if (key === 'company_name' || key === 'usage_rules_json') {
-        return false;
-      }
-
-      if (typeof value === 'string') {
-        return value.trim().length > 0;
-      }
-
-      if (Array.isArray(value)) {
-        return value.length > 0;
-      }
-
-      if (value && typeof value === 'object') {
-        return Object.keys(value).length > 0;
-      }
-
-      return value !== null && value !== undefined;
-    });
-  }
-
-  private detectRequestedTopics(message: string): CompanyContextTopic[] {
-    const normalized = message.trim().toLowerCase();
-    if (!normalized) {
-      return [];
-    }
-
-    const topics = new Set<CompanyContextTopic>();
-
-    if (
-      [
-        'donde estan',
-        'dónde están',
-        'ubicacion',
-        'ubicación',
-        'ubicados',
-        'direccion',
-        'dirección',
-        'mapa',
-        'local',
-        'sucursal',
-      ].some((keyword) => normalized.includes(keyword))
-    ) {
-      topics.add('location');
-    }
-
-    if (
-      [
-        'como pago',
-        'cómo pago',
-        'pagar',
-        'pago',
-        'transferencia',
-        'deposito',
-        'depósito',
-        'cuenta bancaria',
-        'cuentas bancarias',
-        'banco',
-      ].some((keyword) => normalized.includes(keyword))
-    ) {
-      topics.add('payment');
-    }
-
-    if (
-      [
-        'horario',
-        'hora trabajan',
-        'horas trabajan',
-        'a que hora',
-        'a qué hora',
-        'abren',
-        'cierran',
-        'atienden',
-      ].some((keyword) => normalized.includes(keyword))
-    ) {
-      topics.add('schedule');
-    }
-
-    if (
-      ['telefono', 'teléfono', 'whatsapp', 'contacto', 'llamar', 'numero', 'número'].some(
-        (keyword) => normalized.includes(keyword),
-      )
-    ) {
-      topics.add('contact');
-    }
-
-    return Array.from(topics);
-  }
-
-  private isTopicAllowed(
-    topic: CompanyContextTopic,
-    usageRules: Record<string, unknown>,
-  ): boolean {
-    const ruleKey = this.getRuleKey(topic);
-    const ruleValue = usageRules[ruleKey];
-
-    if (typeof ruleValue !== 'string') {
-      return true;
-    }
-
-    const normalizedRule = ruleValue.trim().toLowerCase();
-    if (!normalizedRule) {
-      return true;
-    }
-
-    return ![
-      'nunca',
-      'never',
-      'disabled',
-      'desactivado',
-      'false',
-      'no_enviar',
-      'prohibido',
-    ].some((keyword) => normalizedRule.includes(keyword));
-  }
-
-  private getRuleKey(topic: CompanyContextTopic): string {
-    switch (topic) {
-      case 'location':
-        return 'send_location';
-      case 'payment':
-        return 'send_bank_accounts';
-      case 'schedule':
-        return 'send_schedule';
-      case 'contact':
-        return 'send_contact';
-    }
-  }
-
-  private pickUsageRules(
-    usageRules: Record<string, unknown>,
-    topics: CompanyContextTopic[],
-  ): Record<string, unknown> {
-    const next: Record<string, unknown> = {};
-
-    for (const topic of topics) {
-      const key = this.getRuleKey(topic);
-      if (usageRules[key] !== undefined) {
-        next[key] = usageRules[key];
-      }
-    }
-
-    return next;
-  }
-
-  private getTopicsWithAvailableData(context: CompanyContextRecord): CompanyContextTopic[] {
-    const topics: CompanyContextTopic[] = [];
-
-    if (context.phone.trim() || context.whatsapp.trim()) {
-      topics.push('contact');
-    }
-    if (
-      context.address.trim() ||
-      context.googleMapsLink.trim() ||
-      context.latitude !== null ||
-      context.longitude !== null
-    ) {
-      topics.push('location');
-    }
-    if (Object.keys(context.workingHoursJson).length > 0) {
-      topics.push('schedule');
-    }
-    if (context.bankAccountsJson.length > 0) {
-      topics.push('payment');
-    }
-
-    return topics;
+    return blocks.join('\n');
   }
 
   private ensureContext() {
@@ -416,7 +252,7 @@ export class CompanyContextService implements OnModuleInit {
       latitude: record.latitude,
       longitude: record.longitude,
       googleMapsLink: record.googleMapsLink,
-      workingHoursJson: this.normalizeObject(record.workingHoursJson, {}),
+      workingHoursJson: this.normalizeWorkingHours(record.workingHoursJson, []),
       bankAccountsJson: this.normalizeBankAccounts(record.bankAccountsJson, []),
       imagesJson: this.normalizeImages(record.imagesJson, []),
       usageRulesJson: this.normalizeObject(record.usageRulesJson, {}),
@@ -476,6 +312,40 @@ export class CompanyContextService implements OnModuleInit {
     }
 
     return { ...(value as Record<string, unknown>) };
+  }
+
+  private normalizeWorkingHours(
+    value: unknown,
+    fallback: CompanyWorkingHour[],
+  ): CompanyWorkingHour[] {
+    if (!Array.isArray(value)) {
+      return fallback;
+    }
+
+    return value
+      .map((item) => {
+        if (!item || typeof item !== 'object') {
+          return null;
+        }
+
+        const record = item as Record<string, unknown>;
+        const day = this.normalizeUnknownText(record.day);
+        const from = this.normalizeUnknownText(record.from);
+        const to = this.normalizeUnknownText(record.to);
+        const open = typeof record.open === 'boolean' ? record.open : false;
+
+        if (!day) {
+          return null;
+        }
+
+        return {
+          day,
+          open,
+          ...(from ? { from } : {}),
+          ...(to ? { to } : {}),
+        };
+      })
+      .filter((item): item is CompanyWorkingHour => item !== null);
   }
 
   private normalizeBankAccounts(
@@ -540,5 +410,28 @@ export class CompanyContextService implements OnModuleInit {
 
   private normalizeUnknownText(value: unknown): string {
     return typeof value === 'string' ? value.trim() : '';
+  }
+
+  private formatDayLabel(day: string): string {
+    switch (day.trim().toLowerCase()) {
+      case 'lunes':
+        return 'Lunes';
+      case 'martes':
+        return 'Martes';
+      case 'miercoles':
+      case 'miércoles':
+        return 'Miercoles';
+      case 'jueves':
+        return 'Jueves';
+      case 'viernes':
+        return 'Viernes';
+      case 'sabado':
+      case 'sábado':
+        return 'Sabado';
+      case 'domingo':
+        return 'Domingo';
+      default:
+        return day;
+    }
   }
 }

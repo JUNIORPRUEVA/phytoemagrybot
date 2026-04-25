@@ -1946,7 +1946,7 @@ test('processIncomingAudioMessage sends text when bot replyType is text', async 
   assert.equal(sentAudios.length, 0);
 });
 
-test('processIncomingAudioMessage answers long audios as text replies', async () => {
+test('processIncomingAudioMessage answers long audios with audio replies', async () => {
   const { service, sentTexts, sentAudios, botService } = createAudioFlowService();
 
   botService.processIncomingMessage = async () => ({
@@ -1979,9 +1979,9 @@ test('processIncomingAudioMessage answers long audios as text replies', async ()
     rawPayload: {},
   });
 
-  assert.equal(sentTexts.length, 1);
-  assert.equal(sentTexts[0]?.text, 'Te respondo por audio.');
-  assert.equal(sentAudios.length, 0);
+  assert.equal(sentTexts.length, 0);
+  assert.equal(sentAudios.length, 1);
+  assert.equal(sentAudios[0]?.to, '18095551234@s.whatsapp.net');
 });
 
 test('processAndDeliverMessage keeps text delivery even when preferAudioReply is true', async () => {
@@ -2003,7 +2003,63 @@ test('processAndDeliverMessage keeps text delivery even when preferAudioReply is
   assert.equal(sentAudios.length, 0);
 });
 
-test('processAndDeliverMessage can send media and then a text reply', async () => {
+test('processAndDeliverMessage sends text before media when reply type is text', async () => {
+  const { service, sentTexts, sentAudios, botService } = createAudioFlowService();
+  const deliveryOrder: string[] = [];
+
+  botService.processIncomingMessage = async () => ({
+    reply: 'Claro, mira esta referencia y dime si te la envio.',
+    replyType: 'text',
+    mediaFiles: [{
+      id: 1,
+      title: 'producto-1',
+      description: null,
+      fileUrl: 'https://example.com/producto-1.jpg',
+      fileType: 'image',
+      createdAt: new Date(),
+    }],
+    intent: 'interes',
+    decisionIntent: 'info',
+    stage: 'interesado',
+    action: 'guiar',
+    purchaseIntentScore: 40,
+    hotLead: false,
+    cached: false,
+    usedGallery: true,
+    usedMemory: false,
+    source: 'ai',
+  });
+  service.sendTextReliably = async (_resolved: unknown, to: string, text: string) => {
+    deliveryOrder.push(`text:${to}:${text}`);
+    sentTexts.push({ to, text });
+  };
+  service.deliverMatchedMedia = async (
+    _resolved: unknown,
+    to: string,
+    mediaFiles: Array<{ fileUrl: string }>,
+  ) => {
+    deliveryOrder.push(`media:${to}:${mediaFiles[0]?.fileUrl ?? ''}`);
+  };
+
+  await service.processAndDeliverMessage(
+    createResolvedConfig(),
+    '18095551234',
+    'quiero ver la pastilla',
+    'text',
+    {
+      outboundAddress: '18095551234@s.whatsapp.net',
+    },
+  );
+
+  assert.equal(sentTexts.length, 1);
+  assert.equal(sentAudios.length, 0);
+  assert.deepEqual(deliveryOrder, [
+    'text:18095551234@s.whatsapp.net:Claro, mira esta referencia y dime si te la envio.',
+    'media:18095551234@s.whatsapp.net:https://example.com/producto-1.jpg',
+  ]);
+});
+
+test('processAndDeliverMessage can send media and then one audio reply', async () => {
   const { service, sentTexts, sentAudios, botService } = createAudioFlowService();
   const deliveredMedia: string[] = [];
 
@@ -2049,9 +2105,9 @@ test('processAndDeliverMessage can send media and then a text reply', async () =
   );
 
   assert.equal(deliveredMedia.length, 1);
-  assert.equal(sentTexts.length, 1);
-  assert.equal(sentTexts[0]?.text, 'Te mando las fotos y te explico por audio.');
-  assert.equal(sentAudios.length, 0);
+  assert.equal(sentTexts.length, 0);
+  assert.equal(sentAudios.length, 1);
+  assert.equal(sentAudios[0]?.to, '18095551234@s.whatsapp.net');
 });
 
 test('processAndDeliverMessage falls back to text when media delivery fails', async () => {
@@ -2098,6 +2154,56 @@ test('processAndDeliverMessage falls back to text when media delivery fails', as
   assert.equal(sentAudios.length, 0);
 });
 
+test('processAndDeliverMessage blocks consecutive audio replies and sends text instead', async () => {
+  const { service, sentTexts, sentAudios, botService, redisService } = createAudioFlowService();
+  const redisStore = new Map<string, string>();
+
+  redisService.get = async (key: string) => redisStore.get(key) ?? null;
+  redisService.set = async (key: string, value: string) => {
+    redisStore.set(key, value);
+  };
+
+  botService.processIncomingMessage = async () => ({
+    reply: 'Claro, te explico bien como funciona.',
+    replyType: 'audio',
+    mediaFiles: [],
+    intent: 'otro',
+    decisionIntent: 'curioso',
+    stage: 'curioso',
+    action: 'guiar',
+    purchaseIntentScore: 0,
+    hotLead: false,
+    cached: false,
+    usedGallery: false,
+    usedMemory: false,
+    source: 'ai',
+  });
+
+  await service.processAndDeliverMessage(
+    createResolvedConfig(),
+    '18095551234',
+    'explicame bien como funciona',
+    'audio',
+    {
+      outboundAddress: '18095551234@s.whatsapp.net',
+    },
+  );
+
+  await service.processAndDeliverMessage(
+    createResolvedConfig(),
+    '18095551234',
+    'explicame otra vez como funciona',
+    'audio',
+    {
+      outboundAddress: '18095551234@s.whatsapp.net',
+    },
+  );
+
+  assert.equal(sentAudios.length, 1);
+  assert.equal(sentTexts.length, 1);
+  assert.equal(sentTexts[0]?.text, 'Claro, te explico bien como funciona.');
+});
+
 test('prepareReplyForVoice removes emojis and leaves spoken punctuation', () => {
   const service = createService();
 
@@ -2109,7 +2215,7 @@ test('prepareReplyForVoice removes emojis and leaves spoken punctuation', () => 
 });
 
 test('processAndDeliverMessage rewrites the text before generating voice', async () => {
-  const { service, voiceService, botService } = createAudioFlowService();
+  const { service, voiceService, botService, sentAudios } = createAudioFlowService();
   let preparedText = '';
 
   botService.processIncomingMessage = async () => ({
@@ -2144,7 +2250,52 @@ test('processAndDeliverMessage rewrites the text before generating voice', async
     },
   );
 
-  assert.equal(preparedText, '');
+  assert.equal(preparedText, 'Te ayudo ahora mismo.');
+  assert.equal(sentAudios.length, 1);
+});
+
+test('processAndDeliverMessage falls back to text when audio generation exceeds 3 seconds', async () => {
+  const { service, voiceService, botService, sentTexts, sentAudios } = createAudioFlowService();
+
+  botService.processIncomingMessage = async () => ({
+    reply: 'Claro, te explico bien como funciona.',
+    replyType: 'audio',
+    mediaFiles: [],
+    intent: 'otro',
+    decisionIntent: 'curioso',
+    stage: 'curioso',
+    action: 'guiar',
+    purchaseIntentScore: 0,
+    hotLead: false,
+    cached: false,
+    usedGallery: false,
+    usedMemory: false,
+    source: 'ai',
+  });
+
+  voiceService.generateVoice = async () => new Promise((resolve) => {
+    setTimeout(() => {
+      resolve({
+        buffer: Buffer.from('late-audio'),
+        fileName: 'reply.mp3',
+        mimetype: 'audio/mpeg',
+      });
+    }, 3100);
+  });
+
+  await service.processAndDeliverMessage(
+    createResolvedConfig(),
+    '18095551234',
+    'explicame bien como funciona',
+    'audio',
+    {
+      outboundAddress: '18095551234@s.whatsapp.net',
+    },
+  );
+
+  assert.equal(sentAudios.length, 0);
+  assert.equal(sentTexts.length, 1);
+  assert.equal(sentTexts[0]?.text, 'Claro, te explico bien como funciona.');
 });
 
 test('processAndDeliverMessage retries text delivery after a transient send failure', async () => {

@@ -10,7 +10,7 @@ class _FakeApiService extends ApiService {
 
   String? savedCompanyName;
   String? savedGoogleMapsLink;
-  Map<String, dynamic>? savedWorkingHours;
+  List<Map<String, dynamic>>? savedWorkingHours;
   Map<String, dynamic>? savedUsageRules;
   String? savedCompanyLogoUrl;
   final Map<String, dynamic> initialUsageRules;
@@ -26,6 +26,8 @@ class _FakeApiService extends ApiService {
     required String companyName,
     required String companyDetails,
     required String companyLogoUrl,
+    String companyPrimaryColor = '#2563EB',
+    String companySecondaryColor = '#0EA5E9',
   }) async {
     savedCompanyLogoUrl = companyLogoUrl;
     _config = ClientConfigData(
@@ -66,6 +68,8 @@ class _FakeApiService extends ApiService {
       companyName: companyName,
       companyDetails: companyDetails,
       companyLogoUrl: companyLogoUrl,
+      companyPrimaryColor: companyPrimaryColor,
+      companySecondaryColor: companySecondaryColor,
     );
     return _config;
   }
@@ -82,9 +86,14 @@ class _FakeApiService extends ApiService {
       latitude: 18.486058,
       longitude: -69.931212,
       googleMapsLink: 'https://www.google.com/maps?q=18.486058,-69.931212',
-      workingHoursJson: <String, dynamic>{
-        'lunes_viernes': '8:00 AM - 6:00 PM',
-      },
+      workingHoursJson: <Map<String, dynamic>>[
+        <String, dynamic>{
+          'day': 'lunes',
+          'open': true,
+          'from': '08:00',
+          'to': '18:00',
+        },
+      ],
       bankAccountsJson: <CompanyBankAccountData>[
         CompanyBankAccountData(
           bank: 'Banreservas',
@@ -111,7 +120,7 @@ class _FakeApiService extends ApiService {
     required String googleMapsLink,
     required double? latitude,
     required double? longitude,
-    required Map<String, dynamic> workingHoursJson,
+    required List<Map<String, dynamic>> workingHoursJson,
     required List<Map<String, dynamic>> bankAccountsJson,
     required List<Map<String, dynamic>> imagesJson,
     required Map<String, dynamic> usageRulesJson,
@@ -130,7 +139,7 @@ class _FakeApiService extends ApiService {
       address: address,
       latitude: latitude,
       longitude: longitude,
-        googleMapsLink: googleMapsLink,
+      googleMapsLink: googleMapsLink,
       workingHoursJson: workingHoursJson,
       bankAccountsJson: bankAccountsJson
           .map(CompanyBankAccountData.fromJson)
@@ -167,17 +176,17 @@ void main() {
 
     await tester.pumpAndSettle();
 
-    expect(find.text('Datos basicos'), findsOneWidget);
-    expect(find.text('Contacto'), findsOneWidget);
+    expect(find.text('Identidad Visual'), findsOneWidget);
+    expect(find.text('Datos Basicos'), findsOneWidget);
+    expect(find.text('Horarios'), findsOneWidget);
+    expect(find.text('Cuentas Bancarias'), findsOneWidget);
     expect(find.text('Ubicacion'), findsOneWidget);
-    expect(find.text('Cuentas bancarias'), findsOneWidget);
 
-    await tester.tap(find.text('Datos basicos'));
+    await tester.tap(find.text('Datos Basicos'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Logo'), findsOneWidget);
     await tester.enterText(find.byType(TextField).first, 'Phyto Emagry RD');
-    await tester.tap(find.widgetWithText(OutlinedButton, 'Atras'));
+    await tester.tap(find.widgetWithText(TextButton, 'Atras'));
     await tester.pumpAndSettle();
 
     await tester.tap(find.text('Ubicacion'));
@@ -193,7 +202,9 @@ void main() {
 
     expect(apiService.savedCompanyName, 'Phyto Emagry RD');
     expect(apiService.savedGoogleMapsLink, 'https://maps.app.goo.gl/demo123');
-    expect(apiService.savedWorkingHours?['lunes_viernes'], '8:00 AM - 6:00 PM');
+  expect(apiService.savedWorkingHours?.first['day'], 'lunes');
+  expect(apiService.savedWorkingHours?.first['from'], '08:00');
+  expect(apiService.savedWorkingHours?.first['to'], '18:00');
     expect(apiService.savedUsageRules?['send_location'], 'solo_si_cliente_la_pide');
     expect(apiService.savedCompanyLogoUrl, isNotNull);
     expect(refreshCount, 1);

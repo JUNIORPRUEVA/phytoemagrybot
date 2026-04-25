@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule as NestConfigModule } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
 import { AiModule } from './ai/ai.module';
+import { AuthModule } from './auth/auth.module';
 import { BotModule } from './bot/bot.module';
 import { BotConfigModule } from './bot-config/bot-config.module';
 import { CompanyContextModule } from './company-context/company-context.module';
@@ -13,6 +14,7 @@ import { MediaModule } from './media/media.module';
 import { MemoryModule } from './memory/memory.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { RedisModule } from './redis/redis.module';
+import { UsersModule } from './users/users.module';
 import { WhatsAppModule } from './whatsapp/whatsapp.module';
 
 @Module({
@@ -21,6 +23,8 @@ import { WhatsAppModule } from './whatsapp/whatsapp.module';
     ScheduleModule.forRoot(),
     PrismaModule,
     RedisModule,
+    AuthModule,
+    UsersModule,
     ClientConfigModule,
     BotConfigModule,
     CompanyContextModule,

@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 
+import 'package:dashboard_pwa/services/auth_service.dart';
+import 'package:dashboard_pwa/services/api_client.dart';
 import 'package:dashboard_pwa/services/api_service.dart';
 import 'package:dashboard_pwa/widgets/dashboard_shell.dart';
 
@@ -28,17 +30,64 @@ void main() {
     final binding = TestWidgetsFlutterBinding.ensureInitialized();
     await binding.setSurfaceSize(const Size(1600, 1100));
     final apiService = ApiService(client: _FakeClient());
+    final authService = AuthService(
+      baseUrl: apiService.baseUrl,
+      apiClient: ApiClient(baseUrl: apiService.baseUrl, client: _FakeClient()),
+    );
 
     await tester.pumpWidget(
       MaterialApp(
-        home: DashboardShell(apiService: apiService),
+        home: DashboardShell(
+          apiService: apiService,
+          authService: authService,
+          currentUser: const AuthUserData(
+            id: 'user-1',
+            name: 'Admin Demo',
+            email: 'admin@phyto.com',
+            phone: null,
+            role: 'admin',
+            isActive: true,
+          ),
+          onLogout: () async {},
+        ),
       ),
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Centro de operaciones del bot'), findsOneWidget);
-    expect(find.text('Configuración total'), findsOneWidget);
+    expect(find.text('Instrucciones'), findsWidgets);
+    expect(find.text('Productos'), findsWidgets);
 
     await binding.setSurfaceSize(null);
+  });
+
+  testWidgets('dashboard shell hides users section for non-admin users', (
+    WidgetTester tester,
+  ) async {
+    final apiService = ApiService(client: _FakeClient());
+    final authService = AuthService(
+      baseUrl: apiService.baseUrl,
+      apiClient: ApiClient(baseUrl: apiService.baseUrl, client: _FakeClient()),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DashboardShell(
+          apiService: apiService,
+          authService: authService,
+          currentUser: const AuthUserData(
+            id: 'user-2',
+            name: 'Vendedor Demo',
+            email: 'ventas@phyto.com',
+            phone: null,
+            role: 'vendedor',
+            isActive: true,
+          ),
+          onLogout: () async {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Usuarios'), findsNothing);
   });
 }

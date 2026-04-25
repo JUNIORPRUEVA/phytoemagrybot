@@ -6,6 +6,13 @@ export interface CompanyBankAccount {
   image: string;
 }
 
+export interface CompanyWorkingHour {
+  day: string;
+  open: boolean;
+  from?: string;
+  to?: string;
+}
+
 export interface CompanyImageItem {
   url: string;
 }
@@ -20,7 +27,7 @@ export interface CompanyContextRecord {
   latitude: number | null;
   longitude: number | null;
   googleMapsLink: string;
-  workingHoursJson: Record<string, unknown>;
+  workingHoursJson: CompanyWorkingHour[];
   bankAccountsJson: CompanyBankAccount[];
   imagesJson: CompanyImageItem[];
   usageRulesJson: Record<string, unknown>;
@@ -37,7 +44,7 @@ export const DEFAULT_COMPANY_CONTEXT = {
   latitude: null,
   longitude: null,
   googleMapsLink: '',
-  workingHoursJson: {},
+  workingHoursJson: [],
   bankAccountsJson: [],
   imagesJson: [],
   usageRulesJson: {},
