@@ -308,6 +308,95 @@ test('generic product references assume the Phytoemagry product automatically', 
   assert.match(companyContext, /Phytoemagry Caps/);
 });
 
+test('generic product references use the active product from memory before guessing', async () => {
+  let capturedParams: Record<string, unknown> | null = null;
+  const service = createService({
+    configConfigurations: {
+      instructions: {
+        identity: {
+          assistantName: 'Aura',
+        },
+        products: [
+          {
+            id: 'other-1',
+            titulo: 'Otro Producto',
+            descripcion_corta: 'Otro producto de prueba.',
+            precio: 'RD$900',
+            activo: true,
+          },
+          {
+            id: 'phyto-1',
+            titulo: 'Phytoemagry Caps',
+            descripcion_corta: 'Ayuda con control de apetito.',
+            precio: 'RD$1,500',
+            activo: true,
+          },
+        ],
+      },
+    },
+    memoryContext: {
+      messages: [
+        { role: 'user', content: 'háblame de Otro Producto' },
+        { role: 'assistant', content: 'Otro Producto cuesta RD$900 y te explico cómo se usa si quieres.' },
+      ],
+    },
+    onGenerateReply: (params) => {
+      capturedParams = params;
+    },
+  });
+
+  await service.processIncomingMessage('18095550008', 'esa pastilla me interesa');
+
+  const companyContext = String((capturedParams as { companyContext?: string } | null)?.companyContext ?? '');
+  assert.match(companyContext, /Otro Producto/);
+  assert.doesNotMatch(companyContext, /Phytoemagry Caps/);
+});
+
+test('filters price requests down to instructions plus relevant product price only', async () => {
+  let capturedParams: Record<string, unknown> | null = null;
+  const service = createService({
+    configConfigurations: {
+      instructions: {
+        identity: {
+          assistantName: 'Aura',
+          role: 'Asesora comercial',
+          tone: 'Cercana',
+        },
+        products: [
+          {
+            id: 'other-1',
+            titulo: 'Otro Producto',
+            descripcion_corta: 'Otro producto de prueba.',
+            precio: 'RD$900',
+            activo: true,
+          },
+          {
+            id: 'phyto-1',
+            titulo: 'Phytoemagry Caps',
+            descripcion_corta: 'Ayuda con control de apetito.',
+            descripcion_completa: 'Tomar siguiendo la dosis indicada.',
+            precio: 'RD$1,500',
+            activo: true,
+          },
+        ],
+      },
+    },
+    onGenerateReply: (params) => {
+      capturedParams = params;
+    },
+  });
+
+  await service.processIncomingMessage('18095550009', 'precio de phytoemagry');
+
+  const companyContext = String((capturedParams as { companyContext?: string } | null)?.companyContext ?? '');
+  assert.match(companyContext, /\[INSTRUCCIONES\]/);
+  assert.match(companyContext, /\[PRODUCTO_RELEVANTE\]/);
+  assert.match(companyContext, /Phytoemagry Caps/);
+  assert.match(companyContext, /Precio: RD\$1,500/);
+  assert.doesNotMatch(companyContext, /Otro Producto/);
+  assert.doesNotMatch(companyContext, /\[EMPRESA\]/);
+});
+
 test('does not rewrite or validate-block the AI reply after generation', async () => {
   const rawReply = 'Claro, dime qué necesitas.';
   const service = createService({
@@ -352,27 +441,38 @@ test('regenerates once with variation when the new reply is too similar to the p
   assert.match(regenerationInstructions[1] ?? '', /demasiado parecida/i);
 });
 
-test('if the first generation fails, it retries through the emergency AI path instead of a fixed reply', async () => {
-  let calls = 0;
+test('keeps filtered knowledge under the 2000 character cap', async () => {
+  let capturedParams: Record<string, unknown> | null = null;
   const service = createService({
-    generateReply: async () => {
-      calls += 1;
-      if (calls === 1) {
-        throw new Error('temporary AI failure');
-      }
-
-      return {
-        type: 'text',
-        content: 'Phytoemagry Caps ayuda con control de apetito y te explico rápido cómo se usa si quieres.',
-      };
+    configConfigurations: {
+      instructions: {
+        identity: {
+          assistantName: 'Aura',
+          role: 'Asesora comercial con mucho detalle y varias reglas internas para responder humano',
+          tone: 'Cercana y muy explicativa',
+        },
+        rules: Array.from({ length: 20 }, (_, index) => `Regla extensa ${index + 1} con detalles para no inventar datos ni salir del contexto.`),
+        products: [
+          {
+            id: 'phyto-1',
+            titulo: 'Phytoemagry Caps',
+            descripcion_corta: 'Ayuda con control de apetito y apoyo al proceso de rebajar con una descripción bastante larga para forzar recorte.',
+            descripcion_completa: 'Tomar siguiendo la dosis indicada y mantener constancia. Esta descripción también es larga para comprobar que el filtro compacta antes de enviar a la IA.',
+            precio: 'RD$1,500',
+            activo: true,
+          },
+        ],
+      },
+    },
+    onGenerateReply: (params) => {
+      capturedParams = params;
     },
   });
 
-  const result = await service.processIncomingMessage('18095550006', 'hola, dame info');
+  await service.processIncomingMessage('18095550010', 'como se usa phytoemagry?');
 
-  assert.equal(calls, 2);
-  assert.equal(result.source, 'ai');
-  assert.match(result.reply, /Phytoemagry Caps/);
+  const companyContext = String((capturedParams as { companyContext?: string } | null)?.companyContext ?? '');
+  assert.ok(companyContext.length <= 2000);
 });
 
 test('buy-intent messages stay in the direct AI flow and keep hotLead metadata', async () => {

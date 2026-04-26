@@ -78,7 +78,7 @@ interface ThinkingAnalysis {
 }
 
 interface SimpleThinkingResult {
-  intent: 'info' | 'compra' | 'duda';
+  intent: 'saludo' | 'precio' | 'uso' | 'beneficios' | 'compra' | 'info';
   contexto: string;
   usarProducto: boolean;
   tonoUsuario: 'neutral' | 'curioso' | 'directo' | 'urgente' | 'esceptico';
@@ -237,17 +237,6 @@ export class BotService {
       const botConfig = await this.botConfigService.getConfig();
       const memoryWindow = config.aiSettings?.memoryWindow ?? 6;
       const allProducts = this.getProductsFromConfig(config);
-      const relevantProducts = this.resolveSimpleRelevantProducts(allProducts, normalizedMessage);
-      console.log('PRODUCTOS:', allProducts);
-      console.log('PRODUCTOS_RELEVANTES:', relevantProducts);
-
-      const relevantProduct = relevantProducts[0] ?? null;
-      const knowledgeContext = await this.getRequiredKnowledgeContext(
-        config,
-        botConfig,
-        normalizedMessage,
-        relevantProducts,
-      );
 
       await this.memoryService.saveMessage({
         contactId: normalizedContactId,
@@ -266,6 +255,12 @@ export class BotService {
         normalizedMessage,
       );
       const conversationMemory = await this.getConversationMemory(normalizedContactId, history);
+      const relevantProducts = this.resolveSimpleRelevantProducts(
+        allProducts,
+        normalizedMessage,
+        history,
+      );
+      const relevantProduct = relevantProducts[0] ?? null;
       const usedMemory = this.hasUsefulMemory(memoryContext, history.length) || conversationMemory.lastMessages.length > 0;
       const simpleThinking = this.thinkSimple({
         message: normalizedMessage,
@@ -273,6 +268,15 @@ export class BotService {
         relevantProducts,
         allProducts,
       });
+      const knowledgeContext = await this.buildSimpleKnowledgeContext({
+        config,
+        botConfig,
+        message: normalizedMessage,
+        relevantProduct,
+        simpleThinking,
+      });
+      console.log('PRODUCTOS:', allProducts);
+      console.log('PRODUCTOS_RELEVANTES:', relevantProducts);
       console.log('PENSADOR:', simpleThinking);
       await this.redisService.set(
         this.getAnalysisCacheKey(normalizedContactId),
@@ -292,7 +296,7 @@ export class BotService {
 
       console.log('USANDO IA:', true);
       console.log('CONTEXTO LENGTH:', knowledgeContext.length);
-      console.log('EMPRESA CONTEXTO:', knowledgeContext);
+      console.log('CONTEXTO FILTRADO:', knowledgeContext);
 
       const compactFullPrompt = this.limitText(this.botConfigService.getFullPrompt(botConfig), 1200);
 
@@ -310,7 +314,7 @@ export class BotService {
         contactId: normalizedContactId,
         message: normalizedMessage,
         history,
-        context: this.buildSimpleAiContext(knowledgeContext, memoryContext, conversationMemory, simpleThinking),
+        context: this.buildSimpleAiContext(memoryContext, conversationMemory, simpleThinking, relevantProduct),
         classifiedIntent: decision.intent,
         decisionAction: decision.action,
         purchaseIntentScore: decision.purchaseIntentScore,
@@ -555,13 +559,18 @@ export class BotService {
   private resolveSimpleRelevantProducts(
     allProducts: StructuredProduct[],
     message: string,
+    history: StoredMessage[] = [],
   ): StructuredProduct[] {
     const directMatches = this.applySingleActiveProductAssumption(
       allProducts,
       this.filterRelevantProducts(allProducts, message),
-    );
+    ).sort((left, right) => this.scoreSimpleProductMatch(right, message) - this.scoreSimpleProductMatch(left, message));
     if (directMatches.length > 0) {
       return directMatches;
+    }
+
+    if (allProducts.length === 1) {
+      return [allProducts[0]];
     }
 
     const normalized = this.normalizeTextForMatch(message);
@@ -570,11 +579,58 @@ export class BotService {
       return [];
     }
 
+    const activeProduct = this.findActiveProductFromHistory(allProducts, history);
+    if (activeProduct) {
+      return [activeProduct];
+    }
+
     const phytoProduct = allProducts.find((product) =>
       this.normalizeTextForMatch(product.titulo).includes('phytoemagry'),
     );
 
     return [phytoProduct ?? allProducts[0]];
+  }
+
+  private scoreSimpleProductMatch(product: StructuredProduct, message: string): number {
+    const normalizedMessage = this.normalizeTextForMatch(message);
+    if (!normalizedMessage) {
+      return 0;
+    }
+
+    const title = this.normalizeTextForMatch(product.titulo);
+    const shortDescription = this.normalizeTextForMatch(product.descripcionCorta);
+    const fullDescription = this.normalizeTextForMatch(product.descripcionCompleta);
+    const terms = normalizedMessage.split(/\s+/).filter((term) => term.length >= 3);
+
+    return terms.reduce((score, term) => {
+      let next = score;
+      if (title.includes(term)) {
+        next += 4;
+      }
+      if (shortDescription.includes(term)) {
+        next += 2;
+      }
+      if (fullDescription.includes(term)) {
+        next += 1;
+      }
+      return next;
+    }, 0);
+  }
+
+  private findActiveProductFromHistory(
+    allProducts: StructuredProduct[],
+    history: StoredMessage[],
+  ): StructuredProduct | null {
+    const recentMessages = history.slice(-6).reverse();
+    for (const entry of recentMessages) {
+      for (const product of allProducts) {
+        if (this.replyMentionsAnyProduct(entry.content, [product])) {
+          return product;
+        }
+      }
+    }
+
+    return null;
   }
 
   private thinkSimple(params: {
@@ -590,14 +646,20 @@ export class BotService {
     );
 
     let intent: SimpleThinkingResult['intent'] = 'info';
-    if (this.detectHotLead(params.message) || /compr|pedido|orden|pagar|envio|enviar/i.test(params.message)) {
+    if (this.isGreetingOnlyMessage(params.message)) {
+      intent = 'saludo';
+    } else if (this.detectHotLead(params.message) || /compr|pedido|orden|pagar|envio|enviar/i.test(params.message)) {
       intent = 'compra';
-    } else if (this.hasSkepticalSignal(params.message) || /funciona|sirve|verdad|miedo|duda/i.test(normalized)) {
-      intent = 'duda';
+    } else if (/precio|cuanto cuesta|cuanto vale|cu[aá]nto cuesta|cu[aá]nto vale|vale/i.test(normalized)) {
+      intent = 'precio';
+    } else if (/como se usa|como se toma|modo de uso|como tomar|dosis|cuantas capsulas|cuantas cápsulas/i.test(normalized)) {
+      intent = 'uso';
+    } else if (this.hasSkepticalSignal(params.message) || /beneficios|beneficio|funciona|sirve|para que sirve|resultado|resultados|verdad/i.test(normalized)) {
+      intent = 'beneficios';
     }
 
     let tonoUsuario: SimpleThinkingResult['tonoUsuario'] = 'neutral';
-    if (intent === 'duda') {
+    if (intent === 'beneficios') {
       tonoUsuario = 'esceptico';
     } else if (intent === 'compra') {
       tonoUsuario = 'urgente';
@@ -607,16 +669,33 @@ export class BotService {
       tonoUsuario = 'curioso';
     }
 
-    const contexto = yaSeHabloProducto
-      ? 'seguimiento de una conversación ya iniciada'
-      : this.isVeryShortCustomerReply(params.message)
-        ? 'pregunta corta y directa'
-        : 'pregunta directa';
+    const contexto = (() => {
+      if (intent === 'saludo') {
+        return 'saludo inicial';
+      }
+      if (intent === 'precio') {
+        return yaSeHabloProducto ? 'consulta de precio sobre producto ya activo' : 'consulta puntual de precio';
+      }
+      if (intent === 'uso') {
+        return yaSeHabloProducto ? 'pregunta de uso sobre producto ya explicado' : 'pregunta puntual sobre modo de uso';
+      }
+      if (intent === 'beneficios') {
+        return yaSeHabloProducto ? 'objecion o duda sobre producto ya presentado' : 'pregunta sobre beneficios o efectividad';
+      }
+      if (intent === 'compra') {
+        return yaSeHabloProducto ? 'cliente listo para avanzar compra del producto activo' : 'intencion clara de compra';
+      }
+      return yaSeHabloProducto
+        ? 'seguimiento de una conversación ya iniciada'
+        : this.isVeryShortCustomerReply(params.message)
+          ? 'pregunta corta y directa'
+          : 'pregunta directa';
+    })();
 
     return {
       intent,
       contexto,
-      usarProducto: params.allProducts.length > 0,
+      usarProducto: intent !== 'saludo' && params.allProducts.length > 0,
       tonoUsuario,
       yaSeHabloProducto,
     };
@@ -626,8 +705,11 @@ export class BotService {
     if (simpleThinking.intent === 'compra') {
       return 'listo';
     }
-    if (simpleThinking.intent === 'duda') {
+    if (simpleThinking.intent === 'precio' || simpleThinking.intent === 'uso' || simpleThinking.intent === 'beneficios') {
       return 'interesado';
+    }
+    if (simpleThinking.intent === 'saludo') {
+      return 'frio';
     }
     return simpleThinking.yaSeHabloProducto ? 'curioso' : 'frio';
   }
@@ -639,24 +721,30 @@ export class BotService {
   ): BotDecisionState {
     const intent: BotDecisionIntent = simpleThinking.intent === 'compra'
       ? 'compra'
-      : simpleThinking.intent === 'duda'
+      : simpleThinking.intent === 'beneficios'
         ? 'duda'
         : 'info';
     const stage: ContactStage = simpleThinking.intent === 'compra'
       ? 'listo'
-      : simpleThinking.intent === 'duda'
+      : simpleThinking.intent === 'beneficios'
         ? 'dudoso'
+        : simpleThinking.intent === 'precio' || simpleThinking.intent === 'uso'
+          ? 'interesado'
         : simpleThinking.yaSeHabloProducto
           ? 'interesado'
           : 'curioso';
     const action: BotDecisionAction = simpleThinking.intent === 'compra'
       ? 'cerrar'
-      : simpleThinking.intent === 'duda'
+      : simpleThinking.intent === 'beneficios'
         ? 'persuadir'
         : 'guiar';
     const purchaseIntentScore = simpleThinking.intent === 'compra'
       ? 85
-      : simpleThinking.intent === 'duda'
+      : simpleThinking.intent === 'precio'
+        ? 45
+        : simpleThinking.intent === 'uso'
+          ? 35
+          : simpleThinking.intent === 'beneficios'
         ? 25
         : 15;
 
@@ -677,11 +765,165 @@ export class BotService {
     };
   }
 
+  private async buildSimpleKnowledgeContext(params: {
+    config: Awaited<ReturnType<ClientConfigService['getConfig']>>;
+    botConfig: Awaited<ReturnType<BotConfigService['getConfig']>>;
+    message: string;
+    relevantProduct: StructuredProduct | null;
+    simpleThinking: SimpleThinkingResult;
+  }): Promise<string> {
+    const instructionsSummary = this.buildSimpleInstructionSummary(
+      params.config,
+      params.botConfig,
+      params.simpleThinking,
+    );
+    const productSummary = params.simpleThinking.usarProducto
+      ? this.buildSimpleRelevantProductSummary(params.relevantProduct, params.simpleThinking)
+      : '';
+    const companySummary = await this.buildSimpleCompanySummary(
+      params.message,
+      params.simpleThinking,
+    );
+
+    const sections: string[] = [];
+    if (instructionsSummary) {
+      sections.push('[INSTRUCCIONES]');
+      sections.push(this.limitText(instructionsSummary, 520));
+    }
+    if (productSummary) {
+      sections.push('[PRODUCTO_RELEVANTE]');
+      sections.push(this.limitText(productSummary, 720));
+    }
+    if (companySummary) {
+      sections.push('[EMPRESA]');
+      sections.push(this.limitText(companySummary, 520));
+    }
+
+    return this.limitText(sections.join('\n\n').trim(), BotService.AI_CONTEXT_MAX_CHARS);
+  }
+
+  private buildSimpleInstructionSummary(
+    config: Awaited<ReturnType<ClientConfigService['getConfig']>>,
+    botConfig: Awaited<ReturnType<BotConfigService['getConfig']>>,
+    simpleThinking: SimpleThinkingResult,
+  ): string {
+    const configurations = this.asRecord(config.configurations);
+    const structuredInstructions = this.asRecord(configurations.instructions);
+    const identity = this.asRecord(structuredInstructions.identity);
+    const assistantName = this.asString(identity.assistantName);
+    const role = this.asString(identity.role) || 'asesora comercial';
+    const tone = this.asString(identity.tone) || 'cercano';
+    const promptPreview = this.limitText(
+      this.buildInstructionsKnowledgeBlock(config, botConfig),
+      220,
+    );
+
+    const intentRule = (() => {
+      switch (simpleThinking.intent) {
+        case 'saludo':
+          return 'Responde breve, humano y abre la conversación sin rodeos.';
+        case 'precio':
+          return 'Si preguntan precio, responde con el precio real del producto relevante sin inventar.';
+        case 'uso':
+          return 'Explica solo el modo de uso real del producto relevante.';
+        case 'beneficios':
+          return 'Responde con beneficios reales y aterriza la respuesta a la necesidad del cliente.';
+        case 'compra':
+          return 'Guia al cliente hacia la compra con un siguiente paso claro y natural.';
+        default:
+          return 'Responde claro, humano y con informacion real del contexto.';
+      }
+    })();
+
+    return [
+      assistantName ? `Asistente: ${assistantName}.` : '',
+      `Rol: ${role}.`,
+      `Tono: ${tone}.`,
+      'Usa solo datos reales del contexto. No inventes precios, empresa ni resultados.',
+      intentRule,
+      promptPreview ? `Base resumida: ${promptPreview}` : '',
+    ].filter(Boolean).join('\n');
+  }
+
+  private buildSimpleRelevantProductSummary(
+    product: StructuredProduct | null,
+    simpleThinking: SimpleThinkingResult,
+  ): string {
+    if (!product?.titulo?.trim()) {
+      return '';
+    }
+
+    const title = `Producto: ${product.titulo.trim()}`;
+    const price = this.valueToText(product.precio) || this.valueToText(product.precioMinimo);
+    const shortDescription = (product.descripcionCorta || '').trim();
+    const fullDescription = (product.descripcionCompleta || '').trim();
+
+    if (simpleThinking.intent === 'precio') {
+      return [title, price ? `Precio: ${price}` : 'Precio: no configurado'].join('\n');
+    }
+
+    if (simpleThinking.intent === 'uso') {
+      return [
+        title,
+        fullDescription ? `Uso: ${this.limitText(fullDescription, 420)}` : '',
+      ].filter(Boolean).join('\n');
+    }
+
+    if (simpleThinking.intent === 'beneficios') {
+      return [
+        title,
+        shortDescription ? `Beneficio: ${this.limitText(shortDescription, 260)}` : '',
+        fullDescription ? `Soporte: ${this.limitText(fullDescription, 220)}` : '',
+      ].filter(Boolean).join('\n');
+    }
+
+    return [
+      title,
+      shortDescription ? `Resumen: ${this.limitText(shortDescription, 240)}` : '',
+      price ? `Precio: ${price}` : '',
+    ].filter(Boolean).join('\n');
+  }
+
+  private async buildSimpleCompanySummary(
+    message: string,
+    simpleThinking: SimpleThinkingResult,
+  ): Promise<string> {
+    const applicability = this.detectCompanyApplicability(message);
+    if (applicability === null && simpleThinking.intent !== 'compra') {
+      return '';
+    }
+
+    const fullCompanyContext = (await this.companyContextService.buildAgentContextForMessage(message)).trim();
+    if (!fullCompanyContext) {
+      return '';
+    }
+
+    const lines = fullCompanyContext.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    const filtered = lines.filter((line) => {
+      const normalized = this.normalizeTextForMatch(line);
+      if (applicability === 'location') {
+        return normalized.includes('direccion') || normalized.includes('maps') || normalized.includes('empresa') || normalized.includes('nombre');
+      }
+      if (applicability === 'hours') {
+        return normalized.includes('horario') || normalized.includes('lunes') || normalized.includes('martes') || normalized.includes('miercoles') || normalized.includes('jueves') || normalized.includes('viernes') || normalized.includes('sabado') || normalized.includes('domingo');
+      }
+      if (applicability === 'payment') {
+        return normalized.includes('cuentas') || normalized.includes('banco') || normalized.includes('numero') || normalized.includes('titular');
+      }
+      if (applicability === 'contact') {
+        return normalized.includes('telefono') || normalized.includes('whatsapp') || normalized.includes('empresa') || normalized.includes('nombre');
+      }
+      return normalized.includes('telefono') || normalized.includes('whatsapp') || normalized.includes('direccion') || normalized.includes('empresa') || normalized.includes('nombre');
+    });
+
+    return this.limitText((filtered.length > 0 ? filtered : lines.slice(0, 4)).join('\n'), 520);
+  }
+
   private buildSimpleAiContext(
-    knowledgeContext: string,
     memoryContext: Awaited<ReturnType<MemoryService['getConversationContext']>>,
     conversationMemory: ConversationMemoryState,
     simpleThinking: SimpleThinkingResult,
+    relevantProduct: StructuredProduct | null,
   ): string {
     const blocks = [
       '[PENSADOR]',
@@ -690,6 +932,7 @@ export class BotService {
       `usarProducto: ${simpleThinking.usarProducto ? 'true' : 'false'}`,
       `tonoUsuario: ${simpleThinking.tonoUsuario}`,
       `yaSeHabloProducto: ${simpleThinking.yaSeHabloProducto ? 'true' : 'false'}`,
+      relevantProduct?.titulo?.trim() ? `productoActivo: ${relevantProduct.titulo.trim()}` : '',
       '',
       'Usa esto solo para entender mejor al cliente. No lo repitas en la respuesta.',
       '',
@@ -704,10 +947,10 @@ export class BotService {
     simpleThinking: SimpleThinkingResult,
     message: string,
   ): AssistantResponseStyle {
-    if (simpleThinking.intent === 'duda' || this.requiresDetailedResponse(message)) {
+    if (simpleThinking.intent === 'beneficios' || simpleThinking.intent === 'uso' || this.requiresDetailedResponse(message)) {
       return 'detailed';
     }
-    if (simpleThinking.intent === 'compra' || this.isVeryShortCustomerReply(message)) {
+    if (simpleThinking.intent === 'compra' || simpleThinking.intent === 'precio' || this.isVeryShortCustomerReply(message)) {
       return 'brief';
     }
     return 'balanced';
@@ -733,21 +976,22 @@ export class BotService {
       const config = await this.clientConfigService.getConfig();
       const botConfig = await this.botConfigService.getConfig();
       const allProducts = this.getProductsFromConfig(config);
-      const relevantProducts = this.resolveSimpleRelevantProducts(allProducts, message);
-      const knowledgeContext = await this.getRequiredKnowledgeContext(
-        config,
-        botConfig,
-        message,
-        relevantProducts,
-      );
       const history = await this.memoryService.getRecentMessages(contactId, config.aiSettings?.memoryWindow ?? 6);
       const conversationMemory = await this.getConversationMemory(contactId, history);
       const memoryContext = await this.memoryService.getConversationContext(contactId, config.aiSettings?.memoryWindow ?? 6);
+      const relevantProducts = this.resolveSimpleRelevantProducts(allProducts, message, history);
       const simpleThinking = this.thinkSimple({
         message,
         memoryContext,
         relevantProducts,
         allProducts,
+      });
+      const knowledgeContext = await this.buildSimpleKnowledgeContext({
+        config,
+        botConfig,
+        message,
+        relevantProduct: relevantProducts[0] ?? null,
+        simpleThinking,
       });
       const decision = this.buildSimpleDecisionState(contactId, message, simpleThinking);
       const intent = this.mapDecisionIntentToBotIntent(decision.intent, message);
@@ -760,7 +1004,7 @@ export class BotService {
         message,
         history,
         context: [
-          this.buildSimpleAiContext(knowledgeContext, memoryContext, conversationMemory, simpleThinking),
+          this.buildSimpleAiContext(memoryContext, conversationMemory, simpleThinking, relevantProducts[0] ?? null),
           '[EMERGENCIA]',
           'Hubo un problema interno en el flujo. Responde de forma normal, útil y humana, sin mencionar errores internos.',
         ].join('\n\n'),
@@ -1114,7 +1358,7 @@ export class BotService {
           });
           this.logger.log(
             JSON.stringify({
-              event: 'AI_CORRECTION',
+              event: 'AI_LEGACY_RETRY_TRACE',
               contactId: params.contactId,
               message: params.message,
               attempt,
@@ -1155,7 +1399,7 @@ export class BotService {
             if (correctedQuality.valid) {
               this.logger.log(
                 JSON.stringify({
-                  event: 'AI_CORRECTION',
+                  event: 'AI_LEGACY_RETRY_TRACE',
                   contactId: params.contactId,
                   message: params.message,
                   attempt,
@@ -1185,7 +1429,7 @@ export class BotService {
           });
           this.logger.log(
             JSON.stringify({
-              event: 'AI_CORRECTION',
+              event: 'AI_LEGACY_RETRY_TRACE',
               contactId: params.contactId,
               message: params.message,
               attempt,
@@ -1237,7 +1481,7 @@ export class BotService {
 
           this.logger.log(
             JSON.stringify({
-              event: 'AI_CORRECTION',
+              event: 'AI_LEGACY_RETRY_TRACE',
               contactId: params.contactId,
               message: params.message,
               kind: 'accepted_after_corrections',
