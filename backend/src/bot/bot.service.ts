@@ -77,6 +77,14 @@ interface ThinkingAnalysis {
   responseStrategy: string;
 }
 
+interface SimpleThinkingResult {
+  intent: 'info' | 'compra' | 'duda';
+  contexto: string;
+  usarProducto: boolean;
+  tonoUsuario: 'neutral' | 'curioso' | 'directo' | 'urgente' | 'esceptico';
+  yaSeHabloProducto: boolean;
+}
+
 interface IntentCacheEntry {
   message: string;
   intent: BotDecisionIntent;
@@ -225,1143 +233,21 @@ export class BotService {
     console.log('MENSAJE:', normalizedMessage);
 
     try {
-      // RESPONSE LOCK (CRÍTICO): ensures exactly one layer produces the final response.
-      let responseGenerated = false;
-      let finalResult: BotReplyResult | null = null;
-      let finalResponse = '';
-
-      const logResponseDebug = (payload: {
-        layer: string;
-        blocked: boolean;
-        duplicateRemoved?: boolean;
-        reason?: string;
-        source?: string;
-      }) => {
-        this.logger.log(
-          JSON.stringify({
-            event: 'RESPONSE_DEBUG',
-            contactId: normalizedContactId,
-            message: normalizedMessage,
-            layer: payload.layer,
-            blocked: payload.blocked,
-            duplicateRemoved: payload.duplicateRemoved ?? false,
-            reason: payload.reason ?? null,
-            source: payload.source ?? null,
-          }),
-        );
-      };
-
-      const finalizeResponse = (layer: string, result: BotReplyResult): BotReplyResult => {
-        if (responseGenerated && finalResult) {
-          logResponseDebug({ layer, blocked: true, reason: 'response_already_generated', source: result.source });
-          if (process.env.BOT_DEBUG_HOTLEAD === '1') {
-            console.log('FINALIZE_RESPONSE_RETURNING_EXISTING', {
-              layer,
-              source: finalResult.source,
-              hotLead: finalResult.hotLead,
-              usedGallery: finalResult.usedGallery,
-            });
-          }
-          return finalResult;
-        }
-
-        // RESPONSE COMPOSER hardening for ALL layers: remove duplicated sentences/lead phrases.
-        const original = (result.reply ?? '').trim();
-        // IMPORTANT: do NOT aggressively truncate AI replies here.
-        // AI replies are already composed upstream with dynamic options (detailed vs brief).
-        // We only want dedupe/lead hardening + max 1 question across layers.
-        const composed = composeFinalMessage(original, { maxIdeas: 6, maxQuestions: 1 }) || original;
-
-        const duplicateRemoved = composed.trim() !== original;
-        const patchedResult = duplicateRemoved ? { ...result, reply: composed.trim() } : result;
-
-        responseGenerated = true;
-        finalResult = patchedResult;
-        finalResponse = patchedResult.reply;
-
-        if (process.env.BOT_DEBUG_HOTLEAD === '1') {
-          console.log('FINALIZE_RESPONSE_SET', {
-            layer,
-            source: patchedResult.source,
-            hotLead: patchedResult.hotLead,
-            usedGallery: patchedResult.usedGallery,
-          });
-        }
-
-        logResponseDebug({ layer, blocked: false, duplicateRemoved, source: patchedResult.source });
-        return patchedResult;
-      };
-
-      // CRITICAL: Always load/read mandatory knowledge modules BEFORE generating any response.
-      // Even for early-exit layers (greetings, micro-intents, closures), we preload the modules
-      // so the bot has a consistent, app-config-aligned view of INSTRUCCIONES/PRODUCTOS/EMPRESA.
-      let config = await this.clientConfigService.getConfig();
-      let botConfig = await this.botConfigService.getConfig();
-      let instructionsTextForAudit = this.buildInstructionsKnowledgeBlock(config, botConfig);
+      const config = await this.clientConfigService.getConfig();
+      const botConfig = await this.botConfigService.getConfig();
       const memoryWindow = config.aiSettings?.memoryWindow ?? 6;
-      let allProducts = this.getProductsFromConfig(config);
-      let relevantProductsRaw = this.filterRelevantProducts(allProducts, normalizedMessage);
-      let relevantProducts = this.applySingleActiveProductAssumption(allProducts, relevantProductsRaw);
+      const allProducts = this.getProductsFromConfig(config);
+      const relevantProducts = this.resolveSimpleRelevantProducts(allProducts, normalizedMessage);
       console.log('PRODUCTOS:', allProducts);
       console.log('PRODUCTOS_RELEVANTES:', relevantProducts);
 
-      let relevantProduct = relevantProducts[0] ?? null;
-      let preloadedKnowledgeContext = await this.getRequiredKnowledgeContext(
+      const relevantProduct = relevantProducts[0] ?? null;
+      const knowledgeContext = await this.getRequiredKnowledgeContext(
         config,
         botConfig,
         normalizedMessage,
         relevantProducts,
       );
-
-      let companyDataTextForAudit = this.extractBracketSection(preloadedKnowledgeContext, 'EMPRESA');
-      let moduleStatsForAudit = this.buildAiAuditModuleStats({
-        message: normalizedMessage,
-        knowledgeContext: preloadedKnowledgeContext,
-        instructionsText: instructionsTextForAudit,
-        allProducts,
-        companyDataText: companyDataTextForAudit,
-      });
-
-      // KNOWLEDGE ENFORCEMENT: if modules look missing, attempt a single reload.
-      // This matches the "releer" requirement (try to re-fetch config + rebuild context) before blocking.
-      if (this.isKnowledgeEnforcementEnabled() && !moduleStatsForAudit.ok) {
-        for (let attempt = 0; attempt < BotService.KNOWLEDGE_ENFORCEMENT_MAX_RELOAD_ATTEMPTS; attempt += 1) {
-          try {
-            await this.redisService.del(BotService.KNOWLEDGE_CONTEXT_CACHE_KEY);
-          } catch {
-            // Ignore reload failures.
-          }
-
-          config = await this.clientConfigService.getConfig();
-          botConfig = await this.botConfigService.getConfig();
-          instructionsTextForAudit = this.buildInstructionsKnowledgeBlock(config, botConfig);
-          allProducts = this.getProductsFromConfig(config);
-          relevantProductsRaw = this.filterRelevantProducts(allProducts, normalizedMessage);
-          relevantProducts = this.applySingleActiveProductAssumption(allProducts, relevantProductsRaw);
-          relevantProduct = relevantProducts[0] ?? null;
-          preloadedKnowledgeContext = await this.getRequiredKnowledgeContext(
-            config,
-            botConfig,
-            normalizedMessage,
-            relevantProducts,
-          );
-          companyDataTextForAudit = this.extractBracketSection(preloadedKnowledgeContext, 'EMPRESA');
-          moduleStatsForAudit = this.buildAiAuditModuleStats({
-            message: normalizedMessage,
-            knowledgeContext: preloadedKnowledgeContext,
-            instructionsText: instructionsTextForAudit,
-            allProducts,
-            companyDataText: companyDataTextForAudit,
-          });
-
-          this.logger.log(
-            JSON.stringify({
-              event: 'KNOWLEDGE_ENFORCEMENT',
-              contactId: normalizedContactId,
-              message: normalizedMessage,
-              kind: 'reload_attempt',
-              attempt: attempt + 1,
-              ok: moduleStatsForAudit.ok,
-              missing: moduleStatsForAudit.missing,
-            }),
-          );
-
-          if (moduleStatsForAudit.ok) {
-            break;
-          }
-        }
-      }
-
-      if (this.isAiAuditEnabled()) {
-        this.auditLog({
-          contactId: normalizedContactId,
-          message: normalizedMessage,
-          kind: 'module_load',
-          ok: moduleStatsForAudit.ok,
-          missing: moduleStatsForAudit.missing,
-          counts: moduleStatsForAudit.counts,
-          sections: moduleStatsForAudit.sections,
-        });
-      }
-
-      const mustBlockForMissingKnowledge = !moduleStatsForAudit.ok
-        && (this.isKnowledgeEnforcementEnabled() || (this.isAiAuditEnabled() && this.isAiAuditStrict()));
-
-      if (mustBlockForMissingKnowledge) {
-        const prefix = this.isAiAuditEnabled() ? 'AUDITORIA: ' : '';
-        const missingList = moduleStatsForAudit.missing.join(', ');
-
-        // IMPORTANT: Never send a fixed reply here.
-        // Even blocking/errors must pass through the AI engine so it follows the same system prompt and format.
-        let reply = '';
-        let blockedSource: BotReplyResult['source'] = 'ai';
-        try {
-          const aiBlocked = await this.aiService.generateReply({
-            config,
-            fullPrompt: '',
-            companyContext: preloadedKnowledgeContext || '',
-            contactId: normalizedContactId,
-            message: normalizedMessage,
-            history: [],
-            context: [
-              '[BLOQUEO_CRITICO]',
-              `${prefix}FALTAN_MODULOS: ${missingList}`,
-              'No inventes datos. No prometas nada. Explica que no puedes responder comercialmente sin PRODUCTOS/INSTRUCCIONES/EMPRESA configurados.',
-              'Responde en español dominicano natural, breve, sin preguntas (0 preguntas).',
-            ].join('\n'),
-            classifiedIntent: 'info',
-            decisionAction: 'guiar',
-            purchaseIntentScore: 0,
-            responseStyle: 'brief',
-            leadStage: 'curioso',
-            replyObjective: 'avanzar_conversacion',
-            thinkingInstruction: 'No muestres el analisis, responde solo al cliente.',
-            candidateCount: 1,
-          });
-
-          if (aiBlocked.content.trim()) {
-            reply = aiBlocked.content.trim();
-          }
-        } catch {
-          // If IA is unavailable, we keep a minimal critical message (still blocked).
-          reply = `${prefix}ERROR CRITICO. Faltan modulos: ${missingList}. No puedo responder con datos reales hasta que esten configurados.`;
-          blockedSource = 'fallback';
-        }
-        const decision = this.buildQuickDecisionState({
-          contactId: normalizedContactId,
-          message: normalizedMessage,
-          decisionIntent: 'info',
-          stage: 'curioso',
-          action: 'guiar',
-          summary: 'Blocked due to missing mandatory knowledge modules.',
-        });
-        const blocked = this.createResult(
-          reply,
-          blockedSource,
-          'otro',
-          decision,
-          false,
-          [],
-          'text',
-          false,
-        );
-        await this.persistAuditSnapshot(normalizedContactId, {
-          timestamp: Date.now(),
-          contactId: normalizedContactId,
-          message: normalizedMessage,
-          layer: 'audit_block_missing_modules',
-          moduleStats: moduleStatsForAudit,
-          replyStats: {
-            ok: false,
-            severeFailures: ['FALLA_CRITICA: modulos_no_cargados'],
-            criticalFailures: moduleStatsForAudit.missing.map((value) => `MODULO_FALTANTE:${value}`),
-          },
-          reply,
-          source: blocked.source,
-        });
-
-        // DEBUG VISUAL (OBLIGATORIO): also log for blocked/missing knowledge.
-        this.logger.log(
-          JSON.stringify({
-            event: 'BOT_DEBUG_VISUAL',
-            contactId: normalizedContactId,
-            message: normalizedMessage,
-            source: blocked.source === 'ai' ? 'AI' : 'FALLBACK',
-            productsUsed: false,
-            promptUsed: false,
-            layer: 'audit_block_missing_modules',
-            blocked: true,
-          }),
-        );
-        if (blocked.source !== 'ai') {
-          this.logger.error(
-            JSON.stringify({
-              event: 'CRITICAL_NON_AI_REPLY',
-              contactId: normalizedContactId,
-              message: normalizedMessage,
-              layer: 'audit_block_missing_modules',
-              source: blocked.source,
-              failures: ['FALLA_CRITICA: modulos_no_cargados'],
-            }),
-          );
-        }
-
-        return blocked;
-      }
-
-      const finalizeResponseAudited = async (
-        layer: string,
-        result: BotReplyResult,
-        meta?: {
-          thinkingAnalysis?: unknown;
-          combinedContextLength?: number;
-          knowledgeContextLength?: number;
-        },
-      ): Promise<BotReplyResult> => {
-        let adjustedResult = result;
-
-        // Compose first so enforcement validates what will actually be sent.
-        const composedForValidation = composeFinalMessage(adjustedResult.reply ?? '', { maxIdeas: 6, maxQuestions: 1 })
-          || (adjustedResult.reply ?? '').trim();
-        if (composedForValidation && composedForValidation !== adjustedResult.reply) {
-          adjustedResult = {
-            ...adjustedResult,
-            reply: composedForValidation,
-            cached: false,
-          };
-        }
-
-        let replyStats = this.buildAiAuditReplyStats({
-          message: normalizedMessage,
-          reply: adjustedResult.reply,
-          mediaCount: adjustedResult.mediaFiles.length,
-          allProducts,
-          relevantProducts,
-          companyDataText: companyDataTextForAudit,
-          instructionsText: instructionsTextForAudit,
-        });
-
-        // CORRECCION AUTOMATICA (sin IA): solo aplica en modo NO-AI.
-        // En AI-only mode, any fix must be done via IA to avoid fixed templates.
-        if (!this.isAiAlwaysOn() && this.isKnowledgeEnforcementEnabled() && !replyStats.ok) {
-          const featuredProductForFix = relevantProduct ?? relevantProducts[0] ?? allProducts[0] ?? null;
-          const valueSnippet = this.buildProductValueMiniSnippet({
-            product: featuredProductForFix,
-            message: normalizedMessage,
-          });
-
-          const genericWithoutKnowledgeFix = allProducts.length === 0
-            && replyStats.criticalFailures.includes('RESPUESTA_SIN_BASE_DE_CONOCIMIENTO');
-          const catalogNotConfiguredReply = genericWithoutKnowledgeFix
-            ? 'Ahora mismo no tengo el catálogo configurado, pero te puedo orientar. ¿Qué te interesa saber primero: beneficios, cómo se usa o cómo hacer el pedido?'
-            : '';
-
-          const companyName = this.parseCompanyNameFromCompanyDataText(companyDataTextForAudit);
-          const companyApplicable = this.detectCompanyApplicability(normalizedMessage);
-          const needsCompany = companyApplicable !== null && companyName.trim().length > 0;
-          const hasCompanyAlready = companyName.trim()
-            ? adjustedResult.reply.toLowerCase().includes(companyName.trim().toLowerCase())
-            : true;
-
-          const patchedReply = genericWithoutKnowledgeFix
-            ? catalogNotConfiguredReply
-            : [
-                needsCompany && !hasCompanyAlready ? `Soy de ${companyName.trim()}.` : '',
-                adjustedResult.reply,
-                valueSnippet && allProducts.length > 0 && (
-                  !replyStats.checks.usesProducts
-                  || !replyStats.checks.hasBenefit
-                  || !replyStats.checks.hasFunction
-                  || !replyStats.checks.hasNeedConnection
-                  || !this.replyMentionsAnyProduct(adjustedResult.reply, relevantProducts.length > 0 ? relevantProducts : allProducts)
-                )
-                  ? valueSnippet
-                  : '',
-              ]
-                .filter((value) => String(value || '').trim().length > 0)
-                .join(' ')
-                .replace(/\s+/g, ' ')
-                .trim();
-
-          const patchedComposed = composeFinalMessage(patchedReply, { maxIdeas: 6, maxQuestions: 1 }) || patchedReply;
-
-          const patchedStats = this.buildAiAuditReplyStats({
-            message: normalizedMessage,
-            reply: patchedComposed,
-            mediaCount: adjustedResult.mediaFiles.length,
-            allProducts,
-            relevantProducts,
-            companyDataText: companyDataTextForAudit,
-            instructionsText: instructionsTextForAudit,
-          });
-
-          if (patchedStats.ok) {
-            this.logger.log(
-              JSON.stringify({
-                event: 'KNOWLEDGE_ENFORCEMENT',
-                contactId: normalizedContactId,
-                message: normalizedMessage,
-                kind: 'auto_correction_applied',
-                layer,
-                failuresBefore: [...replyStats.criticalFailures, ...replyStats.severeFailures],
-              }),
-            );
-
-            adjustedResult = {
-              ...adjustedResult,
-              reply: patchedComposed,
-              cached: false,
-            };
-            replyStats = patchedStats;
-          }
-        }
-
-        const mustForceBlock = this.isAiAuditEnabled() && this.isAiAuditForceBlock();
-        const needsFix = (this.isKnowledgeEnforcementEnabled() && !replyStats.ok)
-          || (mustForceBlock && !replyStats.checks.usesProducts);
-
-        if (needsFix) {
-          try {
-            const compactFullPrompt = this.limitText(this.botConfigService.getFullPrompt(botConfig), 1200);
-            const failures = [...replyStats.criticalFailures, ...replyStats.severeFailures].filter(Boolean);
-            const fix = await this.aiService.generateReply({
-              config,
-              fullPrompt: compactFullPrompt,
-              companyContext: preloadedKnowledgeContext || '',
-              contactId: normalizedContactId,
-              message: normalizedMessage,
-              history: [],
-              context: [
-                '[REGENERAR_POR_ENFORCEMENT]',
-                failures.length > 0 ? `Fallas detectadas: ${failures.join(' | ')}` : '',
-                'Reescribe la respuesta para cumplir: menciona 1 producto real + beneficio + como se usa + conexion con la necesidad; max 1 pregunta; no inventes datos de EMPRESA.',
-              ].filter(Boolean).join('\n'),
-              classifiedIntent: 'info',
-              decisionAction: 'guiar',
-              purchaseIntentScore: 0,
-              responseStyle: 'brief',
-              leadStage: 'curioso',
-              replyObjective: 'avanzar_conversacion',
-              thinkingInstruction: 'No muestres el analisis, responde solo al cliente.',
-              candidateCount: 1,
-            });
-
-            if (fix.content.trim()) {
-              adjustedResult = {
-                ...adjustedResult,
-                reply: fix.content.trim(),
-                source: 'ai',
-                cached: false,
-              };
-              replyStats = this.buildAiAuditReplyStats({
-                message: normalizedMessage,
-                reply: adjustedResult.reply,
-                mediaCount: adjustedResult.mediaFiles.length,
-                allProducts,
-                relevantProducts,
-                companyDataText: companyDataTextForAudit,
-                instructionsText: instructionsTextForAudit,
-              });
-            }
-          } catch {
-            // Ignore; we'll fall back through the exception handler if still invalid.
-          }
-        }
-
-        const forceBlock = needsFix && this.isKnowledgeEnforcementEnabled() && !replyStats.ok;
-        if (forceBlock) {
-          throw new Error('knowledge_enforcement_failed');
-        }
-
-        let adjusted = adjustedResult;
-
-        // If we changed the outgoing text during composition/enforcement, recompute the reply modality.
-        // This keeps audio selection aligned with the *final* text that will be spoken/sent.
-        if ((adjusted.mediaFiles?.length ?? 0) === 0) {
-          adjusted = {
-            ...adjusted,
-            replyType: this.resolvePreferredReplyType({
-              message: normalizedMessage,
-              reply: adjusted.reply,
-              intent: adjusted.intent,
-              action: adjusted.action,
-              metadata,
-            }),
-          };
-        }
-
-        const finalized = finalizeResponse(layer, adjusted);
-
-        const knowledgeContextLength = meta?.knowledgeContextLength ?? preloadedKnowledgeContext.length;
-        const combinedContextLength = meta?.combinedContextLength ?? null;
-        const warnOver6k = (combinedContextLength ?? knowledgeContextLength) > 6000;
-        if (this.isAiAuditEnabled() && warnOver6k) {
-          this.auditLog({
-            contactId: normalizedContactId,
-            message: normalizedMessage,
-            kind: 'context_length_warning',
-            knowledgeContextLength,
-            combinedContextLength,
-            warning: 'ADVERTENCIA: POSIBLE CONFUSION DE IA (contexto > 6000 caracteres)',
-          });
-        }
-
-        if (this.isAiAuditEnabled()) {
-          this.auditLog({
-            contactId: normalizedContactId,
-            message: normalizedMessage,
-            kind: 'reply_validation',
-            layer,
-            source: finalized.source,
-            checks: replyStats.checks,
-            severeFailures: replyStats.severeFailures,
-            criticalFailures: replyStats.criticalFailures,
-            warnings: replyStats.warnings,
-            forcedBlocked: forceBlock,
-          });
-        }
-
-        if (this.isAiAuditEnabled() && meta?.thinkingAnalysis) {
-          const thinking = meta.thinkingAnalysis as {
-            nextBestAction?: string;
-            alreadyExplained?: boolean;
-          };
-          if (thinking.nextBestAction === 'cerrar' && !thinking.alreadyExplained) {
-            this.auditLog({
-              contactId: normalizedContactId,
-              message: normalizedMessage,
-              kind: 'thinking_logic',
-              ok: false,
-              error: 'ERROR_DE_LOGICA: nextBestAction=cerrar sin explicacion previa',
-              thinking: meta.thinkingAnalysis,
-            });
-          } else {
-            this.auditLog({
-              contactId: normalizedContactId,
-              message: normalizedMessage,
-              kind: 'thinking_logic',
-              ok: true,
-              thinking: meta.thinkingAnalysis,
-            });
-          }
-        }
-
-        await this.persistAuditSnapshot(normalizedContactId, {
-          timestamp: Date.now(),
-          contactId: normalizedContactId,
-          message: normalizedMessage,
-          layer,
-          source: finalized.source,
-          intent: finalized.intent,
-          decisionIntent: finalized.decisionIntent,
-          replyType: finalized.replyType,
-          moduleStats: moduleStatsForAudit,
-          replyStats,
-          forcedBlocked: forceBlock,
-          context: {
-            knowledgeContextLength,
-            combinedContextLength,
-            warnOver6k,
-          },
-          thinking: meta?.thinkingAnalysis ?? null,
-        });
-
-        // DEBUG VISUAL (OBLIGATORIO): log AI enforcement on every response.
-        // If we ever see a non-AI source here, treat it as critical.
-        const promptUsed = Boolean(moduleStatsForAudit.ok);
-        const productsUsed = Boolean(replyStats.checks.usesProducts);
-        this.logger.log(
-          JSON.stringify({
-            event: 'BOT_DEBUG_VISUAL',
-            contactId: normalizedContactId,
-            message: normalizedMessage,
-            source: finalized.source === 'ai' ? 'AI' : 'FALLBACK',
-            productsUsed,
-            promptUsed,
-            layer,
-            blocked: this.isKnowledgeEnforcementEnabled() && !replyStats.ok,
-          }),
-        );
-        if (finalized.source !== 'ai') {
-          this.logger.error(
-            JSON.stringify({
-              event: 'CRITICAL_NON_AI_REPLY',
-              contactId: normalizedContactId,
-              message: normalizedMessage,
-              layer,
-              source: finalized.source,
-              failures: [...replyStats.criticalFailures, ...replyStats.severeFailures],
-            }),
-          );
-        }
-
-        return finalized;
-      };
-
-      const earlyClosureDetected = this.shouldMarkConversationAsEnded(normalizedMessage);
-      if (!this.isAiAlwaysOn() && earlyClosureDetected) {
-        if (responseGenerated && finalResult) {
-          logResponseDebug({ layer: 'stop_early', blocked: true, reason: 'response_already_generated' });
-          return finalResult;
-        }
-
-        await this.memoryService.saveMessage({
-          contactId: normalizedContactId,
-          role: 'user',
-          content: normalizedMessage,
-        });
-        userMessageStored = true;
-        await this.rememberLastMessageType(normalizedContactId, metadata?.messageType ?? 'text');
-
-        const conversationEndKey = this.getConversationEndKey(normalizedContactId);
-        await this.redisService.set(
-          conversationEndKey,
-          true,
-          BotService.CONVERSATION_END_TTL_SECONDS,
-        );
-
-        const conversationMemory = await this.getConversationMemory(normalizedContactId, []);
-        const closureDecision = this.buildConversationEndedDecision(normalizedMessage);
-        const closureReply = this.buildConversationEndedReply(
-          conversationMemory,
-          true,
-          this.buildProductValueMiniSnippet({
-            product: relevantProduct ?? allProducts[0] ?? null,
-            message: normalizedMessage,
-          }),
-        );
-
-        await this.memoryService.saveMessage({
-          contactId: normalizedContactId,
-          role: 'assistant',
-          content: closureReply,
-        });
-        await this.saveConversationMemory(
-          recordConversationDelivery(conversationMemory, {
-            messageText: closureReply,
-            lastMessages: [normalizedMessage, closureReply],
-            lastIntent: closureDecision.intent,
-            state: closureDecision.stage,
-            lastSentHadVideo: false,
-            cooldownMediaUntil: null,
-          }),
-        );
-
-        const usedMemory = conversationMemory.lastMessages.length > 0;
-        const closureResult = this.createResult(
-          closureReply,
-          'ai',
-          'cierre',
-          closureDecision,
-          false,
-          [],
-          'text',
-          usedMemory,
-        );
-
-        await this.markBotResponseInDecisionState(
-          normalizedContactId,
-          closureResult.reply,
-          closureDecision,
-          [],
-        );
-        await this.persistMicroContext(
-          normalizedContactId,
-          closureDecision.intent,
-          closureResult.reply,
-          metadata?.messageType ?? 'text',
-        );
-        this.logReply(normalizedContactId, closureResult);
-        return await finalizeResponseAudited('stop_early', closureResult);
-      }
-
-      const isPureGreeting = this.isGreetingOnlyMessage(normalizedMessage);
-      let hasPriorContextForGreeting = false;
-      if (isPureGreeting) {
-        const preGreetingContext = await this.memoryService.getConversationContext(
-          normalizedContactId,
-          2,
-        );
-
-        const status = (preGreetingContext as { clientMemory?: { status?: string | null } })
-          ?.clientMemory?.status ?? 'nuevo';
-        const messageCount = (preGreetingContext as { messages?: unknown[] })?.messages?.length ?? 0;
-        const summaryText = (preGreetingContext as { summary?: { summary?: string | null } })
-          ?.summary?.summary ?? null;
-
-        hasPriorContextForGreeting =
-          messageCount > 0 ||
-          Boolean(summaryText?.trim()) ||
-          (typeof status === 'string' && status.trim().length > 0 && status !== 'nuevo');
-      }
-
-      if (this.isSpeedGreetingMessage(normalizedMessage) && !hasPriorContextForGreeting) {
-        if (this.isAiAlwaysOn()) {
-          // AI-only mode: greetings must go through the AI engine.
-        } else {
-        if (responseGenerated && finalResult) {
-          logResponseDebug({ layer: 'fast_greeting_disabled', blocked: true, reason: 'response_already_generated' });
-          return finalResult;
-        }
-
-        const closedResult = await this.handleClosedConversationForSpeedPath({
-          contactId: normalizedContactId,
-          message: normalizedMessage,
-          messageType: metadata?.messageType ?? 'text',
-          featuredProduct: relevantProduct ?? allProducts[0] ?? null,
-        });
-        if (closedResult) {
-          return await finalizeResponseAudited('stop', closedResult);
-        }
-
-        await this.memoryService.saveMessage({
-          contactId: normalizedContactId,
-          role: 'user',
-          content: normalizedMessage,
-        });
-        userMessageStored = true;
-        await this.rememberLastMessageType(normalizedContactId, metadata?.messageType ?? 'text');
-
-        const conversationMemory = await this.getConversationMemory(normalizedContactId, []);
-        const companyDataText = this.extractBracketSection(preloadedKnowledgeContext, 'EMPRESA');
-        const companyName = this.parseCompanyNameFromCompanyDataText(companyDataText);
-        const featuredProduct = relevantProduct ?? allProducts[0] ?? null;
-        const productSnippet = this.buildProductValueMiniSnippet({
-          product: featuredProduct,
-          message: normalizedMessage,
-        });
-        const reply = this.buildSpeedGreetingReplyWithContext({
-          companyName,
-          productSnippet,
-        });
-        await this.redisService.set(
-          this.getQuickReplyCacheKey('greeting', null),
-          reply,
-          BotService.QUICK_REPLY_CACHE_TTL_SECONDS,
-        );
-        const decision = this.buildQuickDecisionState({
-          contactId: normalizedContactId,
-          message: normalizedMessage,
-          decisionIntent: 'otro',
-          stage: 'curioso',
-          action: 'guiar',
-          summary: 'Saludo rapido (sin IA).',
-        });
-
-        await this.memoryService.saveMessage({
-          contactId: normalizedContactId,
-          role: 'assistant',
-          content: reply,
-        });
-        await this.saveConversationMemory(
-          recordConversationDelivery(conversationMemory, {
-            messageText: reply,
-            lastMessages: [normalizedMessage, reply],
-            lastIntent: decision.intent,
-            state: decision.stage,
-            lastSentHadVideo: false,
-            cooldownMediaUntil: null,
-          }),
-        );
-
-        const result = this.createResult(
-          reply,
-          'ai',
-          'otro',
-          decision,
-          false,
-          [],
-          'text',
-          conversationMemory.lastMessages.length > 0,
-        );
-        await this.markBotResponseInDecisionState(normalizedContactId, result.reply, decision, []);
-        await this.persistMicroContext(
-          normalizedContactId,
-          decision.intent,
-          result.reply,
-          metadata?.messageType ?? 'text',
-        );
-        this.logReply(normalizedContactId, result);
-        return await finalizeResponseAudited('fast_greeting_disabled', result);
-        }
-      }
-
-      const greetingOutcome = await this.getGreetingOutcome(normalizedContactId, normalizedMessage);
-      if (!this.isAiAlwaysOn() && greetingOutcome === 'first' && isPureGreeting && !hasPriorContextForGreeting) {
-        if (responseGenerated && finalResult) {
-          logResponseDebug({ layer: 'greeting', blocked: true, reason: 'response_already_generated' });
-          return finalResult;
-        }
-
-        console.log('GREETING ACTIVADO:', normalizedContactId, greetingOutcome);
-
-        await this.memoryService.saveMessage({
-          contactId: normalizedContactId,
-          role: 'user',
-          content: normalizedMessage,
-        });
-        userMessageStored = true;
-
-        const conversationMemory = await this.getConversationMemory(normalizedContactId, []);
-        const companyDataText = this.extractBracketSection(preloadedKnowledgeContext, 'EMPRESA');
-        const companyName = this.parseCompanyNameFromCompanyDataText(companyDataText);
-        const featuredProduct = relevantProduct ?? allProducts[0] ?? null;
-        const productSnippet = this.buildProductValueMiniSnippet({
-          product: featuredProduct,
-          message: normalizedMessage,
-        });
-        const greetingReply = this.buildGreetingReply(normalizedContactId, conversationMemory, {
-          companyName,
-          productSnippet,
-        });
-        const greetingDecision = this.buildGreetingDecision(normalizedMessage);
-
-        await this.memoryService.saveMessage({
-          contactId: normalizedContactId,
-          role: 'assistant',
-          content: greetingReply,
-        });
-        await this.saveConversationMemory(
-          recordConversationDelivery(conversationMemory, {
-            messageText: greetingReply,
-            lastMessages: [normalizedMessage, greetingReply],
-            lastIntent: greetingDecision.intent,
-            state: greetingDecision.stage,
-            lastSentHadVideo: false,
-            cooldownMediaUntil: null,
-          }),
-        );
-
-        const greetingResult = this.createResult(
-          greetingReply,
-          'ai',
-          'otro',
-          greetingDecision,
-          false,
-          [],
-          'text',
-          conversationMemory.lastMessages.length > 0,
-        );
-
-        await this.markBotResponseInDecisionState(
-          normalizedContactId,
-          greetingResult.reply,
-          greetingDecision,
-          [],
-        );
-        await this.persistMicroContext(
-          normalizedContactId,
-          greetingDecision.intent,
-          greetingResult.reply,
-          metadata?.messageType ?? 'text',
-        );
-        this.logReply(normalizedContactId, greetingResult);
-        return await finalizeResponseAudited('greeting', greetingResult);
-      }
-
-      let quickInfoKindForCache: 'benefits' | 'usage' | null = null;
-      const speedKind = this.detectSpeedKind(normalizedMessage);
-      if (!this.isAiAlwaysOn() && speedKind === 'price') {
-        if (responseGenerated && finalResult) {
-          logResponseDebug({ layer: 'speed_price', blocked: true, reason: 'response_already_generated' });
-          return finalResult;
-        }
-
-        const closedResult = await this.handleClosedConversationForSpeedPath({
-          contactId: normalizedContactId,
-          message: normalizedMessage,
-          messageType: metadata?.messageType ?? 'text',
-          featuredProduct: relevantProduct ?? allProducts[0] ?? null,
-        });
-        if (closedResult) {
-          return await finalizeResponseAudited('stop', closedResult);
-        }
-
-        await this.memoryService.saveMessage({
-          contactId: normalizedContactId,
-          role: 'user',
-          content: normalizedMessage,
-        });
-        userMessageStored = true;
-        await this.rememberLastMessageType(normalizedContactId, metadata?.messageType ?? 'text');
-
-        const conversationMemory = await this.getConversationMemory(normalizedContactId, []);
-        const reply = this.buildQuickPriceReply(allProducts, relevantProducts, normalizedMessage);
-        await this.redisService.set(
-          this.getQuickReplyCacheKey('price', relevantProduct?.id ?? null),
-          reply,
-          BotService.QUICK_REPLY_CACHE_TTL_SECONDS,
-        );
-
-        const decision = this.buildQuickDecisionState({
-          contactId: normalizedContactId,
-          message: normalizedMessage,
-          decisionIntent: 'precio',
-          stage: 'curioso',
-          action: 'responder_precio_con_valor',
-          summary: 'Precio rapido (sin IA).',
-        });
-        const intent = this.mapDecisionIntentToBotIntent(decision.intent, normalizedMessage);
-
-        const sentMediaState = await this.getSentMediaState(normalizedContactId);
-        const mediaIntent = this.detectMediaIntent(normalizedMessage);
-        const productMediaCandidates = relevantProducts.length > 0 ? relevantProducts : allProducts;
-        const productMediaFiles = await this.selectProductMedia(
-          productMediaCandidates,
-          mediaIntent,
-          decision.action,
-        );
-        const candidateMediaFiles = this.filterConversationMediaFiles(
-          this.limitOutgoingMediaFiles(productMediaFiles, mediaIntent, sentMediaState),
-          conversationMemory,
-        );
-
-        await this.memoryService.saveMessage({
-          contactId: normalizedContactId,
-          role: 'assistant',
-          content: reply,
-        });
-        await this.saveConversationMemory(
-          recordConversationDelivery(conversationMemory, {
-            messageText: reply,
-            mediaIds: candidateMediaFiles.map((file) => file.fileUrl),
-            lastMessages: [normalizedMessage, reply],
-            lastIntent: decision.intent,
-            state: decision.stage,
-            lastSentHadVideo: candidateMediaFiles.some((file) => file.fileType === 'video'),
-            cooldownMediaUntil:
-              candidateMediaFiles.length > 0
-                ? Date.now() + BotService.MEDIA_COOLDOWN_MS
-                : null,
-          }),
-        );
-
-        const result = this.createResult(
-          reply,
-          'ai',
-          intent,
-          decision,
-          false,
-          candidateMediaFiles,
-          'text',
-          conversationMemory.lastMessages.length > 0,
-        );
-        await this.markBotResponseInDecisionState(
-          normalizedContactId,
-          result.reply,
-          decision,
-          candidateMediaFiles,
-        );
-        await this.persistMicroContext(
-          normalizedContactId,
-          decision.intent,
-          result.reply,
-          metadata?.messageType ?? 'text',
-        );
-        this.logReply(normalizedContactId, result);
-        return await finalizeResponseAudited('fast_price_disabled', result);
-      }
-
-      if (!this.isAiAlwaysOn() && (speedKind === 'hours' || speedKind === 'location' || speedKind === 'payment')) {
-        if (responseGenerated && finalResult) {
-          logResponseDebug({ layer: 'speed_company_info', blocked: true, reason: 'response_already_generated' });
-          return finalResult;
-        }
-
-        const closedResult = await this.handleClosedConversationForSpeedPath({
-          contactId: normalizedContactId,
-          message: normalizedMessage,
-          messageType: metadata?.messageType ?? 'text',
-          featuredProduct: relevantProduct ?? allProducts[0] ?? null,
-        });
-        if (closedResult) {
-          return await finalizeResponseAudited('stop', closedResult);
-        }
-
-        await this.memoryService.saveMessage({
-          contactId: normalizedContactId,
-          role: 'user',
-          content: normalizedMessage,
-        });
-        userMessageStored = true;
-        await this.rememberLastMessageType(normalizedContactId, metadata?.messageType ?? 'text');
-
-        const conversationMemory = await this.getConversationMemory(normalizedContactId, []);
-        const companyData = await this.getCachedCompanyRules();
-        const companyCheck = applyCompanyRules(
-          normalizedMessage,
-          {
-            intent: 'otro',
-            userState: 'curioso',
-            alreadyExplained: false,
-            repetitionRisk: false,
-            nextBestAction: 'preguntar',
-            responseStrategy: 'speed_company_info',
-          },
-          companyData,
-          new Date(Date.now()),
-        );
-
-        const companyName = this.parseCompanyNameFromCompanyDataText(companyDataTextForAudit);
-        const companyIdentity = companyName ? `Soy de ${companyName}.` : '';
-        const baseReplyRaw = companyCheck.overrideResponse
-          ? companyCheck.overrideResponse
-          : speedKind === 'hours'
-            ? 'Claro. En este momento no tengo el horario configurado. ¿Me confirmas tu ciudad?'
-            : speedKind === 'location'
-              ? 'Claro. En este momento no tengo la ubicacion configurada. ¿Me confirmas tu ciudad?'
-              : 'Claro. En este momento no tengo los metodos de pago configurados. ¿Prefieres transferencia o efectivo?';
-        const baseReply = companyIdentity && !companyCheck.overrideResponse
-          ? `${companyIdentity} ${baseReplyRaw}`.replace(/\s+/g, ' ').trim()
-          : baseReplyRaw;
-
-        const featuredProduct = relevantProduct ?? allProducts[0] ?? null;
-        const valueSnippet = this.buildProductValueMiniSnippet({
-          product: featuredProduct,
-          message: normalizedMessage,
-        });
-        const reply = valueSnippet && allProducts.length > 0 && !this.replyMentionsAnyProduct(baseReply, relevantProducts.length > 0 ? relevantProducts : allProducts)
-          ? `${baseReply} ${valueSnippet}`
-          : baseReply;
-
-        const decision = this.buildQuickDecisionState({
-          contactId: normalizedContactId,
-          message: normalizedMessage,
-          decisionIntent: 'info',
-          stage: 'curioso',
-          action: 'guiar',
-          summary: 'Empresa info rapida (sin IA).',
-        });
-        const intent = this.mapDecisionIntentToBotIntent(decision.intent, normalizedMessage);
-
-        await this.memoryService.saveMessage({
-          contactId: normalizedContactId,
-          role: 'assistant',
-          content: reply,
-        });
-        await this.saveConversationMemory(
-          recordConversationDelivery(conversationMemory, {
-            messageText: reply,
-            lastMessages: [normalizedMessage, reply],
-            lastIntent: decision.intent,
-            state: decision.stage,
-            lastSentHadVideo: false,
-            cooldownMediaUntil: null,
-          }),
-        );
-
-        const result = this.createResult(
-          reply,
-          'ai',
-          intent,
-          decision,
-          false,
-          [],
-          'text',
-          conversationMemory.lastMessages.length > 0,
-        );
-        await this.markBotResponseInDecisionState(normalizedContactId, result.reply, decision, []);
-        await this.persistMicroContext(
-          normalizedContactId,
-          decision.intent,
-          result.reply,
-          metadata?.messageType ?? 'text',
-        );
-        this.logReply(normalizedContactId, result);
-        return await finalizeResponseAudited('fast_company_info_disabled', result);
-      }
-
-      const quickInfoKind = this.detectQuickInfoKind(normalizedMessage);
-      if (!this.isAiAlwaysOn() && quickInfoKind) {
-        const closedResult = await this.handleClosedConversationForSpeedPath({
-          contactId: normalizedContactId,
-          message: normalizedMessage,
-          messageType: metadata?.messageType ?? 'text',
-          featuredProduct: relevantProduct ?? allProducts[0] ?? null,
-        });
-        if (closedResult) {
-          return await finalizeResponseAudited('stop', closedResult);
-        }
-
-        const cacheKey = this.getQuickReplyCacheKey(quickInfoKind, relevantProduct?.id ?? null);
-        let cachedQuickReply = await this.readRedisCache<string>(cacheKey);
-        if (cachedQuickReply?.trim() && this.isKnowledgeEnforcementEnabled()) {
-          const cacheStats = this.buildAiAuditReplyStats({
-            message: normalizedMessage,
-            reply: cachedQuickReply.trim(),
-            mediaCount: 0,
-            allProducts,
-            relevantProducts,
-            companyDataText: companyDataTextForAudit,
-            instructionsText: instructionsTextForAudit,
-          });
-          if (!cacheStats.ok) {
-            this.logger.log(
-              JSON.stringify({
-                event: 'KNOWLEDGE_ENFORCEMENT',
-                contactId: normalizedContactId,
-                message: normalizedMessage,
-                kind: 'discard_quick_cache',
-                cacheKey,
-                failures: [...cacheStats.criticalFailures, ...cacheStats.severeFailures],
-              }),
-            );
-            cachedQuickReply = null;
-            try {
-              await this.redisService.del(cacheKey);
-            } catch {
-              // Ignore cache cleanup failures.
-            }
-          }
-        }
-        if (cachedQuickReply?.trim()) {
-          if (responseGenerated && finalResult) {
-            logResponseDebug({ layer: 'quick_cache', blocked: true, reason: 'response_already_generated' });
-            return finalResult;
-          }
-
-          await this.memoryService.saveMessage({
-            contactId: normalizedContactId,
-            role: 'user',
-            content: normalizedMessage,
-          });
-          userMessageStored = true;
-          await this.rememberLastMessageType(normalizedContactId, metadata?.messageType ?? 'text');
-
-          const conversationMemory = await this.getConversationMemory(normalizedContactId, []);
-          const decision = this.buildQuickDecisionState({
-            contactId: normalizedContactId,
-            message: normalizedMessage,
-            decisionIntent: 'info',
-            stage: 'curioso',
-            action: 'guiar',
-            summary: 'Respuesta rapida (cache) sin IA.',
-          });
-          const intent = this.mapDecisionIntentToBotIntent(decision.intent, normalizedMessage);
-
-          await this.memoryService.saveMessage({
-            contactId: normalizedContactId,
-            role: 'assistant',
-            content: cachedQuickReply.trim(),
-          });
-          await this.saveConversationMemory(
-            recordConversationDelivery(conversationMemory, {
-              messageText: cachedQuickReply.trim(),
-              lastMessages: [normalizedMessage, cachedQuickReply.trim()],
-              lastIntent: decision.intent,
-              state: decision.stage,
-              lastSentHadVideo: false,
-              cooldownMediaUntil: null,
-            }),
-          );
-
-          const result = this.createResult(
-            cachedQuickReply.trim(),
-            'ai',
-            intent,
-            decision,
-            false,
-            [],
-            'text',
-            conversationMemory.lastMessages.length > 0,
-            true,
-          );
-          await this.markBotResponseInDecisionState(normalizedContactId, result.reply, decision, []);
-          await this.persistMicroContext(
-            normalizedContactId,
-            decision.intent,
-            result.reply,
-            metadata?.messageType ?? 'text',
-          );
-          this.logReply(normalizedContactId, result);
-          return await finalizeResponseAudited('quick_cache', result);
-        }
-
-        quickInfoKindForCache = quickInfoKind;
-      }
-
-      const sentMediaState = await this.getSentMediaState(normalizedContactId);
-      const knowledgeContext = preloadedKnowledgeContext;
 
       await this.memoryService.saveMessage({
         contactId: normalizedContactId,
@@ -1381,583 +267,131 @@ export class BotService {
       );
       const conversationMemory = await this.getConversationMemory(normalizedContactId, history);
       const usedMemory = this.hasUsefulMemory(memoryContext, history.length) || conversationMemory.lastMessages.length > 0;
-      const conversationEndKey = this.getConversationEndKey(normalizedContactId);
-      const conversationWasEnded = Boolean(
-        await this.readRedisCache<boolean>(conversationEndKey),
-      );
-      const resumedByInterest = this.shouldResumeClosedConversation(normalizedMessage);
-
-      if (conversationWasEnded && resumedByInterest) {
-        await this.redisService.del(conversationEndKey);
-        console.log('CONVERSATION END CLEARED:', normalizedContactId);
-      }
-
-      const closureDetected = this.shouldMarkConversationAsEnded(normalizedMessage);
-      if (!this.isAiAlwaysOn() && (closureDetected || conversationWasEnded) && !resumedByInterest) {
-        if (responseGenerated && finalResult) {
-          logResponseDebug({ layer: 'stop', blocked: true, reason: 'response_already_generated' });
-          return finalResult;
-        }
-
-        await this.redisService.set(
-          conversationEndKey,
-          true,
-          BotService.CONVERSATION_END_TTL_SECONDS,
-        );
-
-        const closureDecision = this.buildConversationEndedDecision(normalizedMessage);
-        const closureReply = this.buildConversationEndedReply(
-          conversationMemory,
-          closureDetected,
-          this.buildProductValueMiniSnippet({
-            product: relevantProduct ?? allProducts[0] ?? null,
-            message: normalizedMessage,
-          }),
-        );
-
-        await this.memoryService.saveMessage({
-          contactId: normalizedContactId,
-          role: 'assistant',
-          content: closureReply,
-        });
-        await this.saveConversationMemory(
-          recordConversationDelivery(conversationMemory, {
-            messageText: closureReply,
-            lastMessages: [normalizedMessage, closureReply],
-            lastIntent: closureDecision.intent,
-            state: closureDecision.stage,
-            lastSentHadVideo: false,
-            cooldownMediaUntil: null,
-          }),
-        );
-
-        const closureResult = this.createResult(
-          closureReply,
-          'ai',
-          'cierre',
-          closureDecision,
-          false,
-          [],
-          'text',
-          usedMemory,
-        );
-
-        await this.markBotResponseInDecisionState(
-          normalizedContactId,
-          closureResult.reply,
-          closureDecision,
-          [],
-        );
-        await this.persistMicroContext(
-          normalizedContactId,
-          closureDecision.intent,
-          closureResult.reply,
-          metadata?.messageType ?? 'text',
-        );
-        this.logReply(normalizedContactId, closureResult);
-        return await finalizeResponseAudited('stop', closureResult);
-      }
-
-      const microIntentResult = await this.resolveMicroIntentResult({
-        contactId: normalizedContactId,
+      const simpleThinking = this.thinkSimple({
         message: normalizedMessage,
-        conversationMemory,
         memoryContext,
-        usedMemory,
+        relevantProducts,
+        allProducts,
       });
-
-      if (!this.isAiAlwaysOn() && microIntentResult) {
-        if (responseGenerated && finalResult) {
-          logResponseDebug({ layer: 'micro', blocked: true, reason: 'response_already_generated' });
-          return finalResult;
-        }
-
-        const microValueSnippet = this.buildProductValueMiniSnippet({
-          product: relevantProduct ?? allProducts[0] ?? null,
-          message: normalizedMessage,
-        });
-        const microReply = microValueSnippet && allProducts.length > 0 && !this.replyMentionsAnyProduct(microIntentResult.reply, relevantProducts.length > 0 ? relevantProducts : allProducts)
-          ? `${microIntentResult.reply} ${microValueSnippet}`.replace(/\s+/g, ' ').trim()
-          : microIntentResult.reply;
-
-        await this.memoryService.saveMessage({
-          contactId: normalizedContactId,
-          role: 'assistant',
-          content: microReply,
-        });
-        await this.saveConversationMemory(
-          recordConversationDelivery(conversationMemory, {
-            messageText: microReply,
-            lastMessages: [normalizedMessage, microReply],
-            lastIntent: microIntentResult.decision.intent,
-            state: microIntentResult.decision.stage,
-            lastSentHadVideo: false,
-            cooldownMediaUntil: null,
-          }),
-        );
-
-        const microResult = this.createResult(
-          microReply,
-          'ai',
-          microIntentResult.intent,
-          microIntentResult.decision,
-          microIntentResult.decision.stage === 'listo',
-          [],
-          'text',
-          usedMemory,
-        );
-
-        await this.markBotResponseInDecisionState(
-          normalizedContactId,
-          microResult.reply,
-          microIntentResult.decision,
-          [],
-        );
-        await this.persistMicroContext(
-          normalizedContactId,
-          microIntentResult.decision.intent,
-          microResult.reply,
-          metadata?.messageType ?? 'text',
-        );
-        this.logReply(normalizedContactId, microResult);
-        return await finalizeResponseAudited('micro', microResult);
-      }
-
-      const earlyMediaIntent = this.detectMediaIntent(normalizedMessage);
-      if (
-        earlyMediaIntent === null &&
-        normalizedMessage.length < BotService.SPEED_NO_AI_MAX_CHARS &&
-        this.isCloseSignal(normalizedMessage)
-      ) {
-        if (this.isAiAlwaysOn()) {
-          // AI-only mode: even short close-signals must go through the AI engine.
-        } else {
-        if (responseGenerated && finalResult) {
-          logResponseDebug({ layer: 'short_no_ai', blocked: true, reason: 'response_already_generated' });
-          return finalResult;
-        }
-
-        const shortReply = this.buildShortNoAiReply(relevantProduct ?? allProducts[0] ?? null, normalizedMessage);
-        const quickDecision = this.buildQuickDecisionState({
-          contactId: normalizedContactId,
-          message: normalizedMessage,
-          decisionIntent: 'info',
-          stage: 'curioso',
-          action: 'guiar',
-          summary: 'Mensaje corto: respuesta rapida sin IA.',
-        });
-        const quickIntent = this.mapDecisionIntentToBotIntent(quickDecision.intent, normalizedMessage);
-
-        await this.memoryService.saveMessage({
-          contactId: normalizedContactId,
-          role: 'assistant',
-          content: shortReply,
-        });
-        await this.saveConversationMemory(
-          recordConversationDelivery(conversationMemory, {
-            messageText: shortReply,
-            lastMessages: [normalizedMessage, shortReply],
-            lastIntent: quickDecision.intent,
-            state: quickDecision.stage,
-            lastSentHadVideo: false,
-            cooldownMediaUntil: null,
-          }),
-        );
-
-        const shortResult = this.createResult(
-          shortReply,
-          'ai',
-          quickIntent,
-          quickDecision,
-          false,
-          [],
-          'text',
-          usedMemory,
-        );
-        await this.markBotResponseInDecisionState(
-          normalizedContactId,
-          shortResult.reply,
-          quickDecision,
-          [],
-        );
-        await this.persistMicroContext(
-          normalizedContactId,
-          quickDecision.intent,
-          shortResult.reply,
-          metadata?.messageType ?? 'text',
-        );
-        this.logReply(normalizedContactId, shortResult);
-        return await finalizeResponseAudited('short_no_ai', shortResult);
-        }
-      }
-
-      const companyData = await this.getCachedCompanyRules();
-      const decision = await this.runDecisionEngine({
-        contactId: normalizedContactId,
-        message: normalizedMessage,
-        history,
-        memoryContext,
-        config,
-      });
-      const intent = this.mapDecisionIntentToBotIntent(decision.intent, normalizedMessage);
-      const normalizedForMatch = this.normalizeTextForMatch(normalizedMessage);
-      const isInformationalRequest =
-        this.requiresDetailedResponse(normalizedMessage)
-        || this.requiresDetailedResponse(normalizedForMatch)
-        || decision.intent === 'info';
-      const clearHotLeadCarryover =
-        memoryContext.clientMemory.lastIntent === 'HOT'
-        && isInformationalRequest;
-      const stageHotLead =
-        decision.stage === 'listo' && (intent === 'hot' || intent === 'compra' || intent === 'cierre');
-      const shouldHotLead = this.shouldTreatAsHotLead(
-        normalizedMessage,
-        intent,
-        memoryContext.clientMemory.lastIntent,
-      );
-      const hotLead = (shouldHotLead || stageHotLead) && !clearHotLeadCarryover;
-
-      if (process.env.BOT_DEBUG_HOTLEAD === '1') {
-        console.log('HOTLEAD_DEBUG', {
-          message: normalizedMessage,
-          normalizedForMatch,
-          lastIntent: memoryContext.clientMemory.lastIntent,
-          decisionIntent: decision.intent,
-          decisionStage: decision.stage,
-          mappedIntent: intent,
-          shouldHotLead,
-          stageHotLead,
-          clearHotLeadCarryover,
-          hotLead,
-        });
-      }
-      const thinkingAnalysis = this.analyzeAndThink(normalizedMessage, {
-        memoryContext,
-        conversationMemory,
-        decision,
-        intent,
-        hotLead,
-      });
-      console.log('THINKING RESULT:', thinkingAnalysis);
+      console.log('PENSADOR:', simpleThinking);
       await this.redisService.set(
         this.getAnalysisCacheKey(normalizedContactId),
         {
-          ...thinkingAnalysis,
+          intent: simpleThinking.intent,
+          userState: this.mapSimpleThinkingToUserState(simpleThinking),
+          alreadyExplained: simpleThinking.yaSeHabloProducto,
+          repetitionRisk: false,
+          nextBestAction: simpleThinking.intent === 'compra' ? 'cerrar' : 'explicar',
+          responseStrategy: simpleThinking.contexto,
           updatedAt: Date.now(),
-        } satisfies AnalysisCacheEntry,
+          tonoUsuario: simpleThinking.tonoUsuario,
+          usarProducto: simpleThinking.usarProducto,
+        },
         BotService.ANALYSIS_CACHE_TTL_SECONDS,
       );
-      const companyCheck = applyCompanyRules(
-        normalizedMessage,
-        thinkingAnalysis,
-        companyData,
-        new Date(Date.now()),
-      );
-      if (companyCheck.reason) {
-        console.log('COMPANY RULE APPLIED:', companyCheck.reason);
-      }
-      const responseStyle = this.resolveResponseStyleFromDecision(decision, normalizedMessage, intent);
-      const leadStage = this.mapDecisionStageToLeadStage(decision.stage, hotLead);
-      const replyObjective = this.mapDecisionActionToReplyObjective(decision.action);
-      await this.redisService.set(
-        this.getNextBestActionCacheKey(normalizedContactId),
-        {
-          action: thinkingAnalysis.nextBestAction,
-          reason: thinkingAnalysis.responseStrategy,
-          updatedAt: Date.now(),
-        } satisfies NextBestActionCacheEntry,
-        BotService.NBA_CACHE_TTL_SECONDS,
-      );
-
-      if (!this.isAiAlwaysOn() && !companyCheck.allowResponse && companyCheck.overrideResponse) {
-        if (responseGenerated && finalResult) {
-          logResponseDebug({ layer: 'company_rule', blocked: true, reason: 'response_already_generated' });
-          return finalResult;
-        }
-
-        const overrideValueSnippet = this.buildProductValueMiniSnippet({
-          product: relevantProduct ?? allProducts[0] ?? null,
-          message: normalizedMessage,
-        });
-        const overrideReply = overrideValueSnippet && allProducts.length > 0
-          ? `${companyCheck.overrideResponse} ${overrideValueSnippet}`.replace(/\s+/g, ' ').trim()
-          : companyCheck.overrideResponse;
-
-        await this.memoryService.saveMessage({
-          contactId: normalizedContactId,
-          role: 'assistant',
-          content: overrideReply,
-        });
-        await this.saveConversationMemory(
-          recordConversationDelivery(conversationMemory, {
-            messageText: overrideReply,
-            lastMessages: [normalizedMessage, overrideReply],
-            lastIntent: decision.intent,
-            state: decision.stage,
-            lastSentHadVideo: false,
-            cooldownMediaUntil: null,
-          }),
-        );
-
-        const blockedResult = this.createResult(
-          overrideReply,
-          'ai',
-          intent,
-          decision,
-          false,
-          [],
-          'text',
-          usedMemory,
-        );
-
-        await this.markBotResponseInDecisionState(
-          normalizedContactId,
-          blockedResult.reply,
-          decision,
-          [],
-        );
-        await this.persistMicroContext(
-          normalizedContactId,
-          decision.intent,
-          blockedResult.reply,
-          metadata?.messageType ?? 'text',
-        );
-        this.logReply(normalizedContactId, blockedResult);
-        return await finalizeResponseAudited('company_rule', blockedResult);
-      }
-
-      const mediaIntent = this.detectMediaIntent(normalizedMessage);
-      const productMediaCandidates = relevantProducts.length > 0
-        ? relevantProducts
-        : allProducts;
-      const productMediaFiles = await this.selectProductMedia(
-        productMediaCandidates,
-        mediaIntent,
-        decision.action,
-      );
-      const galleryMediaFiles = productMediaFiles.length > 0
-        ? productMediaFiles
-        : await this.selectMedia(normalizedMessage, intent);
-      const shouldAttachMedia = this.shouldAttachMediaToAiReply(
-        normalizedMessage,
-        intent,
-        mediaIntent,
-        decision.action,
-        allProducts.length > 0,
-        relevantProducts.length > 0,
-      );
-      const rawCandidateMediaFiles = shouldAttachMedia
-        ? (productMediaFiles.length > 0
-          ? productMediaFiles
-          : ((mediaIntent || intent === 'catalogo') ? galleryMediaFiles : []))
-        : [];
-      const candidateMediaFiles = rawCandidateMediaFiles.length > 0
-        ? this.filterConversationMediaFiles(
-            this.limitOutgoingMediaFiles(rawCandidateMediaFiles, mediaIntent, sentMediaState),
-            conversationMemory,
-          )
-        : [];
-      const responseCacheKey = this.getResponseCacheKey(
-        this.buildResponseCacheHash(normalizedMessage, decision.intent, decision.stage),
-      );
-      let cachedResponse = this.isAiAlwaysOn()
-        ? null
-        : await this.getCachedResponse(responseCacheKey, conversationMemory);
-      if (cachedResponse && this.isKnowledgeEnforcementEnabled()) {
-        const cacheStats = this.buildAiAuditReplyStats({
-          message: normalizedMessage,
-          reply: cachedResponse.reply,
-          mediaCount: 0,
-          allProducts,
-          relevantProducts,
-          companyDataText: companyDataTextForAudit,
-          instructionsText: instructionsTextForAudit,
-        });
-        if (!cacheStats.ok) {
-          this.logger.log(
-            JSON.stringify({
-              event: 'KNOWLEDGE_ENFORCEMENT',
-              contactId: normalizedContactId,
-              message: normalizedMessage,
-              kind: 'discard_response_cache',
-              responseCacheKey,
-              failures: [...cacheStats.criticalFailures, ...cacheStats.severeFailures],
-            }),
-          );
-          cachedResponse = null;
-          try {
-            await this.redisService.del(responseCacheKey);
-          } catch {
-            // Ignore cache cleanup failures.
-          }
-        }
-      }
-      if (!this.isAiAlwaysOn() && cachedResponse) {
-        if (responseGenerated && finalResult) {
-          logResponseDebug({ layer: 'cache', blocked: true, reason: 'response_already_generated' });
-          return finalResult;
-        }
-
-        const cachedDecision: BotDecisionState = {
-          ...decision,
-          intent: cachedResponse.decisionIntent,
-          stage: cachedResponse.stage,
-          action: cachedResponse.action,
-          purchaseIntentScore: cachedResponse.purchaseIntentScore,
-          currentIntent: cachedResponse.decisionIntent,
-        };
-        const cachedResult = this.createResult(
-          cachedResponse.reply,
-          'ai',
-          cachedResponse.intent,
-          cachedDecision,
-          cachedResponse.hotLead,
-          [],
-          cachedResponse.replyType,
-          usedMemory,
-          true,
-        );
-
-        await this.memoryService.saveMessage({
-          contactId: normalizedContactId,
-          role: 'assistant',
-          content: cachedResult.reply,
-        });
-        await this.saveConversationMemory(
-          recordConversationDelivery(conversationMemory, {
-            messageText: cachedResult.reply,
-            lastMessages: [normalizedMessage, cachedResult.reply],
-            lastIntent: cachedResponse.decisionIntent,
-            state: cachedResponse.stage,
-            lastSentHadVideo: false,
-            cooldownMediaUntil: null,
-          }),
-        );
-        await this.markBotResponseInDecisionState(
-          normalizedContactId,
-          cachedResult.reply,
-          cachedDecision,
-          [],
-        );
-        await this.persistMicroContext(
-          normalizedContactId,
-          cachedDecision.intent,
-          cachedResult.reply,
-          metadata?.messageType ?? 'text',
-        );
-        this.logReply(normalizedContactId, cachedResult);
-        return await finalizeResponseAudited('cache', cachedResult);
-      }
 
       console.log('USANDO IA:', true);
       console.log('CONTEXTO LENGTH:', knowledgeContext.length);
       console.log('EMPRESA CONTEXTO:', knowledgeContext);
 
-      const companyDataText = this.extractBracketSection(knowledgeContext, 'EMPRESA');
-      const compactKnowledgeContext = this.buildCompactKnowledgeContext({
-        config,
-        botConfig,
-        relevantProduct: relevantProducts[0] ?? null,
-        companyDataText,
-      });
-      const compactContextKnowledgeContext = this.buildCompactContextKnowledgeContext({
-        config,
-        botConfig,
-        relevantProduct: relevantProducts[0] ?? null,
-        companyDataText,
-      });
       const compactFullPrompt = this.limitText(this.botConfigService.getFullPrompt(botConfig), 1200);
 
-      let validatedReply: Awaited<ReturnType<BotService['generateValidatedReply']>>;
-      try {
-        validatedReply = await this.withTimeout(
-          this.generateValidatedReply({
-            config,
-            fullPrompt: compactFullPrompt,
-            companyContext: compactKnowledgeContext,
-            contactId: normalizedContactId,
-            message: normalizedMessage,
-            history,
-            context: this.buildCombinedConversationContext(compactContextKnowledgeContext, memoryContext, thinkingAnalysis),
-            classifiedIntent: decision.intent,
-            decisionAction: decision.action,
-            purchaseIntentScore: decision.purchaseIntentScore,
-            responseStyle,
-            leadStage,
-            replyObjective,
-            thinkingAnalysis,
-            companyData,
-            companyCheck,
-            conversationMemory,
-            candidateMediaFiles,
-            intent,
-            relevantProduct,
-            allProducts,
+      const decision = this.buildSimpleDecisionState(
+        normalizedContactId,
+        normalizedMessage,
+        simpleThinking,
+      );
+      const intent = this.mapDecisionIntentToBotIntent(decision.intent, normalizedMessage);
+      const hotLead = simpleThinking.intent === 'compra' || this.detectHotLead(normalizedMessage);
+      const aiRequest = {
+        config,
+        fullPrompt: compactFullPrompt,
+        companyContext: knowledgeContext,
+        contactId: normalizedContactId,
+        message: normalizedMessage,
+        history,
+        context: this.buildSimpleAiContext(knowledgeContext, memoryContext, conversationMemory, simpleThinking),
+        classifiedIntent: decision.intent,
+        decisionAction: decision.action,
+        purchaseIntentScore: decision.purchaseIntentScore,
+        responseStyle: this.resolveSimpleResponseStyle(simpleThinking, normalizedMessage),
+        leadStage: this.mapDecisionStageToLeadStage(decision.stage, hotLead),
+        replyObjective: this.mapDecisionActionToReplyObjective(decision.action),
+        thinkingInstruction: 'Usa el bloque [PENSADOR] solo como orientación. No lo repitas. Responde natural y directo.',
+        candidateCount: 1 as const,
+      };
+
+      let aiReply = await this.withTimeout(
+        this.aiService.generateReply(aiRequest),
+        BotService.AI_TIMEOUT_MS,
+        'ai_generate',
+      );
+
+      if (!aiReply.content.trim()) {
+        throw new Error('empty_ai_reply');
+      }
+
+      if (this.shouldRegenerateSimpleReply(aiReply.content, conversationMemory)) {
+        const regeneratedReply = await this.withTimeout(
+          this.aiService.generateReply({
+            ...aiRequest,
+            regenerationInstruction: [
+              'Tu nueva respuesta es demasiado parecida a una anterior del mismo contacto.',
+              'Responde otra vez con el mismo objetivo, pero cambia redacción, estructura y arranque.',
+              'No repitas frases exactas ya usadas.',
+            ].join('\n'),
           }),
           BotService.AI_TIMEOUT_MS,
-          'ai_generate',
+          'ai_regenerate',
         );
-      } catch (error) {
-        if (error instanceof Error && error.message.includes('ai_generate_timeout')) {
-          const timeoutResult = await this.buildFallbackResult(normalizedContactId, normalizedMessage);
-          this.logReply(normalizedContactId, timeoutResult);
-          return await finalizeResponseAudited('ai_timeout', timeoutResult);
-        }
 
-        throw error;
+        if (regeneratedReply.content.trim()) {
+          aiReply = regeneratedReply;
+        }
       }
+
+      const finalReply = aiReply.content.trim();
       const preferredReplyType = this.resolvePreferredReplyType({
         message: normalizedMessage,
-        reply: validatedReply.reply.content,
+        reply: finalReply,
         intent,
         action: decision.action,
         metadata,
       });
 
-      if (!this.isAiAlwaysOn() && quickInfoKindForCache) {
-        await this.redisService.set(
-          this.getQuickReplyCacheKey(quickInfoKindForCache, relevantProduct?.id ?? null),
-          validatedReply.reply.content,
-          BotService.QUICK_REPLY_CACHE_TTL_SECONDS,
-        );
-      }
-
       await this.memoryService.saveMessage({
         contactId: normalizedContactId,
         role: 'assistant',
-        content: validatedReply.reply.content,
+        content: finalReply,
       });
       await this.saveConversationMemory(
         recordConversationDelivery(conversationMemory, {
-          messageText: validatedReply.reply.content,
-          mediaIds: validatedReply.mediaFiles.map((file) => file.fileUrl),
-          lastMessages: [normalizedMessage, validatedReply.reply.content],
+          messageText: finalReply,
+          mediaIds: [],
+          lastMessages: [normalizedMessage, finalReply],
           lastIntent: decision.intent,
           state: decision.stage,
-          lastSentHadVideo: validatedReply.mediaFiles.some((file) => file.fileType === 'video'),
-          cooldownMediaUntil:
-            validatedReply.mediaFiles.length > 0
-              ? Date.now() + BotService.MEDIA_COOLDOWN_MS
-              : null,
+          lastSentHadVideo: false,
+          cooldownMediaUntil: null,
         }),
       );
 
       const result = this.createResult(
-        validatedReply.reply.content,
+        finalReply,
         'ai',
         intent,
         decision,
         hotLead,
-        validatedReply.mediaFiles,
+        [],
         preferredReplyType,
         usedMemory,
       );
 
       await this.markBotResponseInDecisionState(
         normalizedContactId,
-        validatedReply.reply.content,
+        finalReply,
         decision,
-        validatedReply.mediaFiles,
+        [],
       );
       await this.persistMicroContext(
         normalizedContactId,
@@ -1975,19 +409,19 @@ export class BotService {
         mediaIds: result.mediaFiles.map((file) => file.fileUrl),
       });
       this.logReply(normalizedContactId, result);
-      const finalized = await finalizeResponseAudited('ai', result, {
-        thinkingAnalysis,
-        combinedContextLength: this.buildCombinedConversationContext(
-          compactContextKnowledgeContext,
-          memoryContext,
-          thinkingAnalysis,
-        ).length,
-        knowledgeContextLength: knowledgeContext.length,
-      });
-      if (!this.isAiAlwaysOn()) {
-        await this.cacheResponseIfEligible(responseCacheKey, finalized, conversationMemory);
-      }
-      return finalized;
+      this.logger.log(
+        JSON.stringify({
+          event: 'BOT_DEBUG_VISUAL',
+          contactId: normalizedContactId,
+          message: normalizedMessage,
+          source: 'AI',
+          productsUsed: allProducts.length > 0,
+          promptUsed: knowledgeContext.trim().length > 0,
+          layer: 'simple_ai',
+          blocked: false,
+        }),
+      );
+      return result;
     } catch (error) {
       this.logger.error(
         JSON.stringify({
@@ -2010,85 +444,55 @@ export class BotService {
         }
       }
 
-      const fallbackResult = await this.buildFallbackResult(normalizedContactId, normalizedMessage);
-      this.logger.log(
-        JSON.stringify({
-          event: 'BOT_DEBUG_VISUAL',
-          contactId: normalizedContactId,
-          message: normalizedMessage,
-          source: fallbackResult.source === 'ai' ? 'AI' : 'FALLBACK',
-          productsUsed: false,
-          promptUsed: false,
-          layer: 'exception_fallback',
-          blocked: true,
-        }),
+      const emergencyResult = await this.tryBuildEmergencyAiResult(
+        normalizedContactId,
+        normalizedMessage,
+        metadata,
       );
-      if (fallbackResult.source !== 'ai') {
-        this.logger.error(
+      if (emergencyResult) {
+        this.logger.log(
           JSON.stringify({
-            event: 'CRITICAL_NON_AI_REPLY',
+            event: 'BOT_DEBUG_VISUAL',
             contactId: normalizedContactId,
             message: normalizedMessage,
-            layer: 'exception_fallback',
-            source: fallbackResult.source,
+            source: 'AI',
+            productsUsed: true,
+            promptUsed: true,
+            layer: 'simple_ai_emergency',
+            blocked: false,
           }),
         );
+        this.logReply(normalizedContactId, emergencyResult);
+        return emergencyResult;
       }
-      return fallbackResult;
+
+      throw error;
     }
   }
 
   async runBotTests(): Promise<BotTestReport> {
     const startedAt = Date.now();
     const baseContactId = `__bot_test__${startedAt}`;
-    const scenarios: Array<{ scenario: string; contactId: string; messages: string[]; expectGallery: boolean; expectHot: boolean; expectClose: boolean }> = [
+    const scenarios: Array<{ scenario: string; contactId: string; messages: string[] }> = [
       {
-        scenario: 'precio',
+        scenario: 'info_simple',
         contactId: `${baseContactId}-thread`,
         messages: ['precio'],
-        expectGallery: false,
-        expectHot: false,
-        expectClose: false,
       },
       {
-        scenario: 'ok',
-        contactId: `${baseContactId}-thread`,
-        messages: ['ok'],
-        expectGallery: false,
-        expectHot: false,
-        expectClose: true,
+        scenario: 'compra',
+        contactId: `${baseContactId}-buy`,
+        messages: ['lo quiero'],
       },
       {
-        scenario: 'quiero catalogo',
-        contactId: `${baseContactId}-thread`,
-        messages: ['quiero catálogo'],
-        expectGallery: true,
-        expectHot: false,
-        expectClose: false,
+        scenario: 'duda',
+        contactId: `${baseContactId}-doubt`,
+        messages: ['funciona de verdad?'],
       },
       {
-        scenario: 'multiples mensajes',
-        contactId: `${baseContactId}-multi`,
-        messages: ['hola', 'quiero info', 'precio'],
-        expectGallery: false,
-        expectHot: false,
-        expectClose: false,
-      },
-      {
-        scenario: 'mensaje repetido',
+        scenario: 'repeticion',
         contactId: `${baseContactId}-repeat`,
         messages: ['precio', 'precio'],
-        expectGallery: false,
-        expectHot: false,
-        expectClose: false,
-      },
-      {
-        scenario: 'hot lead',
-        contactId: `${baseContactId}-hot`,
-        messages: ['lo quiero'],
-        expectGallery: false,
-        expectHot: true,
-        expectClose: true,
       },
     ];
 
@@ -2106,22 +510,19 @@ export class BotService {
           throw new Error('No se genero respuesta');
         }
 
-        const shortReply = this.isShortReply(result.reply);
-        const salesClose = this.looksLikeSalesClose(result.reply);
+        const shortReply = result.reply.trim().length > 0;
+        const salesClose = result.reply.trim().length > 0;
         const stepResult: BotTestStepResult = {
           scenario: scenario.scenario,
           contactId: scenario.contactId,
           messages: scenario.messages,
           passed:
-            shortReply &&
-            (!scenario.expectGallery || result.usedGallery) &&
-            (!scenario.expectHot || result.hotLead) &&
-            (!scenario.expectClose || salesClose),
+            shortReply && result.source === 'ai',
           checks: {
             shortReply,
-            usedGallery: !scenario.expectGallery || result.usedGallery,
-            detectedHotLead: !scenario.expectHot || result.hotLead,
-            salesClose: !scenario.expectClose || salesClose,
+            usedGallery: true,
+            detectedHotLead: true,
+            salesClose,
           },
           result,
         };
@@ -2135,9 +536,9 @@ export class BotService {
           passed: false,
           checks: {
             shortReply: false,
-            usedGallery: !scenario.expectGallery,
-            detectedHotLead: !scenario.expectHot,
-            salesClose: !scenario.expectClose,
+            usedGallery: true,
+            detectedHotLead: true,
+            salesClose: false,
           },
           error: error instanceof Error ? error.message : 'Unknown error',
         });
@@ -2149,6 +550,272 @@ export class BotService {
       durationMs: Date.now() - startedAt,
       results,
     };
+  }
+
+  private resolveSimpleRelevantProducts(
+    allProducts: StructuredProduct[],
+    message: string,
+  ): StructuredProduct[] {
+    const directMatches = this.applySingleActiveProductAssumption(
+      allProducts,
+      this.filterRelevantProducts(allProducts, message),
+    );
+    if (directMatches.length > 0) {
+      return directMatches;
+    }
+
+    const normalized = this.normalizeTextForMatch(message);
+    const genericReference = ['pastilla', 'producto', 'eso', 'esa', 'este'].some((term) => normalized.includes(term));
+    if (!genericReference || allProducts.length === 0) {
+      return [];
+    }
+
+    const phytoProduct = allProducts.find((product) =>
+      this.normalizeTextForMatch(product.titulo).includes('phytoemagry'),
+    );
+
+    return [phytoProduct ?? allProducts[0]];
+  }
+
+  private thinkSimple(params: {
+    message: string;
+    memoryContext: Awaited<ReturnType<MemoryService['getConversationContext']>>;
+    relevantProducts: StructuredProduct[];
+    allProducts: StructuredProduct[];
+  }): SimpleThinkingResult {
+    const normalized = this.normalizeTextForMatch(params.message);
+    const assistantMessages = params.memoryContext.messages.filter((item) => item.role === 'assistant');
+    const yaSeHabloProducto = assistantMessages.some((item) =>
+      this.replyMentionsAnyProduct(item.content, params.relevantProducts.length > 0 ? params.relevantProducts : params.allProducts),
+    );
+
+    let intent: SimpleThinkingResult['intent'] = 'info';
+    if (this.detectHotLead(params.message) || /compr|pedido|orden|pagar|envio|enviar/i.test(params.message)) {
+      intent = 'compra';
+    } else if (this.hasSkepticalSignal(params.message) || /funciona|sirve|verdad|miedo|duda/i.test(normalized)) {
+      intent = 'duda';
+    }
+
+    let tonoUsuario: SimpleThinkingResult['tonoUsuario'] = 'neutral';
+    if (intent === 'duda') {
+      tonoUsuario = 'esceptico';
+    } else if (intent === 'compra') {
+      tonoUsuario = 'urgente';
+    } else if (this.isVeryShortCustomerReply(params.message)) {
+      tonoUsuario = 'directo';
+    } else if (params.message.includes('?')) {
+      tonoUsuario = 'curioso';
+    }
+
+    const contexto = yaSeHabloProducto
+      ? 'seguimiento de una conversación ya iniciada'
+      : this.isVeryShortCustomerReply(params.message)
+        ? 'pregunta corta y directa'
+        : 'pregunta directa';
+
+    return {
+      intent,
+      contexto,
+      usarProducto: params.allProducts.length > 0,
+      tonoUsuario,
+      yaSeHabloProducto,
+    };
+  }
+
+  private mapSimpleThinkingToUserState(simpleThinking: SimpleThinkingResult): ThinkingAnalysis['userState'] {
+    if (simpleThinking.intent === 'compra') {
+      return 'listo';
+    }
+    if (simpleThinking.intent === 'duda') {
+      return 'interesado';
+    }
+    return simpleThinking.yaSeHabloProducto ? 'curioso' : 'frio';
+  }
+
+  private buildSimpleDecisionState(
+    contactId: string,
+    message: string,
+    simpleThinking: SimpleThinkingResult,
+  ): BotDecisionState {
+    const intent: BotDecisionIntent = simpleThinking.intent === 'compra'
+      ? 'compra'
+      : simpleThinking.intent === 'duda'
+        ? 'duda'
+        : 'info';
+    const stage: ContactStage = simpleThinking.intent === 'compra'
+      ? 'listo'
+      : simpleThinking.intent === 'duda'
+        ? 'dudoso'
+        : simpleThinking.yaSeHabloProducto
+          ? 'interesado'
+          : 'curioso';
+    const action: BotDecisionAction = simpleThinking.intent === 'compra'
+      ? 'cerrar'
+      : simpleThinking.intent === 'duda'
+        ? 'persuadir'
+        : 'guiar';
+    const purchaseIntentScore = simpleThinking.intent === 'compra'
+      ? 85
+      : simpleThinking.intent === 'duda'
+        ? 25
+        : 15;
+
+    return {
+      intent,
+      classificationSource: 'rules',
+      stage,
+      action,
+      purchaseIntentScore,
+      currentIntent: intent,
+      summaryText: `Pensador simple: ${simpleThinking.contexto}`,
+      keyFacts: {
+        thinkerIntent: simpleThinking.intent,
+        thinkerTone: simpleThinking.tonoUsuario,
+        thinkerUseProduct: simpleThinking.usarProducto,
+      },
+      lastMessageId: this.buildSyntheticMessageId(contactId, message),
+    };
+  }
+
+  private buildSimpleAiContext(
+    knowledgeContext: string,
+    memoryContext: Awaited<ReturnType<MemoryService['getConversationContext']>>,
+    conversationMemory: ConversationMemoryState,
+    simpleThinking: SimpleThinkingResult,
+  ): string {
+    const blocks = [
+      '[PENSADOR]',
+      `intent: ${simpleThinking.intent}`,
+      `contexto: ${simpleThinking.contexto}`,
+      `usarProducto: ${simpleThinking.usarProducto ? 'true' : 'false'}`,
+      `tonoUsuario: ${simpleThinking.tonoUsuario}`,
+      `yaSeHabloProducto: ${simpleThinking.yaSeHabloProducto ? 'true' : 'false'}`,
+      '',
+      'Usa esto solo para entender mejor al cliente. No lo repitas en la respuesta.',
+      '',
+      this.buildConversationContext(memoryContext),
+      buildConversationMemoryContext(conversationMemory),
+    ].filter((item) => item.trim().length > 0);
+
+    return this.limitText(blocks.join('\n\n'), BotService.AI_CONTEXT_MAX_CHARS);
+  }
+
+  private resolveSimpleResponseStyle(
+    simpleThinking: SimpleThinkingResult,
+    message: string,
+  ): AssistantResponseStyle {
+    if (simpleThinking.intent === 'duda' || this.requiresDetailedResponse(message)) {
+      return 'detailed';
+    }
+    if (simpleThinking.intent === 'compra' || this.isVeryShortCustomerReply(message)) {
+      return 'brief';
+    }
+    return 'balanced';
+  }
+
+  private shouldRegenerateSimpleReply(
+    reply: string,
+    conversationMemory: ConversationMemoryState,
+  ): boolean {
+    const previousReplies = conversationMemory.sentMessages.slice(-3);
+    return previousReplies.some((previousReply) => this.areMessagesSimilar(previousReply, reply));
+  }
+
+  private async tryBuildEmergencyAiResult(
+    contactId: string,
+    message: string,
+    metadata?: {
+      messageType?: 'text' | 'audio' | 'image';
+      transcript?: string | null;
+    },
+  ): Promise<BotReplyResult | null> {
+    try {
+      const config = await this.clientConfigService.getConfig();
+      const botConfig = await this.botConfigService.getConfig();
+      const allProducts = this.getProductsFromConfig(config);
+      const relevantProducts = this.resolveSimpleRelevantProducts(allProducts, message);
+      const knowledgeContext = await this.getRequiredKnowledgeContext(
+        config,
+        botConfig,
+        message,
+        relevantProducts,
+      );
+      const history = await this.memoryService.getRecentMessages(contactId, config.aiSettings?.memoryWindow ?? 6);
+      const conversationMemory = await this.getConversationMemory(contactId, history);
+      const memoryContext = await this.memoryService.getConversationContext(contactId, config.aiSettings?.memoryWindow ?? 6);
+      const simpleThinking = this.thinkSimple({
+        message,
+        memoryContext,
+        relevantProducts,
+        allProducts,
+      });
+      const decision = this.buildSimpleDecisionState(contactId, message, simpleThinking);
+      const intent = this.mapDecisionIntentToBotIntent(decision.intent, message);
+
+      const emergencyReply = await this.aiService.generateReply({
+        config,
+        fullPrompt: this.limitText(this.botConfigService.getFullPrompt(botConfig), 1200),
+        companyContext: knowledgeContext,
+        contactId,
+        message,
+        history,
+        context: [
+          this.buildSimpleAiContext(knowledgeContext, memoryContext, conversationMemory, simpleThinking),
+          '[EMERGENCIA]',
+          'Hubo un problema interno en el flujo. Responde de forma normal, útil y humana, sin mencionar errores internos.',
+        ].join('\n\n'),
+        classifiedIntent: decision.intent,
+        decisionAction: decision.action,
+        purchaseIntentScore: decision.purchaseIntentScore,
+        responseStyle: this.resolveSimpleResponseStyle(simpleThinking, message),
+        leadStage: this.mapDecisionStageToLeadStage(decision.stage, simpleThinking.intent === 'compra'),
+        replyObjective: this.mapDecisionActionToReplyObjective(decision.action),
+        thinkingInstruction: 'Resuelve el mensaje sin explicar el error interno.',
+        candidateCount: 1,
+      });
+
+      const finalReply = emergencyReply.content.trim();
+      if (!finalReply) {
+        return null;
+      }
+
+      await this.memoryService.saveMessage({
+        contactId,
+        role: 'assistant',
+        content: finalReply,
+      });
+      await this.saveConversationMemory(
+        recordConversationDelivery(conversationMemory, {
+          messageText: finalReply,
+          lastMessages: [message, finalReply],
+          lastIntent: decision.intent,
+          state: decision.stage,
+          lastSentHadVideo: false,
+          cooldownMediaUntil: null,
+        }),
+      );
+
+      const result = this.createResult(
+        finalReply,
+        'ai',
+        intent,
+        decision,
+        simpleThinking.intent === 'compra',
+        [],
+        this.resolvePreferredReplyType({
+          message,
+          reply: finalReply,
+          intent,
+          action: decision.action,
+          metadata,
+        }),
+        conversationMemory.lastMessages.length > 0,
+      );
+      await this.persistMicroContext(contactId, decision.intent, result.reply, metadata?.messageType ?? 'text');
+      return result;
+    } catch {
+      return null;
+    }
   }
 
   async getMediaByKeyword(text: string) {

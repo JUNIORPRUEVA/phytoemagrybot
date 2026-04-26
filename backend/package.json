@@ -18,7 +18,7 @@
     "lint": "eslint \"src/**/*.ts\"",
     "typecheck": "tsc --noEmit",
     "test:auth": "node --test -r ts-node/register test/auth.service.test.ts",
-    "test:bot": "node --test -r ts-node/register test/bot.service.test.ts",
+    "test:bot": "node --test -r ts-node/register test/bot.simple-flow.test.ts",
     "test:whatsapp": "node --test -r ts-node/register test/whatsapp.service.test.ts"
   },
   "dependencies": {
