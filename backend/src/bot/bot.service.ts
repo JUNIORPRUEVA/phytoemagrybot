@@ -521,9 +521,9 @@ export class BotService {
           instructionsText: instructionsTextForAudit,
         });
 
-        // CORRECCION AUTOMATICA (sin IA): si falla cualquier check, intentamos regenerar el texto
-        // re-usando PRODUCTOS/EMPRESA (snippet) para cumplir minimo de valor y coherencia.
-        if (this.isKnowledgeEnforcementEnabled() && !replyStats.ok) {
+        // CORRECCION AUTOMATICA (sin IA): solo aplica en modo NO-AI.
+        // En AI-only mode, any fix must be done via IA to avoid fixed templates.
+        if (!this.isAiAlwaysOn() && this.isKnowledgeEnforcementEnabled() && !replyStats.ok) {
           const featuredProductForFix = relevantProduct ?? relevantProducts[0] ?? allProducts[0] ?? null;
           const valueSnippet = this.buildProductValueMiniSnippet({
             product: featuredProductForFix,
@@ -596,32 +596,64 @@ export class BotService {
           }
         }
 
-        // Enforce: block generic / non-knowledge answers, even when audit is disabled.
-        // AI path regenerates upstream; non-AI paths are expected to comply via builders.
-        const mustHardBlock = this.isKnowledgeEnforcementEnabled() && !replyStats.ok;
-        const enforcementBlock = mustHardBlock
-          ? {
-              ...adjustedResult,
-              reply: 'ERROR: Respuesta bloqueada por falta de base de conocimiento (PRODUCTOS/INSTRUCCIONES/EMPRESA) o por no cumplir el minimo de valor (beneficio + funcion + conexion).',
-              source: 'fallback' as const,
-              cached: false,
-              usedGallery: false,
-              mediaFiles: [],
-            }
-          : adjustedResult;
-
         const mustForceBlock = this.isAiAuditEnabled() && this.isAiAuditForceBlock();
-        const forceBlock = mustForceBlock && !replyStats.checks.usesProducts;
-        let adjusted = forceBlock
-          ? {
-              ...enforcementBlock,
-              reply: 'AUDITORIA: RESPUESTA BLOQUEADA. La respuesta no uso PRODUCTOS/INSTRUCCIONES de forma verificable. Ajusta el flujo para basarse en conocimiento antes de responder.',
-              source: 'fallback' as const,
-              cached: false,
-              usedGallery: false,
-              mediaFiles: [],
+        const needsFix = (this.isKnowledgeEnforcementEnabled() && !replyStats.ok)
+          || (mustForceBlock && !replyStats.checks.usesProducts);
+
+        if (needsFix) {
+          try {
+            const compactFullPrompt = this.limitText(this.botConfigService.getFullPrompt(botConfig), 1200);
+            const failures = [...replyStats.criticalFailures, ...replyStats.severeFailures].filter(Boolean);
+            const fix = await this.aiService.generateReply({
+              config,
+              fullPrompt: compactFullPrompt,
+              companyContext: preloadedKnowledgeContext || '',
+              contactId: normalizedContactId,
+              message: normalizedMessage,
+              history: [],
+              context: [
+                '[REGENERAR_POR_ENFORCEMENT]',
+                failures.length > 0 ? `Fallas detectadas: ${failures.join(' | ')}` : '',
+                'Reescribe la respuesta para cumplir: menciona 1 producto real + beneficio + como se usa + conexion con la necesidad; max 1 pregunta; no inventes datos de EMPRESA.',
+              ].filter(Boolean).join('\n'),
+              classifiedIntent: 'info',
+              decisionAction: 'guiar',
+              purchaseIntentScore: 0,
+              responseStyle: 'brief',
+              leadStage: 'curioso',
+              replyObjective: 'avanzar_conversacion',
+              thinkingInstruction: 'No muestres el analisis, responde solo al cliente.',
+              candidateCount: 1,
+            });
+
+            if (fix.content.trim()) {
+              adjustedResult = {
+                ...adjustedResult,
+                reply: fix.content.trim(),
+                source: 'ai',
+                cached: false,
+              };
+              replyStats = this.buildAiAuditReplyStats({
+                message: normalizedMessage,
+                reply: adjustedResult.reply,
+                mediaCount: adjustedResult.mediaFiles.length,
+                allProducts,
+                relevantProducts,
+                companyDataText: companyDataTextForAudit,
+                instructionsText: instructionsTextForAudit,
+              });
             }
-          : enforcementBlock;
+          } catch {
+            // Ignore; we'll fall back through the exception handler if still invalid.
+          }
+        }
+
+        const forceBlock = needsFix && this.isKnowledgeEnforcementEnabled() && !replyStats.ok;
+        if (forceBlock) {
+          throw new Error('knowledge_enforcement_failed');
+        }
+
+        let adjusted = adjustedResult;
 
         // If we changed the outgoing text during composition/enforcement, recompute the reply modality.
         // This keeps audio selection aligned with the *final* text that will be spoken/sent.
@@ -4189,7 +4221,34 @@ export class BotService {
 
     if (!fallbackReply.trim()) {
       // Minimal local fallback (last resort).
-      fallbackReply = 'Ahora mismo tuve un inconveniente técnico. ¿Me repites tu pregunta en una línea, porfa?';
+      let valueSnippet = '';
+      try {
+        const products = config ? this.getProductsFromConfig(config) : [];
+        const relevantProductsRaw = this.filterRelevantProducts(products, message);
+        const relevantProducts = this.applySingleActiveProductAssumption(products, relevantProductsRaw);
+        const featuredProduct = relevantProducts[0] ?? products[0] ?? null;
+        valueSnippet = this.buildProductValueMiniSnippet({
+          product: featuredProduct,
+          message,
+        }) ?? '';
+      } catch {
+        valueSnippet = '';
+      }
+
+      const normalizedForGreeting = this.normalizeTextForMatch(message);
+      const greetingOnly = this.isGreetingOnlyMessage(normalizedForGreeting) || this.isGreetingMessage(normalizedForGreeting);
+      const prefix = greetingOnly ? 'Hola 👋' : '';
+
+      fallbackReply = [
+        prefix,
+        'Ahora mismo tuve un inconveniente técnico, pero te puedo orientar rapidito.',
+        valueSnippet,
+        '¿Qué tú quieres saber: precio, cómo se usa o beneficios?',
+      ]
+        .filter((item) => String(item || '').trim().length > 0)
+        .join(' ')
+        .replace(/\s+/g, ' ')
+        .trim();
       replySource = 'fallback';
     }
 
@@ -4364,13 +4423,19 @@ export class BotService {
   ): Promise<string> {
     const cached = await this.redisService.get<string>(BotService.KNOWLEDGE_CONTEXT_CACHE_KEY);
     const baseContext = cached?.trim() || (await this.buildAndCacheBaseKnowledgeContext(config, botConfig));
-    const relevantProductsBlock = this.buildProductsKnowledgeBlock(relevantProducts);
+    const relevantProductsBlock = this.limitText(
+      this.buildProductsKnowledgeBlock(relevantProducts),
+      520,
+    );
 
     if (!relevantProductsBlock || !baseContext.includes('[PRODUCTOS]')) {
-      return baseContext;
+      return this.limitText(baseContext, BotService.AI_CONTEXT_MAX_CHARS);
     }
 
-    return this.appendRelevantProductsSection(baseContext, relevantProductsBlock);
+    return this.limitText(
+      this.appendRelevantProductsSection(baseContext, relevantProductsBlock),
+      BotService.AI_CONTEXT_MAX_CHARS,
+    );
   }
 
   private async buildAndCacheBaseKnowledgeContext(
@@ -4382,9 +4447,20 @@ export class BotService {
       return cached.trim();
     }
 
-    const instructionsBlock = this.buildInstructionsKnowledgeBlock(config, botConfig);
-    const productsBlock = this.buildProductsKnowledgeBlock(this.getProductsFromConfig(config));
-    const companyBlock = (await this.companyContextService.buildAgentContext()).trim();
+    // Keep the base knowledge context compact enough for the 2000-char AI context cap,
+    // leaving room for a PRODUCTOS_RELEVANTES section to be injected per message.
+    const instructionsBlock = this.limitText(
+      this.buildInstructionsKnowledgeBlock(config, botConfig),
+      760,
+    );
+    const productsBlock = this.limitText(
+      this.buildProductsKnowledgeBlock(this.getProductsFromConfig(config)),
+      480,
+    );
+    const companyBlock = this.limitText(
+      (await this.companyContextService.buildAgentContext()).trim(),
+      380,
+    );
 
     const sections: string[] = [
       '[INSTRUCCIONES]',
@@ -4395,7 +4471,10 @@ export class BotService {
       companyBlock || 'Informacion de empresa no configurada. Si preguntan horario, ubicacion, pago o contacto, responde solo con lo que este disponible sin inventar.',
     ];
 
-    const knowledgeContext = sections.join('\n\n');
+    const knowledgeContext = this.limitText(
+      sections.join('\n\n'),
+      BotService.AI_CONTEXT_MAX_CHARS,
+    );
 
     await this.redisService.set(BotService.KNOWLEDGE_CONTEXT_CACHE_KEY, knowledgeContext);
     return knowledgeContext;
