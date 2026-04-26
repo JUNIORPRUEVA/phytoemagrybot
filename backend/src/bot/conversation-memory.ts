@@ -17,6 +17,11 @@ export type ResponseValidationReason =
   | 'too_many_questions'
   | 'cooldown_active'
   | 'redundant_content'
+  | 'generic_no_product'
+  | 'missing_dual_answer'
+  | 'missing_minimum_product_value'
+  | 'coherence_mismatch'
+  | 'sales_flow_violation'
   | 'no_new_content';
 
 export interface ResponseValidationResult {

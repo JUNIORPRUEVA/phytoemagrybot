@@ -1092,7 +1092,8 @@ test('AUTO TEST CASE 1: "quiero saber beneficios" responds with clear explanatio
       'Claro, te explico los beneficios del Te Detox Premium:',
       '- Apoya la digestión y te ayuda a sentirte más ligero/a',
       '- Puede ayudar con la hinchazón y el bienestar general',
-      'Si quieres, también te digo el precio y cómo se usa. ¿Qué prefieres ahora?',
+      '- Cómo se usa: como infusión (1 taza al día) para empezar',
+      'Si lo que buscas es rebajar o mejorar la digestión, te puede servir. ¿Quieres que te diga el precio y cómo pedirlo?',
     ].join('\n'),
   });
 
@@ -1109,11 +1110,11 @@ test('AUTO TEST CASE 2: "como se usa" uses detailed style and explains before gu
   let capturedParams: Record<string, unknown> | null = null;
   const service = createService({
     aiReply: [
-      'Dale, te explico cómo se usa:',
+      'Dale, te explico cómo se usa el Te Detox Premium (apoya la digestión y el bienestar):',
       '1) Empieza con una taza al día',
       '2) Tómalo constante por varios días para notar la diferencia',
       '3) Acompáñalo con agua y comida ligera',
-      '¿Quieres que te diga el precio también?',
+      'Si lo que buscas es sentirte más ligero/a o mejorar la digestión, te puede servir. ¿Quieres que te diga el precio también?',
     ].join('\n'),
     onGenerateReply: (params) => {
       capturedParams = params;
@@ -1649,6 +1650,21 @@ test('informational request after a hot lead uses AI instead of the hot close', 
     mediaCount: 3,
     lastIntent: 'HOT',
     aiReply: 'Claro, te explico un poco como funciona la pastilla y para quien va mejor.',
+    configConfigurations: {
+      instructions: {
+        identity: {
+          assistantName: 'Aura',
+        },
+        products: [
+          {
+            name: 'Pastilla Slim',
+            category: 'Suplemento',
+            summary: 'Ayuda a controlar el apetito.',
+            price: 'RD$1,500',
+          },
+        ],
+      },
+    },
   });
   const result = await service.processIncomingMessage(
     '18095551234',
@@ -1665,6 +1681,21 @@ test('informational request uses detailed response style', async () => {
   let capturedParams: Record<string, unknown> | null = null;
   const service = createService({
     aiReply: 'Claro, te explico bien. Esta pastilla ayuda a controlar el apetito y normalmente se usa como apoyo junto con buena alimentacion e hidratacion.',
+    configConfigurations: {
+      instructions: {
+        identity: {
+          assistantName: 'Aura',
+        },
+        products: [
+          {
+            name: 'Pastilla Slim',
+            category: 'Suplemento',
+            summary: 'Ayuda a controlar el apetito.',
+            price: 'RD$1,500',
+          },
+        ],
+      },
+    },
     onGenerateReply: (params) => {
       capturedParams = params;
     },
@@ -1683,6 +1714,21 @@ test('informational request uses detailed response style', async () => {
 test('simulates a curious customer conversation with adaptive guidance', async () => {
   const aiCalls: Record<string, unknown>[] = [];
   const service = createService({
+    configConfigurations: {
+      instructions: {
+        identity: {
+          assistantName: 'Aura',
+        },
+        products: [
+          {
+            name: 'Pastilla Slim',
+            category: 'Suplemento',
+            summary: 'Ayuda a controlar el apetito.',
+            price: 'RD$1,500',
+          },
+        ],
+      },
+    },
     generateReply: async (params) => {
       aiCalls.push(params);
       const message = String(params.message).toLowerCase();
@@ -1796,6 +1842,21 @@ test('simulates a ready-to-buy customer and guides to the sale', async () => {
 test('simulates a cold customer who replies dry without forcing an early close', async () => {
   const aiCalls: Record<string, unknown>[] = [];
   const service = createService({
+    configConfigurations: {
+      instructions: {
+        identity: {
+          assistantName: 'Aura',
+        },
+        products: [
+          {
+            name: 'Pastilla Slim',
+            category: 'Suplemento',
+            summary: 'Ayuda a controlar el apetito.',
+            price: 'RD$1,500',
+          },
+        ],
+      },
+    },
     generateReply: async (params) => {
       aiCalls.push(params);
       const message = String(params.message).toLowerCase();

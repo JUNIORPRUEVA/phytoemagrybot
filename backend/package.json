@@ -14,6 +14,7 @@
     "db:compare": "node -r ts-node/register scripts/db-compare.ts",
     "db:migrate:local-to-cloud": "node -r ts-node/register scripts/migrate-local-to-cloud.ts",
     "cloud:selftest": "node -r ts-node/register scripts/cloud-selftest.ts",
+    "ai:audit": "node -r ts-node/register scripts/ai-audit.ts",
     "lint": "eslint \"src/**/*.ts\"",
     "typecheck": "tsc --noEmit",
     "test:auth": "node --test -r ts-node/register test/auth.service.test.ts",

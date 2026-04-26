@@ -1,0 +1,221 @@
+{
+  "ok": false,
+  "startedAt": "2026-04-26T02:28:54.296Z",
+  "objetivo": "Auditoria completa del sistema de IA (INSTRUCCIONES, PRODUCTOS, EMPRESA).",
+  "scenarios": [
+    {
+      "name": "CASO_1_AMBAS_COSAS",
+      "message": "Ambas cosas",
+      "reply": "Te Detox Premium: ayuda a la digestion y bienestar. Se usa facil: te digo como tomarlo y el precio (RD$1,500). Si quieres, te lo preparo y te explico como pedirlo.",
+      "ok": true,
+      "moduleMissing": [],
+      "failures": [],
+      "snapshot": {
+        "timestamp": 1777170534308,
+        "contactId": "18095570001",
+        "message": "Ambas cosas",
+        "layer": "ai",
+        "source": "ai",
+        "intent": "interes",
+        "decisionIntent": "info",
+        "replyType": "text",
+        "moduleStats": {
+          "ok": true,
+          "missing": [],
+          "counts": {
+            "instruccionesChars": 1477,
+            "productosCount": 1,
+            "empresaChars": 77
+          },
+          "sections": {
+            "hasInstrucciones": true,
+            "hasProductos": true,
+            "hasEmpresa": true
+          }
+        },
+        "replyStats": {
+          "ok": true,
+          "severeFailures": [],
+          "criticalFailures": [],
+          "warnings": [],
+          "checks": {
+            "usesProducts": true,
+            "respectsInstructions": true,
+            "usesCompanyIfApplies": true,
+            "genericWithoutKnowledge": false
+          }
+        },
+        "forcedBlocked": false,
+        "context": {
+          "knowledgeContextLength": 1995,
+          "combinedContextLength": 1606,
+          "warnOver6k": false
+        },
+        "thinking": {
+          "intent": "info",
+          "userState": "frio",
+          "alreadyExplained": false,
+          "repetitionRisk": false,
+          "nextBestAction": "explicar",
+          "responseStrategy": "explicar claro, resolver la duda y cerrar con una pregunta util."
+        }
+      }
+    },
+    {
+      "name": "CASO_2_PRECIO",
+      "message": "Precio",
+      "reply": "Te Detox Premium cuesta RD$1,500. ¿Te interesa bajar de peso o quieres info?",
+      "ok": true,
+      "moduleMissing": [],
+      "failures": [],
+      "snapshot": {
+        "timestamp": 1777170534309,
+        "contactId": "18095570002",
+        "message": "Precio",
+        "layer": "hardcode_price",
+        "source": "hardcode",
+        "intent": "interes",
+        "decisionIntent": "precio",
+        "replyType": "text",
+        "moduleStats": {
+          "ok": true,
+          "missing": [],
+          "counts": {
+            "instruccionesChars": 1477,
+            "productosCount": 1,
+            "empresaChars": 77
+          },
+          "sections": {
+            "hasInstrucciones": true,
+            "hasProductos": true,
+            "hasEmpresa": true
+          }
+        },
+        "replyStats": {
+          "ok": true,
+          "severeFailures": [],
+          "criticalFailures": [],
+          "warnings": [],
+          "checks": {
+            "usesProducts": true,
+            "respectsInstructions": true,
+            "usesCompanyIfApplies": true,
+            "genericWithoutKnowledge": false
+          }
+        },
+        "forcedBlocked": false,
+        "context": {
+          "knowledgeContextLength": 1995,
+          "combinedContextLength": null,
+          "warnOver6k": false
+        },
+        "thinking": null
+      }
+    },
+    {
+      "name": "CASO_3_COMO_FUNCIONA",
+      "message": "Como funciona",
+      "reply": "Te Detox Premium funciona apoyando la digestion y el bienestar. Te explico como se usa y si quieres te digo el precio (RD$1,500).",
+      "ok": true,
+      "moduleMissing": [],
+      "failures": [],
+      "snapshot": {
+        "timestamp": 1777170534312,
+        "contactId": "18095570003",
+        "message": "Como funciona",
+        "layer": "ai",
+        "source": "ai",
+        "intent": "interes",
+        "decisionIntent": "info",
+        "replyType": "audio",
+        "moduleStats": {
+          "ok": true,
+          "missing": [],
+          "counts": {
+            "instruccionesChars": 1477,
+            "productosCount": 1,
+            "empresaChars": 77
+          },
+          "sections": {
+            "hasInstrucciones": true,
+            "hasProductos": true,
+            "hasEmpresa": true
+          }
+        },
+        "replyStats": {
+          "ok": true,
+          "severeFailures": [],
+          "criticalFailures": [],
+          "warnings": [],
+          "checks": {
+            "usesProducts": true,
+            "respectsInstructions": true,
+            "usesCompanyIfApplies": true,
+            "genericWithoutKnowledge": false
+          }
+        },
+        "forcedBlocked": false,
+        "context": {
+          "knowledgeContextLength": 1995,
+          "combinedContextLength": 1612,
+          "warnOver6k": false
+        },
+        "thinking": {
+          "intent": "info",
+          "userState": "interesado",
+          "alreadyExplained": false,
+          "repetitionRisk": false,
+          "nextBestAction": "explicar",
+          "responseStrategy": "explicar claro, resolver la duda y cerrar con una pregunta util."
+        }
+      }
+    },
+    {
+      "name": "CASO_8_BLOQUEO_SIN_PRODUCTOS",
+      "message": "Precio",
+      "reply": "AUDITORIA: ERROR CRITICO. Faltan modulos: PRODUCTOS. No puedo responder hasta que esten configurados.",
+      "ok": false,
+      "moduleMissing": [
+        "PRODUCTOS"
+      ],
+      "failures": [
+        "MODULO_FALTANTE:PRODUCTOS",
+        "FALLA_CRITICA: modulos_no_cargados"
+      ],
+      "snapshot": {
+        "timestamp": 1777170534312,
+        "contactId": "18095570004",
+        "message": "Precio",
+        "layer": "audit_block_missing_modules",
+        "moduleStats": {
+          "ok": false,
+          "missing": [
+            "PRODUCTOS"
+          ],
+          "counts": {
+            "instruccionesChars": 1477,
+            "productosCount": 0,
+            "empresaChars": 77
+          },
+          "sections": {
+            "hasInstrucciones": true,
+            "hasProductos": true,
+            "hasEmpresa": true
+          }
+        },
+        "replyStats": {
+          "ok": false,
+          "severeFailures": [
+            "FALLA_CRITICA: modulos_no_cargados"
+          ],
+          "criticalFailures": [
+            "MODULO_FALTANTE:PRODUCTOS"
+          ]
+        },
+        "reply": "AUDITORIA: ERROR CRITICO. Faltan modulos: PRODUCTOS. No puedo responder hasta que esten configurados.",
+        "source": "fallback"
+      }
+    }
+  ],
+  "recommendations": []
+}

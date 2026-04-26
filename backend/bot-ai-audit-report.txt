@@ -1,0 +1,18 @@
+AI AUDIT REPORT
+startedAt: 2026-04-26T02:28:54.296Z
+ok: false
+
+- CASO_1_AMBAS_COSAS: OK
+  message: Ambas cosas
+  reply: Te Detox Premium: ayuda a la digestion y bienestar. Se usa facil: te digo como tomarlo y el precio (RD$1,500). Si quieres, te lo preparo y te explico como pedirlo.
+- CASO_2_PRECIO: OK
+  message: Precio
+  reply: Te Detox Premium cuesta RD$1,500. ¿Te interesa bajar de peso o quieres info?
+- CASO_3_COMO_FUNCIONA: OK
+  message: Como funciona
+  reply: Te Detox Premium funciona apoyando la digestion y el bienestar. Te explico como se usa y si quieres te digo el precio (RD$1,500).
+- CASO_8_BLOQUEO_SIN_PRODUCTOS: FAIL
+  message: Precio
+  reply: AUDITORIA: ERROR CRITICO. Faltan modulos: PRODUCTOS. No puedo responder hasta que esten configurados.
+  missingModules: PRODUCTOS
+  failures: MODULO_FALTANTE:PRODUCTOS | FALLA_CRITICA: modulos_no_cargados

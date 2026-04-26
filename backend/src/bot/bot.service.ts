@@ -170,6 +170,8 @@ export class BotService {
 
   private readonly productMediaTimestamp = new Date('2026-04-24T00:00:00.000Z');
 
+  private static readonly KNOWLEDGE_ENFORCEMENT_MAX_RELOAD_ATTEMPTS = 1;
+
   constructor(
     private readonly aiService: AiService,
     private readonly botConfigService: BotConfigService,
@@ -283,6 +285,344 @@ export class BotService {
         return patchedResult;
       };
 
+      // CRITICAL: Always load/read mandatory knowledge modules BEFORE generating any response.
+      // Even for early-exit layers (greetings, micro-intents, closures), we preload the modules
+      // so the bot has a consistent, app-config-aligned view of INSTRUCCIONES/PRODUCTOS/EMPRESA.
+      let config = await this.clientConfigService.getConfig();
+      let botConfig = await this.botConfigService.getConfig();
+      let instructionsTextForAudit = this.buildInstructionsKnowledgeBlock(config, botConfig);
+      const memoryWindow = config.aiSettings?.memoryWindow ?? 6;
+      let allProducts = this.getProductsFromConfig(config);
+      let relevantProductsRaw = this.filterRelevantProducts(allProducts, normalizedMessage);
+      let relevantProducts = this.applySingleActiveProductAssumption(allProducts, relevantProductsRaw);
+      console.log('PRODUCTOS:', allProducts);
+      console.log('PRODUCTOS_RELEVANTES:', relevantProducts);
+
+      let relevantProduct = relevantProducts[0] ?? null;
+      let preloadedKnowledgeContext = await this.getRequiredKnowledgeContext(
+        config,
+        botConfig,
+        normalizedMessage,
+        relevantProducts,
+      );
+
+      let companyDataTextForAudit = this.extractBracketSection(preloadedKnowledgeContext, 'EMPRESA');
+      let moduleStatsForAudit = this.buildAiAuditModuleStats({
+        message: normalizedMessage,
+        knowledgeContext: preloadedKnowledgeContext,
+        instructionsText: instructionsTextForAudit,
+        allProducts,
+        companyDataText: companyDataTextForAudit,
+      });
+
+      // KNOWLEDGE ENFORCEMENT: if modules look missing, attempt a single reload.
+      // This matches the "releer" requirement (try to re-fetch config + rebuild context) before blocking.
+      if (this.isKnowledgeEnforcementEnabled() && !moduleStatsForAudit.ok) {
+        for (let attempt = 0; attempt < BotService.KNOWLEDGE_ENFORCEMENT_MAX_RELOAD_ATTEMPTS; attempt += 1) {
+          try {
+            await this.redisService.del(BotService.KNOWLEDGE_CONTEXT_CACHE_KEY);
+          } catch {
+            // Ignore reload failures.
+          }
+
+          config = await this.clientConfigService.getConfig();
+          botConfig = await this.botConfigService.getConfig();
+          instructionsTextForAudit = this.buildInstructionsKnowledgeBlock(config, botConfig);
+          allProducts = this.getProductsFromConfig(config);
+          relevantProductsRaw = this.filterRelevantProducts(allProducts, normalizedMessage);
+          relevantProducts = this.applySingleActiveProductAssumption(allProducts, relevantProductsRaw);
+          relevantProduct = relevantProducts[0] ?? null;
+          preloadedKnowledgeContext = await this.getRequiredKnowledgeContext(
+            config,
+            botConfig,
+            normalizedMessage,
+            relevantProducts,
+          );
+          companyDataTextForAudit = this.extractBracketSection(preloadedKnowledgeContext, 'EMPRESA');
+          moduleStatsForAudit = this.buildAiAuditModuleStats({
+            message: normalizedMessage,
+            knowledgeContext: preloadedKnowledgeContext,
+            instructionsText: instructionsTextForAudit,
+            allProducts,
+            companyDataText: companyDataTextForAudit,
+          });
+
+          this.logger.log(
+            JSON.stringify({
+              event: 'KNOWLEDGE_ENFORCEMENT',
+              contactId: normalizedContactId,
+              message: normalizedMessage,
+              kind: 'reload_attempt',
+              attempt: attempt + 1,
+              ok: moduleStatsForAudit.ok,
+              missing: moduleStatsForAudit.missing,
+            }),
+          );
+
+          if (moduleStatsForAudit.ok) {
+            break;
+          }
+        }
+      }
+
+      if (this.isAiAuditEnabled()) {
+        this.auditLog({
+          contactId: normalizedContactId,
+          message: normalizedMessage,
+          kind: 'module_load',
+          ok: moduleStatsForAudit.ok,
+          missing: moduleStatsForAudit.missing,
+          counts: moduleStatsForAudit.counts,
+          sections: moduleStatsForAudit.sections,
+        });
+      }
+
+      const mustBlockForMissingKnowledge = !moduleStatsForAudit.ok
+        && (this.isKnowledgeEnforcementEnabled() || (this.isAiAuditEnabled() && this.isAiAuditStrict()));
+
+      if (mustBlockForMissingKnowledge) {
+        const prefix = this.isAiAuditEnabled() ? 'AUDITORIA: ' : '';
+        const reply = `${prefix}ERROR CRITICO. Faltan modulos: ${moduleStatsForAudit.missing.join(', ')}. No puedo responder con datos reales hasta que esten configurados.`;
+        const decision = this.buildQuickDecisionState({
+          contactId: normalizedContactId,
+          message: normalizedMessage,
+          decisionIntent: 'info',
+          stage: 'curioso',
+          action: 'guiar',
+          summary: 'Blocked due to missing mandatory knowledge modules.',
+        });
+        const blocked = this.createResult(
+          reply,
+          'fallback',
+          'otro',
+          decision,
+          false,
+          [],
+          'text',
+          false,
+        );
+        await this.persistAuditSnapshot(normalizedContactId, {
+          timestamp: Date.now(),
+          contactId: normalizedContactId,
+          message: normalizedMessage,
+          layer: 'audit_block_missing_modules',
+          moduleStats: moduleStatsForAudit,
+          replyStats: {
+            ok: false,
+            severeFailures: ['FALLA_CRITICA: modulos_no_cargados'],
+            criticalFailures: moduleStatsForAudit.missing.map((value) => `MODULO_FALTANTE:${value}`),
+          },
+          reply,
+          source: blocked.source,
+        });
+
+        return blocked;
+      }
+
+      const finalizeResponseAudited = async (
+        layer: string,
+        result: BotReplyResult,
+        meta?: {
+          thinkingAnalysis?: unknown;
+          combinedContextLength?: number;
+          knowledgeContextLength?: number;
+        },
+      ): Promise<BotReplyResult> => {
+        let adjustedResult = result;
+
+        // Compose first so enforcement validates what will actually be sent.
+        const composedForValidation = composeFinalMessage(adjustedResult.reply ?? '', { maxIdeas: 6, maxQuestions: 1 })
+          || (adjustedResult.reply ?? '').trim();
+        if (composedForValidation && composedForValidation !== adjustedResult.reply) {
+          adjustedResult = {
+            ...adjustedResult,
+            reply: composedForValidation,
+            cached: false,
+          };
+        }
+
+        let replyStats = this.buildAiAuditReplyStats({
+          message: normalizedMessage,
+          reply: adjustedResult.reply,
+          mediaCount: adjustedResult.mediaFiles.length,
+          allProducts,
+          relevantProducts,
+          companyDataText: companyDataTextForAudit,
+          instructionsText: instructionsTextForAudit,
+        });
+
+        // CORRECCION AUTOMATICA (sin IA): si falla cualquier check, intentamos regenerar el texto
+        // re-usando PRODUCTOS/EMPRESA (snippet) para cumplir minimo de valor y coherencia.
+        if (this.isKnowledgeEnforcementEnabled() && !replyStats.ok) {
+          const featuredProductForFix = relevantProduct ?? relevantProducts[0] ?? allProducts[0] ?? null;
+          const valueSnippet = this.buildProductValueMiniSnippet({
+            product: featuredProductForFix,
+            message: normalizedMessage,
+          });
+          const companyName = this.parseCompanyNameFromCompanyDataText(companyDataTextForAudit);
+          const companyApplicable = this.detectCompanyApplicability(normalizedMessage);
+          const needsCompany = companyApplicable !== null && companyName.trim().length > 0;
+          const hasCompanyAlready = companyName.trim()
+            ? adjustedResult.reply.toLowerCase().includes(companyName.trim().toLowerCase())
+            : true;
+
+          const patchedReply = [
+            needsCompany && !hasCompanyAlready ? `Soy de ${companyName.trim()}.` : '',
+            adjustedResult.reply,
+            valueSnippet && allProducts.length > 0 && (
+              !replyStats.checks.usesProducts
+              || !replyStats.checks.hasBenefit
+              || !replyStats.checks.hasFunction
+              || !replyStats.checks.hasNeedConnection
+              || !this.replyMentionsAnyProduct(adjustedResult.reply, relevantProducts.length > 0 ? relevantProducts : allProducts)
+            )
+              ? valueSnippet
+              : '',
+          ]
+            .filter((value) => String(value || '').trim().length > 0)
+            .join(' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+
+          const patchedComposed = composeFinalMessage(patchedReply, { maxIdeas: 6, maxQuestions: 1 }) || patchedReply;
+
+          const patchedStats = this.buildAiAuditReplyStats({
+            message: normalizedMessage,
+            reply: patchedComposed,
+            mediaCount: adjustedResult.mediaFiles.length,
+            allProducts,
+            relevantProducts,
+            companyDataText: companyDataTextForAudit,
+            instructionsText: instructionsTextForAudit,
+          });
+
+          if (patchedStats.ok) {
+            this.logger.log(
+              JSON.stringify({
+                event: 'KNOWLEDGE_ENFORCEMENT',
+                contactId: normalizedContactId,
+                message: normalizedMessage,
+                kind: 'auto_correction_applied',
+                layer,
+                failuresBefore: [...replyStats.criticalFailures, ...replyStats.severeFailures],
+              }),
+            );
+
+            adjustedResult = {
+              ...adjustedResult,
+              reply: patchedComposed,
+              cached: false,
+            };
+            replyStats = patchedStats;
+          }
+        }
+
+        // Enforce: block generic / non-knowledge answers, even when audit is disabled.
+        // AI path regenerates upstream; hardcoded paths are expected to comply via builders.
+        const mustHardBlock = this.isKnowledgeEnforcementEnabled() && !replyStats.ok;
+        const enforcementBlock = mustHardBlock
+          ? {
+              ...adjustedResult,
+              reply: 'ERROR: Respuesta bloqueada por falta de base de conocimiento (PRODUCTOS/INSTRUCCIONES/EMPRESA) o por no cumplir el minimo de valor (beneficio + funcion + conexion).',
+              source: 'fallback' as const,
+              cached: false,
+              usedGallery: false,
+              mediaFiles: [],
+            }
+          : adjustedResult;
+
+        const mustForceBlock = this.isAiAuditEnabled() && this.isAiAuditForceBlock();
+        const forceBlock = mustForceBlock && !replyStats.checks.usesProducts;
+        const adjusted = forceBlock
+          ? {
+              ...enforcementBlock,
+              reply: 'AUDITORIA: RESPUESTA BLOQUEADA. La respuesta no uso PRODUCTOS/INSTRUCCIONES de forma verificable. Ajusta el flujo para basarse en conocimiento antes de responder.',
+              source: 'fallback' as const,
+              cached: false,
+              usedGallery: false,
+              mediaFiles: [],
+            }
+          : enforcementBlock;
+
+        const finalized = finalizeResponse(layer, adjusted);
+
+        const knowledgeContextLength = meta?.knowledgeContextLength ?? preloadedKnowledgeContext.length;
+        const combinedContextLength = meta?.combinedContextLength ?? null;
+        const warnOver6k = (combinedContextLength ?? knowledgeContextLength) > 6000;
+        if (this.isAiAuditEnabled() && warnOver6k) {
+          this.auditLog({
+            contactId: normalizedContactId,
+            message: normalizedMessage,
+            kind: 'context_length_warning',
+            knowledgeContextLength,
+            combinedContextLength,
+            warning: 'ADVERTENCIA: POSIBLE CONFUSION DE IA (contexto > 6000 caracteres)',
+          });
+        }
+
+        if (this.isAiAuditEnabled()) {
+          this.auditLog({
+            contactId: normalizedContactId,
+            message: normalizedMessage,
+            kind: 'reply_validation',
+            layer,
+            source: finalized.source,
+            checks: replyStats.checks,
+            severeFailures: replyStats.severeFailures,
+            criticalFailures: replyStats.criticalFailures,
+            warnings: replyStats.warnings,
+            forcedBlocked: forceBlock,
+          });
+        }
+
+        if (this.isAiAuditEnabled() && meta?.thinkingAnalysis) {
+          const thinking = meta.thinkingAnalysis as {
+            nextBestAction?: string;
+            alreadyExplained?: boolean;
+          };
+          if (thinking.nextBestAction === 'cerrar' && !thinking.alreadyExplained) {
+            this.auditLog({
+              contactId: normalizedContactId,
+              message: normalizedMessage,
+              kind: 'thinking_logic',
+              ok: false,
+              error: 'ERROR_DE_LOGICA: nextBestAction=cerrar sin explicacion previa',
+              thinking: meta.thinkingAnalysis,
+            });
+          } else {
+            this.auditLog({
+              contactId: normalizedContactId,
+              message: normalizedMessage,
+              kind: 'thinking_logic',
+              ok: true,
+              thinking: meta.thinkingAnalysis,
+            });
+          }
+        }
+
+        await this.persistAuditSnapshot(normalizedContactId, {
+          timestamp: Date.now(),
+          contactId: normalizedContactId,
+          message: normalizedMessage,
+          layer,
+          source: finalized.source,
+          intent: finalized.intent,
+          decisionIntent: finalized.decisionIntent,
+          replyType: finalized.replyType,
+          moduleStats: moduleStatsForAudit,
+          replyStats,
+          forcedBlocked: forceBlock,
+          context: {
+            knowledgeContextLength,
+            combinedContextLength,
+            warnOver6k,
+          },
+          thinking: meta?.thinkingAnalysis ?? null,
+        });
+
+        return finalized;
+      };
+
       const earlyClosureDetected = this.shouldMarkConversationAsEnded(normalizedMessage);
       if (earlyClosureDetected) {
         if (responseGenerated && finalResult) {
@@ -307,7 +647,14 @@ export class BotService {
 
         const conversationMemory = await this.getConversationMemory(normalizedContactId, []);
         const closureDecision = this.buildConversationEndedDecision(normalizedMessage);
-        const closureReply = this.buildConversationEndedReply(conversationMemory, true);
+        const closureReply = this.buildConversationEndedReply(
+          conversationMemory,
+          true,
+          this.buildProductValueMiniSnippet({
+            product: relevantProduct ?? allProducts[0] ?? null,
+            message: normalizedMessage,
+          }),
+        );
 
         await this.memoryService.saveMessage({
           contactId: normalizedContactId,
@@ -350,7 +697,7 @@ export class BotService {
           metadata?.messageType ?? 'text',
         );
         this.logReply(normalizedContactId, closureResult);
-        return finalizeResponse('stop_early', closureResult);
+        return await finalizeResponseAudited('stop_early', closureResult);
       }
 
       const isPureGreeting = this.isGreetingOnlyMessage(normalizedMessage);
@@ -383,9 +730,10 @@ export class BotService {
           contactId: normalizedContactId,
           message: normalizedMessage,
           messageType: metadata?.messageType ?? 'text',
+          featuredProduct: relevantProduct ?? allProducts[0] ?? null,
         });
         if (closedResult) {
-          return finalizeResponse('stop', closedResult);
+          return await finalizeResponseAudited('stop', closedResult);
         }
 
         await this.memoryService.saveMessage({
@@ -397,7 +745,17 @@ export class BotService {
         await this.rememberLastMessageType(normalizedContactId, metadata?.messageType ?? 'text');
 
         const conversationMemory = await this.getConversationMemory(normalizedContactId, []);
-        const reply = this.buildSpeedGreetingReply();
+        const companyDataText = this.extractBracketSection(preloadedKnowledgeContext, 'EMPRESA');
+        const companyName = this.parseCompanyNameFromCompanyDataText(companyDataText);
+        const featuredProduct = relevantProduct ?? allProducts[0] ?? null;
+        const productSnippet = this.buildProductValueMiniSnippet({
+          product: featuredProduct,
+          message: normalizedMessage,
+        });
+        const reply = this.buildSpeedGreetingReplyWithContext({
+          companyName,
+          productSnippet,
+        });
         await this.redisService.set(
           this.getQuickReplyCacheKey('greeting', null),
           reply,
@@ -446,7 +804,7 @@ export class BotService {
           metadata?.messageType ?? 'text',
         );
         this.logReply(normalizedContactId, result);
-        return finalizeResponse('hardcode_greeting', result);
+        return await finalizeResponseAudited('hardcode_greeting', result);
       }
 
       const greetingOutcome = await this.getGreetingOutcome(normalizedContactId, normalizedMessage);
@@ -466,7 +824,17 @@ export class BotService {
         userMessageStored = true;
 
         const conversationMemory = await this.getConversationMemory(normalizedContactId, []);
-        const greetingReply = this.buildGreetingReply(normalizedContactId, conversationMemory);
+        const companyDataText = this.extractBracketSection(preloadedKnowledgeContext, 'EMPRESA');
+        const companyName = this.parseCompanyNameFromCompanyDataText(companyDataText);
+        const featuredProduct = relevantProduct ?? allProducts[0] ?? null;
+        const productSnippet = this.buildProductValueMiniSnippet({
+          product: featuredProduct,
+          message: normalizedMessage,
+        });
+        const greetingReply = this.buildGreetingReply(normalizedContactId, conversationMemory, {
+          companyName,
+          productSnippet,
+        });
         const greetingDecision = this.buildGreetingDecision(normalizedMessage);
 
         await this.memoryService.saveMessage({
@@ -509,19 +877,9 @@ export class BotService {
           metadata?.messageType ?? 'text',
         );
         this.logReply(normalizedContactId, greetingResult);
-        return finalizeResponse('greeting', greetingResult);
+        return await finalizeResponseAudited('greeting', greetingResult);
       }
 
-      const config = await this.clientConfigService.getConfig();
-      const botConfig = await this.botConfigService.getConfig();
-      const memoryWindow = config.aiSettings?.memoryWindow ?? 6;
-      const allProducts = this.getProductsFromConfig(config);
-      const relevantProductsRaw = this.filterRelevantProducts(allProducts, normalizedMessage);
-      const relevantProducts = this.applySingleActiveProductAssumption(allProducts, relevantProductsRaw);
-      console.log('PRODUCTOS:', allProducts);
-      console.log('PRODUCTOS_RELEVANTES:', relevantProducts);
-
-      const relevantProduct = relevantProducts[0] ?? null;
       let quickInfoKindForCache: 'benefits' | 'usage' | null = null;
       const speedKind = this.detectSpeedKind(normalizedMessage);
       if (speedKind === 'price') {
@@ -534,9 +892,10 @@ export class BotService {
           contactId: normalizedContactId,
           message: normalizedMessage,
           messageType: metadata?.messageType ?? 'text',
+          featuredProduct: relevantProduct ?? allProducts[0] ?? null,
         });
         if (closedResult) {
-          return finalizeResponse('stop', closedResult);
+          return await finalizeResponseAudited('stop', closedResult);
         }
 
         await this.memoryService.saveMessage({
@@ -548,7 +907,7 @@ export class BotService {
         await this.rememberLastMessageType(normalizedContactId, metadata?.messageType ?? 'text');
 
         const conversationMemory = await this.getConversationMemory(normalizedContactId, []);
-        const reply = this.buildQuickPriceReply(allProducts, relevantProducts);
+        const reply = this.buildQuickPriceReply(allProducts, relevantProducts, normalizedMessage);
         await this.redisService.set(
           this.getQuickReplyCacheKey('price', relevantProduct?.id ?? null),
           reply,
@@ -621,7 +980,7 @@ export class BotService {
           metadata?.messageType ?? 'text',
         );
         this.logReply(normalizedContactId, result);
-        return finalizeResponse('hardcode_price', result);
+        return await finalizeResponseAudited('hardcode_price', result);
       }
 
       if (speedKind === 'hours' || speedKind === 'location' || speedKind === 'payment') {
@@ -634,9 +993,10 @@ export class BotService {
           contactId: normalizedContactId,
           message: normalizedMessage,
           messageType: metadata?.messageType ?? 'text',
+          featuredProduct: relevantProduct ?? allProducts[0] ?? null,
         });
         if (closedResult) {
-          return finalizeResponse('stop', closedResult);
+          return await finalizeResponseAudited('stop', closedResult);
         }
 
         await this.memoryService.saveMessage({
@@ -663,13 +1023,27 @@ export class BotService {
           new Date(Date.now()),
         );
 
-        const reply = companyCheck.overrideResponse
+        const companyName = this.parseCompanyNameFromCompanyDataText(companyDataTextForAudit);
+        const companyIdentity = companyName ? `Soy de ${companyName}.` : '';
+        const baseReplyRaw = companyCheck.overrideResponse
           ? companyCheck.overrideResponse
           : speedKind === 'hours'
             ? 'Claro. En este momento no tengo el horario configurado. ¿Me confirmas tu ciudad?'
             : speedKind === 'location'
               ? 'Claro. En este momento no tengo la ubicacion configurada. ¿Me confirmas tu ciudad?'
               : 'Claro. En este momento no tengo los metodos de pago configurados. ¿Prefieres transferencia o efectivo?';
+        const baseReply = companyIdentity && !companyCheck.overrideResponse
+          ? `${companyIdentity} ${baseReplyRaw}`.replace(/\s+/g, ' ').trim()
+          : baseReplyRaw;
+
+        const featuredProduct = relevantProduct ?? allProducts[0] ?? null;
+        const valueSnippet = this.buildProductValueMiniSnippet({
+          product: featuredProduct,
+          message: normalizedMessage,
+        });
+        const reply = valueSnippet && allProducts.length > 0 && !this.replyMentionsAnyProduct(baseReply, relevantProducts.length > 0 ? relevantProducts : allProducts)
+          ? `${baseReply} ${valueSnippet}`
+          : baseReply;
 
         const decision = this.buildQuickDecisionState({
           contactId: normalizedContactId,
@@ -715,7 +1089,7 @@ export class BotService {
           metadata?.messageType ?? 'text',
         );
         this.logReply(normalizedContactId, result);
-        return finalizeResponse('hardcode_company_info', result);
+        return await finalizeResponseAudited('hardcode_company_info', result);
       }
 
       const quickInfoKind = this.detectQuickInfoKind(normalizedMessage);
@@ -724,13 +1098,43 @@ export class BotService {
           contactId: normalizedContactId,
           message: normalizedMessage,
           messageType: metadata?.messageType ?? 'text',
+          featuredProduct: relevantProduct ?? allProducts[0] ?? null,
         });
         if (closedResult) {
-          return finalizeResponse('stop', closedResult);
+          return await finalizeResponseAudited('stop', closedResult);
         }
 
         const cacheKey = this.getQuickReplyCacheKey(quickInfoKind, relevantProduct?.id ?? null);
-        const cachedQuickReply = await this.readRedisCache<string>(cacheKey);
+        let cachedQuickReply = await this.readRedisCache<string>(cacheKey);
+        if (cachedQuickReply?.trim() && this.isKnowledgeEnforcementEnabled()) {
+          const cacheStats = this.buildAiAuditReplyStats({
+            message: normalizedMessage,
+            reply: cachedQuickReply.trim(),
+            mediaCount: 0,
+            allProducts,
+            relevantProducts,
+            companyDataText: companyDataTextForAudit,
+            instructionsText: instructionsTextForAudit,
+          });
+          if (!cacheStats.ok) {
+            this.logger.log(
+              JSON.stringify({
+                event: 'KNOWLEDGE_ENFORCEMENT',
+                contactId: normalizedContactId,
+                message: normalizedMessage,
+                kind: 'discard_quick_cache',
+                cacheKey,
+                failures: [...cacheStats.criticalFailures, ...cacheStats.severeFailures],
+              }),
+            );
+            cachedQuickReply = null;
+            try {
+              await this.redisService.del(cacheKey);
+            } catch {
+              // Ignore cache cleanup failures.
+            }
+          }
+        }
         if (cachedQuickReply?.trim()) {
           if (responseGenerated && finalResult) {
             logResponseDebug({ layer: 'quick_cache', blocked: true, reason: 'response_already_generated' });
@@ -791,19 +1195,14 @@ export class BotService {
             metadata?.messageType ?? 'text',
           );
           this.logReply(normalizedContactId, result);
-          return finalizeResponse('quick_cache', result);
+          return await finalizeResponseAudited('quick_cache', result);
         }
 
         quickInfoKindForCache = quickInfoKind;
       }
 
       const sentMediaState = await this.getSentMediaState(normalizedContactId);
-      const knowledgeContext = await this.getRequiredKnowledgeContext(
-        config,
-        botConfig,
-        normalizedMessage,
-        relevantProducts,
-      );
+      const knowledgeContext = preloadedKnowledgeContext;
 
       await this.memoryService.saveMessage({
         contactId: normalizedContactId,
@@ -851,6 +1250,10 @@ export class BotService {
         const closureReply = this.buildConversationEndedReply(
           conversationMemory,
           closureDetected,
+          this.buildProductValueMiniSnippet({
+            product: relevantProduct ?? allProducts[0] ?? null,
+            message: normalizedMessage,
+          }),
         );
 
         await this.memoryService.saveMessage({
@@ -893,7 +1296,7 @@ export class BotService {
           metadata?.messageType ?? 'text',
         );
         this.logReply(normalizedContactId, closureResult);
-        return finalizeResponse('stop', closureResult);
+        return await finalizeResponseAudited('stop', closureResult);
       }
 
       const microIntentResult = await this.resolveMicroIntentResult({
@@ -910,15 +1313,23 @@ export class BotService {
           return finalResult;
         }
 
+        const microValueSnippet = this.buildProductValueMiniSnippet({
+          product: relevantProduct ?? allProducts[0] ?? null,
+          message: normalizedMessage,
+        });
+        const microReply = microValueSnippet && allProducts.length > 0 && !this.replyMentionsAnyProduct(microIntentResult.reply, relevantProducts.length > 0 ? relevantProducts : allProducts)
+          ? `${microIntentResult.reply} ${microValueSnippet}`.replace(/\s+/g, ' ').trim()
+          : microIntentResult.reply;
+
         await this.memoryService.saveMessage({
           contactId: normalizedContactId,
           role: 'assistant',
-          content: microIntentResult.reply,
+          content: microReply,
         });
         await this.saveConversationMemory(
           recordConversationDelivery(conversationMemory, {
-            messageText: microIntentResult.reply,
-            lastMessages: [normalizedMessage, microIntentResult.reply],
+            messageText: microReply,
+            lastMessages: [normalizedMessage, microReply],
             lastIntent: microIntentResult.decision.intent,
             state: microIntentResult.decision.stage,
             lastSentHadVideo: false,
@@ -927,7 +1338,7 @@ export class BotService {
         );
 
         const microResult = this.createResult(
-          microIntentResult.reply,
+          microReply,
           'micro',
           microIntentResult.intent,
           microIntentResult.decision,
@@ -950,7 +1361,7 @@ export class BotService {
           metadata?.messageType ?? 'text',
         );
         this.logReply(normalizedContactId, microResult);
-        return finalizeResponse('micro', microResult);
+        return await finalizeResponseAudited('micro', microResult);
       }
 
       const earlyMediaIntent = this.detectMediaIntent(normalizedMessage);
@@ -964,7 +1375,7 @@ export class BotService {
           return finalResult;
         }
 
-        const shortReply = 'Perfecto. ¿Quieres saber precio, beneficios, como se usa, horario o ubicacion?';
+        const shortReply = this.buildShortNoAiReply(relevantProduct ?? allProducts[0] ?? null, normalizedMessage);
         const quickDecision = this.buildQuickDecisionState({
           contactId: normalizedContactId,
           message: normalizedMessage,
@@ -1014,7 +1425,7 @@ export class BotService {
           metadata?.messageType ?? 'text',
         );
         this.logReply(normalizedContactId, shortResult);
-        return finalizeResponse('short_no_ai', shortResult);
+        return await finalizeResponseAudited('short_no_ai', shortResult);
       }
 
       const companyData = await this.getCachedCompanyRules();
@@ -1101,15 +1512,23 @@ export class BotService {
           return finalResult;
         }
 
+        const overrideValueSnippet = this.buildProductValueMiniSnippet({
+          product: relevantProduct ?? allProducts[0] ?? null,
+          message: normalizedMessage,
+        });
+        const overrideReply = overrideValueSnippet && allProducts.length > 0
+          ? `${companyCheck.overrideResponse} ${overrideValueSnippet}`.replace(/\s+/g, ' ').trim()
+          : companyCheck.overrideResponse;
+
         await this.memoryService.saveMessage({
           contactId: normalizedContactId,
           role: 'assistant',
-          content: companyCheck.overrideResponse,
+          content: overrideReply,
         });
         await this.saveConversationMemory(
           recordConversationDelivery(conversationMemory, {
-            messageText: companyCheck.overrideResponse,
-            lastMessages: [normalizedMessage, companyCheck.overrideResponse],
+            messageText: overrideReply,
+            lastMessages: [normalizedMessage, overrideReply],
             lastIntent: decision.intent,
             state: decision.stage,
             lastSentHadVideo: false,
@@ -1118,7 +1537,7 @@ export class BotService {
         );
 
         const blockedResult = this.createResult(
-          companyCheck.overrideResponse,
+          overrideReply,
           'fallback',
           intent,
           decision,
@@ -1141,7 +1560,7 @@ export class BotService {
           metadata?.messageType ?? 'text',
         );
         this.logReply(normalizedContactId, blockedResult);
-        return finalizeResponse('company_rule', blockedResult);
+        return await finalizeResponseAudited('company_rule', blockedResult);
       }
 
       const mediaIntent = this.detectMediaIntent(normalizedMessage);
@@ -1178,7 +1597,36 @@ export class BotService {
       const responseCacheKey = this.getResponseCacheKey(
         this.buildResponseCacheHash(normalizedMessage, decision.intent, decision.stage),
       );
-      const cachedResponse = await this.getCachedResponse(responseCacheKey, conversationMemory);
+      let cachedResponse = await this.getCachedResponse(responseCacheKey, conversationMemory);
+      if (cachedResponse && this.isKnowledgeEnforcementEnabled()) {
+        const cacheStats = this.buildAiAuditReplyStats({
+          message: normalizedMessage,
+          reply: cachedResponse.reply,
+          mediaCount: 0,
+          allProducts,
+          relevantProducts,
+          companyDataText: companyDataTextForAudit,
+          instructionsText: instructionsTextForAudit,
+        });
+        if (!cacheStats.ok) {
+          this.logger.log(
+            JSON.stringify({
+              event: 'KNOWLEDGE_ENFORCEMENT',
+              contactId: normalizedContactId,
+              message: normalizedMessage,
+              kind: 'discard_response_cache',
+              responseCacheKey,
+              failures: [...cacheStats.criticalFailures, ...cacheStats.severeFailures],
+            }),
+          );
+          cachedResponse = null;
+          try {
+            await this.redisService.del(responseCacheKey);
+          } catch {
+            // Ignore cache cleanup failures.
+          }
+        }
+      }
       if (cachedResponse) {
         if (responseGenerated && finalResult) {
           logResponseDebug({ layer: 'cache', blocked: true, reason: 'response_already_generated' });
@@ -1233,7 +1681,7 @@ export class BotService {
           metadata?.messageType ?? 'text',
         );
         this.logReply(normalizedContactId, cachedResult);
-        return finalizeResponse('cache', cachedResult);
+        return await finalizeResponseAudited('cache', cachedResult);
       }
 
       console.log('USANDO IA:', true);
@@ -1278,6 +1726,8 @@ export class BotService {
             conversationMemory,
             candidateMediaFiles,
             intent,
+            relevantProduct,
+            allProducts,
           }),
           BotService.AI_TIMEOUT_MS,
           'ai_generate',
@@ -1325,7 +1775,7 @@ export class BotService {
             metadata?.messageType ?? 'text',
           );
           this.logReply(normalizedContactId, timeoutResult);
-          return finalizeResponse('ai_timeout', timeoutResult);
+          return await finalizeResponseAudited('ai_timeout', timeoutResult);
         }
 
         throw error;
@@ -1400,7 +1850,15 @@ export class BotService {
         mediaIds: result.mediaFiles.map((file) => file.fileUrl),
       });
       this.logReply(normalizedContactId, result);
-      return finalizeResponse('ai', result);
+      return await finalizeResponseAudited('ai', result, {
+        thinkingAnalysis,
+        combinedContextLength: this.buildCombinedConversationContext(
+          compactContextKnowledgeContext,
+          memoryContext,
+          thinkingAnalysis,
+        ).length,
+        knowledgeContextLength: knowledgeContext.length,
+      });
     } catch (error) {
       this.logger.error(
         JSON.stringify({
@@ -1691,6 +2149,21 @@ export class BotService {
     return [
       'No repitas el mismo contenido, responde diferente.',
       `Motivo del rechazo anterior: ${reason}.`,
+      reason === 'generic_no_product'
+        ? 'Tu respuesta fue demasiado generica. Usa informacion concreta del producto (beneficios/uso/precio) antes de guiar a compra.'
+        : '',
+      reason === 'missing_dual_answer'
+        ? 'El cliente pidio "ambas cosas". Debes cubrir beneficios + (uso o precio) en la misma respuesta, de forma clara, antes de guiar.'
+        : '',
+      reason === 'missing_minimum_product_value'
+        ? 'Te falto el MINIMO obligatorio: 1 beneficio real + 1 funcion/como se usa + 1 conexion con la necesidad del cliente ("si lo que buscas es X..."). Incluyelo todo en la misma respuesta.'
+        : '',
+      reason === 'coherence_mismatch'
+        ? 'Dijiste datos que no coinciden con PRODUCTOS/EMPRESA (precio/telefono/afirmaciones). Corrige: usa SOLO los datos reales del contexto, y si falta un dato dilo claro sin inventar.'
+        : '',
+      reason === 'sales_flow_violation'
+        ? 'No puedes cerrar ni vender directo sin antes explicar valor. Primero explica el producto (beneficio + funcion/uso) y luego guias a compra con una sola pregunta.'
+        : '',
       reason === 'too_many_questions'
         ? 'Haz MAXIMO 1 pregunta en toda la respuesta (o ninguna si no hace falta).'
         : '',
@@ -1725,6 +2198,8 @@ export class BotService {
     conversationMemory: ConversationMemoryState;
     candidateMediaFiles: MediaFile[];
     intent: BotIntent;
+    relevantProduct: StructuredProduct | null;
+    allProducts: StructuredProduct[];
   }): Promise<{
     reply: { type: 'text' | 'audio'; content: string };
     mediaFiles: MediaFile[];
@@ -1743,6 +2218,7 @@ export class BotService {
 
     let lastRejectedText = '';
     let lastReason: ResponseValidationReason | null = null;
+    const correctionTrace: Array<{ attempt: number; reason: string; rejectedText: string }> = [];
 
     for (let attempt = 0; attempt <= BotService.MAX_REPLY_REGENERATION_ATTEMPTS; attempt += 1) {
       const companyRuleInstruction = buildCompanyRuleInstruction(
@@ -1808,6 +2284,92 @@ export class BotService {
           console.log('RESPUESTA RECHAZADA:', companyRuleValidation.reason ?? 'company_rule_validation_failed');
           lastRejectedText = selected.reply.content;
           lastReason = 'no_new_content';
+          correctionTrace.push({
+            attempt,
+            reason: `company_rule:${companyRuleValidation.reason ?? 'invalid'}`,
+            rejectedText: selected.reply.content,
+          });
+          this.logger.log(
+            JSON.stringify({
+              event: 'AI_CORRECTION',
+              contactId: params.contactId,
+              message: params.message,
+              attempt,
+              kind: 'reject',
+              reason: `company_rule:${companyRuleValidation.reason ?? 'invalid'}`,
+            }),
+          );
+          continue;
+        }
+
+        const knowledgeQuality = this.validateAiKnowledgeQuality({
+          message: params.message,
+          reply: selected.reply.content,
+          intent: params.intent,
+          mediaCount: selected.mediaFiles.length,
+          relevantProduct: params.relevantProduct,
+          allProducts: params.allProducts,
+        });
+        if (!knowledgeQuality.valid) {
+          const autoCorrected = this.tryAutoCorrectKnowledgeQualityReply({
+            message: params.message,
+            reply: selected.reply.content,
+            reason: knowledgeQuality.reason ?? 'no_new_content',
+            relevantProduct: params.relevantProduct,
+            allProducts: params.allProducts,
+          });
+
+          if (autoCorrected && autoCorrected.trim() && autoCorrected.trim() !== selected.reply.content.trim()) {
+            const correctedQuality = this.validateAiKnowledgeQuality({
+              message: params.message,
+              reply: autoCorrected,
+              intent: params.intent,
+              mediaCount: selected.mediaFiles.length,
+              relevantProduct: params.relevantProduct,
+              allProducts: params.allProducts,
+            });
+
+            if (correctedQuality.valid) {
+              this.logger.log(
+                JSON.stringify({
+                  event: 'AI_CORRECTION',
+                  contactId: params.contactId,
+                  message: params.message,
+                  attempt,
+                  kind: 'auto_patch_accept',
+                  reason: `knowledge_quality:${knowledgeQuality.reason ?? 'invalid'}`,
+                }),
+              );
+
+              return {
+                reply: {
+                  type: selected.reply.type,
+                  content: autoCorrected,
+                },
+                mediaFiles: selected.mediaFiles,
+                source: selected.source,
+              };
+            }
+          }
+
+          console.log('RESPUESTA RECHAZADA:', knowledgeQuality.reason ?? 'knowledge_quality_failed');
+          lastRejectedText = selected.reply.content;
+          lastReason = knowledgeQuality.reason ?? 'no_new_content';
+          correctionTrace.push({
+            attempt,
+            reason: `knowledge_quality:${knowledgeQuality.reason ?? 'invalid'}`,
+            rejectedText: selected.reply.content,
+          });
+          this.logger.log(
+            JSON.stringify({
+              event: 'AI_CORRECTION',
+              contactId: params.contactId,
+              message: params.message,
+              attempt,
+              kind: 'reject',
+              reason: `knowledge_quality:${knowledgeQuality.reason ?? 'invalid'}`,
+            }),
+          );
           continue;
         }
 
@@ -1816,6 +2378,52 @@ export class BotService {
           mediaIds: selected.mediaFiles.map((file) => file.fileUrl),
           source: selected.source,
         });
+
+        if (correctionTrace.length > 0) {
+          const rejected = correctionTrace[0]?.rejectedText ?? '';
+          const accepted = selected.reply.content;
+          const rejectedNorm = this.normalizeTextForMatch(rejected);
+          const acceptedNorm = this.normalizeTextForMatch(accepted);
+          const productTitle = params.relevantProduct?.titulo?.trim() ?? '';
+          const productNorm = productTitle ? this.normalizeTextForMatch(productTitle) : '';
+          const added: string[] = [];
+          if (productNorm && acceptedNorm.includes(productNorm) && !rejectedNorm.includes(productNorm)) {
+            added.push('added_product_name');
+          }
+          const knownPriceStrings = params.allProducts
+            .flatMap((product) => [this.valueToText(product.precio), this.valueToText(product.precioMinimo)])
+            .map((value) => (value ?? '').trim())
+            .filter((value) => value.length > 0);
+          const hadKnownPrice = knownPriceStrings.some((value) => rejected.toLowerCase().includes(value.toLowerCase()));
+          const hasKnownPrice = knownPriceStrings.some((value) => accepted.toLowerCase().includes(value.toLowerCase()));
+          if (hasKnownPrice && !hadKnownPrice) {
+            added.push('added_real_price');
+          }
+          const addedFunction = acceptedNorm.includes('funciona') && !rejectedNorm.includes('funciona');
+          if (addedFunction) {
+            added.push('added_function');
+          }
+          const addedBenefit = acceptedNorm.includes('ayuda') && !rejectedNorm.includes('ayuda');
+          if (addedBenefit) {
+            added.push('added_benefit');
+          }
+          const addedConnection = acceptedNorm.includes('si lo que buscas') && !rejectedNorm.includes('si lo que buscas');
+          if (addedConnection) {
+            added.push('added_need_connection');
+          }
+
+          this.logger.log(
+            JSON.stringify({
+              event: 'AI_CORRECTION',
+              contactId: params.contactId,
+              message: params.message,
+              kind: 'accepted_after_corrections',
+              corrections: correctionTrace.map((item) => ({ attempt: item.attempt, reason: item.reason })),
+              added,
+            }),
+          );
+        }
+
         return selected;
       }
 
@@ -1852,6 +2460,106 @@ export class BotService {
       mediaFiles: [],
       source: 'fallback',
     };
+  }
+
+  private tryAutoCorrectKnowledgeQualityReply(params: {
+    message: string;
+    reply: string;
+    reason: ResponseValidationReason;
+    relevantProduct: StructuredProduct | null;
+    allProducts: StructuredProduct[];
+  }): string | null {
+    const featuredProduct = params.relevantProduct ?? params.allProducts[0] ?? null;
+    if (!featuredProduct) {
+      return null;
+    }
+
+    const valueSnippet = this.buildProductValueMiniSnippet({
+      product: featuredProduct,
+      message: params.message,
+    });
+
+    const replyTrimmed = params.reply.trim();
+    const replyNormalized = this.normalizeTextForMatch(replyTrimmed);
+    const questionCount = (replyTrimmed.match(/\?/g) ?? []).length;
+    const hasQuestion = questionCount > 0;
+
+    const knownPriceText = this.valueToText(featuredProduct.precio);
+
+    const shouldAttempt = [
+      'generic_no_product',
+      'missing_dual_answer',
+      'missing_minimum_product_value',
+      'sales_flow_violation',
+      'coherence_mismatch',
+    ].includes(params.reason);
+
+    if (!shouldAttempt) {
+      return null;
+    }
+
+    if (params.reason === 'coherence_mismatch') {
+      if (!knownPriceText) {
+        return null;
+      }
+
+      if (replyTrimmed.toLowerCase().includes(knownPriceText.toLowerCase())) {
+        return null;
+      }
+
+      const suffix = `Precio: ${knownPriceText}.`;
+      return [replyTrimmed, suffix].filter(Boolean).join('\n\n').trim();
+    }
+
+    if (params.reason === 'generic_no_product') {
+      if (!valueSnippet) {
+        return null;
+      }
+
+      const callToAction = hasQuestion
+        ? ''
+        : '¿Quieres que te diga el precio y cómo pedirlo?';
+
+      return [valueSnippet, callToAction]
+        .filter(Boolean)
+        .join(' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+    }
+
+    if (params.reason === 'missing_dual_answer') {
+      const usageLine = replyNormalized.includes('se usa') || replyNormalized.includes('se toma')
+        ? ''
+        : 'Se usa como una infusión (1 taza al día) para empezar.';
+
+      const priceLine = knownPriceText && !replyTrimmed.toLowerCase().includes(knownPriceText.toLowerCase())
+        ? `Precio: ${knownPriceText}.`
+        : '';
+
+      const callToAction = hasQuestion
+        ? ''
+        : '¿Quieres que te diga cómo pedirlo?';
+
+      return [replyTrimmed, usageLine, priceLine, valueSnippet, callToAction]
+        .filter(Boolean)
+        .join('\n\n')
+        .trim();
+    }
+
+    if (!valueSnippet) {
+      return null;
+    }
+
+    const alreadyHasSnippet = replyNormalized.includes(this.normalizeTextForMatch(valueSnippet));
+    const appended = alreadyHasSnippet
+      ? replyTrimmed
+      : [replyTrimmed, valueSnippet].filter(Boolean).join('\n\n').trim();
+
+    if (!hasQuestion) {
+      return appended;
+    }
+
+    return appended;
   }
 
   private decideResponse(
@@ -2142,6 +2850,7 @@ export class BotService {
     contactId: string;
     message: string;
     messageType: 'text' | 'audio' | 'image';
+    featuredProduct: StructuredProduct | null;
   }): Promise<BotReplyResult | null> {
     const conversationEndKey = this.getConversationEndKey(params.contactId);
     const conversationWasEnded = Boolean(await this.readRedisCache<boolean>(conversationEndKey));
@@ -2164,7 +2873,14 @@ export class BotService {
 
     const conversationMemory = await this.getConversationMemory(params.contactId, []);
     const closureDecision = this.buildConversationEndedDecision(params.message);
-    const closureReply = this.buildConversationEndedReply(conversationMemory, false);
+    const closureReply = this.buildConversationEndedReply(
+      conversationMemory,
+      false,
+      this.buildProductValueMiniSnippet({
+        product: params.featuredProduct,
+        message: params.message,
+      }),
+    );
 
     await this.memoryService.saveMessage({
       contactId: params.contactId,
@@ -2351,7 +3067,533 @@ export class BotService {
     return 'Hola 👋\n¿Buscas bajar de peso o quieres info?';
   }
 
-  private buildQuickPriceReply(products: StructuredProduct[], relevantProducts: StructuredProduct[]): string {
+  private parseCompanyNameFromCompanyDataText(companyDataText: string): string {
+    const text = (companyDataText || '').trim();
+    if (!text) {
+      return '';
+    }
+
+    const match = text.match(/(?:^|\n)Nombre:\s*([^\n]+)/i);
+    return (match?.[1] ?? '').trim();
+  }
+
+  private buildSpeedGreetingReplyWithContext(params: {
+    companyName: string;
+    productSnippet: string;
+  }): string {
+    const header = params.companyName
+      ? `Hola 👋 Soy de ${params.companyName}.`
+      : 'Hola 👋';
+
+    const example = params.productSnippet ? params.productSnippet.trim() : '';
+
+    const lines = [
+      header,
+      ['¿Buscas bajar de peso o quieres info?', example].filter(Boolean).join(' '),
+    ].filter(Boolean);
+
+    return lines
+      .map((line) => line.replace(/\s+/g, ' ').trim())
+      .join('\n')
+      .trim();
+  }
+
+  private buildShortNoAiReply(product: StructuredProduct | null, message: string): string {
+    const valueSnippet = this.buildProductValueMiniSnippet({
+      product,
+      message,
+    });
+    const prefix = valueSnippet ? `Perfecto. ${valueSnippet}` : 'Perfecto.';
+    // Keep max 1 question.
+    return `${prefix} ¿Quieres saber precio, como se usa o resultados?`;
+  }
+
+  private isAiAuditEnabled(): boolean {
+    const raw = (process.env.BOT_AI_AUDIT ?? '').trim().toLowerCase();
+    return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on';
+  }
+
+  private isAiAuditStrict(): boolean {
+    const raw = (process.env.BOT_AI_AUDIT_STRICT ?? '').trim().toLowerCase();
+    return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on';
+  }
+
+  private isAiAuditForceBlock(): boolean {
+    const raw = (process.env.BOT_AI_AUDIT_FORCE_BLOCK ?? '').trim().toLowerCase();
+    return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on';
+  }
+
+  private isKnowledgeEnforcementEnabled(): boolean {
+    const raw = (process.env.BOT_KNOWLEDGE_ENFORCE ?? '').trim().toLowerCase();
+    if (!raw) {
+      return true;
+    }
+
+    return !(raw === '0' || raw === 'false' || raw === 'no' || raw === 'off');
+  }
+
+  private auditLog(payload: Record<string, unknown>): void {
+    if (!this.isAiAuditEnabled()) {
+      return;
+    }
+
+    this.logger.log(
+      JSON.stringify({
+        event: 'AI_AUDIT',
+        ...payload,
+      }),
+    );
+  }
+
+  private buildAiAuditModuleStats(params: {
+    message: string;
+    knowledgeContext: string;
+    instructionsText: string;
+    allProducts: StructuredProduct[];
+    companyDataText: string;
+  }): {
+    ok: boolean;
+    missing: Array<'INSTRUCCIONES' | 'PRODUCTOS' | 'EMPRESA'>;
+    counts: {
+      instruccionesChars: number;
+      productosCount: number;
+      empresaChars: number;
+    };
+    sections: {
+      hasInstrucciones: boolean;
+      hasProductos: boolean;
+      hasEmpresa: boolean;
+    };
+  } {
+    const knowledge = params.knowledgeContext || '';
+    const hasInstrucciones = knowledge.includes('[INSTRUCCIONES]');
+    const hasProductos = knowledge.includes('[PRODUCTOS]');
+    const hasEmpresa = knowledge.includes('[EMPRESA]');
+
+    const companyApplicable = this.detectCompanyApplicability(params.message);
+    const requireEmpresa = companyApplicable !== null;
+
+    const messageNormalized = this.normalizeTextForMatch(params.message);
+    const companyOnlyTerms = [
+      'ubicacion',
+      'ubicación',
+      'direccion',
+      'dirección',
+      'horario',
+      'telefono',
+      'teléfono',
+      'whatsapp',
+      'pago',
+      'cuenta',
+      'transferencia',
+      'tarjeta',
+    ];
+    const isCompanyOnly = companyOnlyTerms.some((term) => messageNormalized.includes(this.normalizeTextForMatch(term)));
+    const requireProductos = !isCompanyOnly;
+
+    const missing: Array<'INSTRUCCIONES' | 'PRODUCTOS' | 'EMPRESA'> = [];
+    if (!params.instructionsText.trim() || !hasInstrucciones) {
+      missing.push('INSTRUCCIONES');
+    }
+    if (requireProductos && (!Array.isArray(params.allProducts) || params.allProducts.length === 0 || !hasProductos)) {
+      missing.push('PRODUCTOS');
+    }
+    if (requireEmpresa && (!params.companyDataText.trim() || !hasEmpresa)) {
+      missing.push('EMPRESA');
+    }
+
+    return {
+      ok: missing.length === 0,
+      missing,
+      counts: {
+        instruccionesChars: params.instructionsText.trim().length,
+        productosCount: requireProductos && Array.isArray(params.allProducts) ? params.allProducts.length : 0,
+        empresaChars: requireEmpresa ? params.companyDataText.trim().length : 0,
+      },
+      sections: {
+        hasInstrucciones,
+        hasProductos,
+        hasEmpresa,
+      },
+    };
+  }
+
+  private replyMentionsAnyProduct(reply: string, products: StructuredProduct[]): boolean {
+    const normalizedReply = this.normalizeTextForMatch(reply);
+    if (!normalizedReply || products.length === 0) {
+      return false;
+    }
+
+    for (const product of products) {
+      const title = (product.titulo || '').trim();
+      if (!title) {
+        continue;
+      }
+
+      const normalizedTitle = this.normalizeTextForMatch(title);
+      if (normalizedTitle && normalizedReply.includes(normalizedTitle)) {
+        return true;
+      }
+
+      const prices = [this.valueToText(product.precio), this.valueToText(product.precioMinimo)]
+        .map((value) => (value || '').trim())
+        .filter((value) => value.length > 0);
+      if (prices.some((price) => reply.toLowerCase().includes(price.toLowerCase()))) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  private detectCompanyApplicability(message: string): 'location' | 'hours' | 'payment' | 'contact' | null {
+    const normalized = this.normalizeTextForMatch(message);
+    if (!normalized) {
+      return null;
+    }
+
+    if (/(ubicacion|ubicación|direccion|dirección|donde|dónde|maps)/i.test(message) || normalized.includes('direccion') || normalized.includes('ubicacion')) {
+      return 'location';
+    }
+    if (/(horario|hora|abren|abierto|cierran|cierre)/i.test(message) || normalized.includes('horario')) {
+      return 'hours';
+    }
+    if (/(pago|transferencia|efectivo|cuenta|banco)/i.test(message) || normalized.includes('pago')) {
+      return 'payment';
+    }
+    if (/(telefono|teléfono|whatsapp|contacto)/i.test(message) || normalized.includes('whatsapp') || normalized.includes('telefono')) {
+      return 'contact';
+    }
+
+    return null;
+  }
+
+  private buildAiAuditReplyStats(params: {
+    message: string;
+    reply: string;
+    mediaCount: number;
+    allProducts: StructuredProduct[];
+    relevantProducts: StructuredProduct[];
+    companyDataText: string;
+    instructionsText: string;
+  }): {
+    ok: boolean;
+    severeFailures: string[];
+    criticalFailures: string[];
+    warnings: string[];
+    checks: {
+      usesProducts: boolean;
+      respectsInstructions: boolean;
+      usesCompanyIfApplies: boolean;
+      genericWithoutKnowledge: boolean;
+      hasBenefit: boolean;
+      hasFunction: boolean;
+      hasNeedConnection: boolean;
+      coherentWithProducts: boolean;
+      salesFlowOk: boolean;
+    };
+  } {
+    const reply = (params.reply || '').trim();
+    const relevantPool = params.relevantProducts.length > 0 ? params.relevantProducts : params.allProducts;
+
+    const messageNormalized = this.normalizeTextForMatch(params.message);
+
+    const usesProducts = params.allProducts.length === 0
+      ? false
+      : this.replyMentionsAnyProduct(reply, relevantPool);
+
+    const questionCount = (reply.match(/\?/g) ?? []).length;
+    const hasBracketTags = /\[(INSTRUCCIONES|PRODUCTOS|EMPRESA|PRODUCTOS_RELEVANTES|PRODUCTO_RELEVANTE)\]/i.test(reply);
+    const respectsInstructions = questionCount <= 1 && !hasBracketTags && reply.length > 0;
+
+    const companyApplicable = this.detectCompanyApplicability(params.message);
+    const companyConfigured = params.companyDataText.trim().length > 0;
+    const companyName = this.parseCompanyNameFromCompanyDataText(params.companyDataText);
+    const companyHints = [
+      companyName,
+      'Telefono:',
+      'Teléfono:',
+      'Direccion:',
+      'Dirección:',
+      'Google Maps:',
+      'WhatsApp:',
+      'Banco:',
+      'Cuenta',
+    ].filter((value) => String(value || '').trim().length > 0);
+    const usesCompanyIfApplies =
+      companyApplicable === null
+        ? true
+        : (!companyConfigured
+          ? true
+          : companyHints.some((hint) => reply.toLowerCase().includes(String(hint).toLowerCase())));
+
+    const normalizedReply = this.normalizeTextForMatch(reply);
+    const genericPatterns = [
+      'claro te ayudo',
+      'te ayudo con eso',
+      'tenemos varias opciones',
+      'tenemos opciones',
+      'depende',
+      'dime en que te puedo ayudar',
+      'dime que necesitas',
+      'listo te ayudo',
+      'en que te ayudo',
+      'que necesitas saber',
+    ];
+    const productKeywordPool = relevantPool
+      .map((product) => [product.descripcionCorta, product.descripcionCompleta]
+        .map((value) => (value ?? '').toString())
+        .join(' '))
+      .join(' ');
+    const extractedProductTokens = (productKeywordPool || '')
+      .replace(/[\r\n]/g, ' ')
+      .split(/[^A-Za-zÁÉÍÓÚÜÑáéíóúüñ0-9]+/)
+      .map((token) => token.trim())
+      .filter((token) => token.length >= 5)
+      .slice(0, 20)
+      .map((token) => this.normalizeTextForMatch(token));
+
+    const usesProductsByKeywords = Boolean(normalizedReply)
+      && extractedProductTokens.some((token) => token && normalizedReply.includes(token));
+    const usesProductsExpanded = usesProducts || usesProductsByKeywords;
+
+    const genericWithoutKnowledge =
+      Boolean(normalizedReply)
+      && !usesProductsExpanded
+      && genericPatterns.some((pattern) => normalizedReply.includes(this.normalizeTextForMatch(pattern)));
+
+    const severeFailures: string[] = [];
+    const criticalFailures: string[] = [];
+    const warnings: string[] = [];
+
+    // Media attached: value can be carried by the media + short caption. Do not hard-block.
+    if ((params.mediaCount ?? 0) > 0) {
+      if (!respectsInstructions) {
+        severeFailures.push('FALLA_GRAVE: respuesta_no_respeta_instrucciones_basicas');
+      }
+      if (!usesCompanyIfApplies) {
+        severeFailures.push('FALLA_GRAVE: respuesta_no_usa_empresa_cuando_aplica');
+      }
+
+      return {
+        ok: severeFailures.length === 0,
+        severeFailures,
+        criticalFailures,
+        warnings,
+        checks: {
+          usesProducts: true,
+          respectsInstructions,
+          usesCompanyIfApplies,
+          genericWithoutKnowledge: false,
+          hasBenefit: true,
+          hasFunction: true,
+          hasNeedConnection: true,
+          coherentWithProducts: true,
+          salesFlowOk: true,
+        },
+      };
+    }
+
+    const functionHints = [
+      'funciona',
+      'sirve',
+      'se usa',
+      'se toma',
+      'modo de uso',
+      'toma',
+      'tomarlo',
+      'usar',
+    ];
+    const benefitHints = [
+      'beneficio',
+      'beneficios',
+      'resultado',
+      'resultados',
+      'ayuda',
+      'apoya',
+      'mejora',
+      'bienestar',
+      'digest',
+      'digestion',
+      'energ',
+    ];
+
+    const hasFunction = Boolean(normalizedReply)
+      && functionHints.some((hint) => normalizedReply.includes(this.normalizeTextForMatch(hint)));
+
+    const hasBenefit = Boolean(normalizedReply)
+      && (
+        benefitHints.some((hint) => normalizedReply.includes(this.normalizeTextForMatch(hint)))
+        || extractedProductTokens.some((token) => token && normalizedReply.includes(token))
+      );
+
+    const needs = [
+      messageNormalized.includes('bajar de peso') || messageNormalized.includes('rebajar') || messageNormalized.includes('adelgaz')
+        ? 'bajar de peso'
+        : null,
+      messageNormalized.includes('digest') || messageNormalized.includes('digestion') || messageNormalized.includes('digestion')
+        ? 'digestion'
+        : null,
+      messageNormalized.includes('bienestar')
+        ? 'bienestar'
+        : null,
+    ].filter((value): value is string => Boolean(value));
+
+    const connectionPhrases = ['si lo que buscas', 'para ti', 'en tu caso', 'segun lo que me dices'];
+    const hasNeedConnection = Boolean(normalizedReply)
+      && (
+        connectionPhrases.some((phrase) => normalizedReply.includes(this.normalizeTextForMatch(phrase)))
+        || (needs.length > 0
+          ? needs.some((need) => normalizedReply.includes(this.normalizeTextForMatch(need)))
+          : questionCount >= 1)
+      );
+
+    const replyMentionsPrice = Boolean(normalizedReply)
+      && (
+        normalizedReply.includes('precio')
+        || /\brd\$|\busd\b|\$\s*\d/i.test(reply)
+        || /\b\d{3,}\b/.test(normalizedReply)
+      );
+    const knownPriceStrings = params.allProducts
+      .flatMap((product) => [this.valueToText(product.precio), this.valueToText(product.precioMinimo)])
+      .map((value) => (value ?? '').trim())
+      .filter((value) => value.length > 0);
+
+    const normalizeMoneyNumber = (value: string): number | null => {
+      const digitsOnly = value.replace(/[^0-9]/g, '');
+      if (!digitsOnly) {
+        return null;
+      }
+      const num = Number.parseInt(digitsOnly, 10);
+      return Number.isFinite(num) ? num : null;
+    };
+
+    const extractedMoneyNumbers = (reply.match(/\b\d[\d.,]{2,}\b/g) ?? [])
+      .map((value) => normalizeMoneyNumber(value))
+      .filter((value): value is number => typeof value === 'number');
+
+    const knownMoneyNumbers = params.allProducts
+      .flatMap((product) => [product.precio, product.precioMinimo])
+      .map((value) => (typeof value === 'number' ? value : normalizeMoneyNumber(String(value ?? ''))))
+      .filter((value): value is number => typeof value === 'number');
+    const hasKnownPriceIfMentionsPrice = !replyMentionsPrice
+      ? true
+      : (
+          knownPriceStrings.some((value) => reply.toLowerCase().includes(value.toLowerCase()))
+          || (extractedMoneyNumbers.length > 0 && knownMoneyNumbers.some((known) => extractedMoneyNumbers.includes(known)))
+          || normalizedReply.includes('no tengo el precio')
+          || normalizedReply.includes('no esta configurado')
+          || normalizedReply.includes('no está configurado')
+        );
+
+    const configuredPhoneMatch = (params.companyDataText || '').match(/(?:^|\n)Telefono:\s*([^\n]+)/i);
+    const configuredPhoneDigits = (configuredPhoneMatch?.[1] ?? '').replace(/[^0-9]/g, '');
+    const replyPhoneMatch = reply.match(/(?:\+?\d{1,3}[\s-]?)?(?:\(?\d{3}\)?[\s-]?)\d{3}[\s-]?\d{4}/);
+    const replyPhoneDigits = (replyPhoneMatch?.[0] ?? '').replace(/[^0-9]/g, '');
+    const phoneCoherent = !replyPhoneDigits
+      ? true
+      : (!configuredPhoneDigits ? true : replyPhoneDigits.endsWith(configuredPhoneDigits) || configuredPhoneDigits.endsWith(replyPhoneDigits));
+
+    const coherentWithProducts = hasKnownPriceIfMentionsPrice && phoneCoherent;
+
+    const closeOrSellPhrases = [
+      'dame tu direccion',
+      'dame tu dirección',
+      'pasame tu ubicacion',
+      'pásame tu ubicación',
+      'te lo envio',
+      'te lo envío',
+      'vamos a pedirlo',
+      'vamos a pedir',
+      'te lo preparo',
+      'te lo preparo ya',
+      'para el pedido',
+      'para ordenar',
+    ];
+    const triesToClose = Boolean(normalizedReply)
+      && closeOrSellPhrases.some((phrase) => normalizedReply.includes(this.normalizeTextForMatch(phrase)));
+    const salesFlowOk = !triesToClose || (hasBenefit && hasFunction);
+
+    if (params.allProducts.length > 0 && !usesProductsExpanded) {
+      severeFailures.push('FALLA_GRAVE: respuesta_no_usa_productos');
+    }
+
+    if (params.allProducts.length > 0 && !hasBenefit) {
+      severeFailures.push('FALLA_GRAVE: respuesta_sin_beneficio_producto');
+    }
+
+    if (params.allProducts.length > 0 && !hasFunction) {
+      severeFailures.push('FALLA_GRAVE: respuesta_sin_funcion_o_uso');
+    }
+
+    if (params.allProducts.length > 0 && !hasNeedConnection) {
+      severeFailures.push('FALLA_GRAVE: respuesta_sin_conexion_con_necesidad');
+    }
+
+    if (!respectsInstructions) {
+      severeFailures.push('FALLA_GRAVE: respuesta_no_respeta_instrucciones_basicas');
+    }
+
+    if (!usesCompanyIfApplies) {
+      severeFailures.push('FALLA_GRAVE: respuesta_no_usa_empresa_cuando_aplica');
+    }
+
+    if (!coherentWithProducts) {
+      criticalFailures.push('RESPUESTA_INCONSISTENTE_CON_CONOCIMIENTO');
+    }
+
+    if (!salesFlowOk) {
+      severeFailures.push('FALLA_GRAVE: flujo_ventas_incorrecto_cierra_sin_explicar');
+    }
+
+    if (genericWithoutKnowledge) {
+      criticalFailures.push('RESPUESTA_SIN_BASE_DE_CONOCIMIENTO');
+    }
+
+    if (reply.length > 0 && reply.length < 12 && params.allProducts.length > 0) {
+      warnings.push('ADVERTENCIA: respuesta_demasiado_corta_posible_generica');
+    }
+
+    return {
+      ok: severeFailures.length === 0 && criticalFailures.length === 0,
+      severeFailures,
+      criticalFailures,
+      warnings,
+      checks: {
+        usesProducts: usesProductsExpanded,
+        respectsInstructions,
+        usesCompanyIfApplies,
+        genericWithoutKnowledge,
+        hasBenefit,
+        hasFunction,
+        hasNeedConnection,
+        coherentWithProducts,
+        salesFlowOk,
+      },
+    };
+  }
+
+  private getAuditSnapshotKey(contactId: string): string {
+    return `audit:last:${contactId}`;
+  }
+
+  private async persistAuditSnapshot(contactId: string, snapshot: Record<string, unknown>): Promise<void> {
+    if (!this.isAiAuditEnabled()) {
+      return;
+    }
+
+    try {
+      await this.redisService.set(this.getAuditSnapshotKey(contactId), snapshot, 60 * 30);
+      const maybePush = (this.redisService as unknown as { pushToList?: (key: string, value: unknown) => Promise<void> }).pushToList;
+      if (typeof maybePush === 'function') {
+        await maybePush.call(this.redisService, `audit:events:${contactId}`, snapshot);
+      }
+    } catch {
+      // Audit persistence must never break production replies.
+    }
+  }
+
+  private buildQuickPriceReply(products: StructuredProduct[], relevantProducts: StructuredProduct[], message: string): string {
     const featured = relevantProducts[0] ?? products[0] ?? null;
     if (!featured) {
       return 'Claro. ¿De cuál producto quieres el precio?';
@@ -2360,11 +3602,17 @@ export class BotService {
     const price = this.valueToText(featured.precio) || this.valueToText(featured.precioMinimo);
     const title = featured.titulo.trim();
 
+    const valueSnippet = this.buildProductValueMiniSnippet({
+      product: featured,
+      message,
+    });
+
     if (!price) {
-      return `${title}: ahora mismo no tengo el precio configurado. ¿Te interesa saber resultados o como se usa?`;
+      return `${valueSnippet} Ahora mismo no tengo el precio configurado. ¿Quieres que te explique como se usa o resultados?`;
     }
 
-    return `${title} cuesta ${price}. ¿Te interesa bajar de peso o quieres info?`;
+    // Keep 1 question total.
+    return `${valueSnippet} Precio: ${price}. ¿Prefieres que te explique como se usa o te ayudo a pedirlo?`;
   }
 
   private buildQuickBenefitsReply(product: StructuredProduct | null): string {
@@ -2466,6 +3714,58 @@ export class BotService {
     return `${product.titulo.trim()}: ${short}`;
   }
 
+  private inferNeedLabelFromMessage(message: string): string | null {
+    const normalized = this.normalizeTextForMatch(message);
+    if (!normalized) {
+      return null;
+    }
+
+    if (normalized.includes('bajar de peso') || normalized.includes('rebajar') || normalized.includes('adelgaz')) {
+      return 'bajar de peso';
+    }
+
+    if (normalized.includes('digest') || normalized.includes('digestion')) {
+      return 'mejorar la digestion';
+    }
+
+    if (normalized.includes('bienestar')) {
+      return 'sentirte mejor';
+    }
+
+    return null;
+  }
+
+  private buildProductValueMiniSnippet(params: {
+    product: StructuredProduct | null;
+    message: string;
+  }): string {
+    const title = params.product?.titulo?.trim() ?? '';
+    if (!title) {
+      return '';
+    }
+
+    const rawDescription = (params.product?.descripcionCorta || params.product?.descripcionCompleta || '').trim();
+    const cleaned = rawDescription.replace(/\s+/g, ' ').trim().replace(/[?¿]/g, '');
+    const firstSentence = cleaned.split(/[.!]\s+/)[0]?.trim() ?? '';
+    const benefit = this.limitText(firstSentence || cleaned, 90);
+
+    const need = this.inferNeedLabelFromMessage(params.message);
+    const connection = need
+      ? `Si lo que buscas es ${need}, te puede servir.`
+      : 'Si lo que buscas es precio, uso o resultados, te guio.';
+
+    const benefitLine = benefit ? `${title}: ${benefit}.` : `${title}.`;
+    const functionLine = benefit
+      ? `Funciona como apoyo para ${benefit.toLowerCase().replace(/\.$/, '')}.`
+      : 'Funciona como apoyo diario.';
+
+    return [benefitLine, functionLine, connection]
+      .map((line) => line.replace(/\s+/g, ' ').trim())
+      .filter((line) => line.length > 0)
+      .join(' ')
+      .trim();
+  }
+
   private buildSalesActiveFallbackReply(
     config: Awaited<ReturnType<ClientConfigService['getConfig']>> | null,
     message: string,
@@ -2478,7 +3778,10 @@ export class BotService {
     const relevantProductsRaw = config ? this.filterRelevantProducts(products, message) : [];
     const relevantProducts = this.applySingleActiveProductAssumption(products, relevantProductsRaw);
     const featuredProduct = relevantProducts[0] ?? products[0] ?? null;
-    const productSnippet = this.pickProductSnippet(featuredProduct);
+    const productSnippet = this.buildProductValueMiniSnippet({
+      product: featuredProduct,
+      message,
+    });
 
     const closingQuestion = greetingOnly
       ? 'Que te interesa saber primero: precio, resultados o como se usa?'
@@ -2616,8 +3919,14 @@ export class BotService {
       || state.decision.intent === 'info';
 
     if (state.hotLead || state.decision.action === 'cerrar') {
-      nextBestAction = 'cerrar';
-      responseStrategy = 'cerrar suave y llevar al siguiente paso de compra.';
+      // Guardrail: never "close" or "sell direct" if we haven't explained value yet.
+      if (!alreadyExplained) {
+        nextBestAction = 'explicar';
+        responseStrategy = 'primero explicar el producto (beneficio + como funciona/uso) y luego guiar a compra.';
+      } else {
+        nextBestAction = 'cerrar';
+        responseStrategy = 'cerrar suave y llevar al siguiente paso de compra.';
+      }
     } else if (repetitionRisk && alreadyExplained) {
       nextBestAction = 'avanzar';
       responseStrategy = 'no repetir, resumir brevemente y llevar a precio o siguiente paso.';
@@ -4022,12 +5331,24 @@ export class BotService {
   private buildGreetingReply(
     contactId: string,
     conversationMemory: ConversationMemoryState,
+    context?: {
+      companyName: string;
+      productSnippet: string;
+    },
   ): string {
+    const companyName = context?.companyName?.trim() ?? '';
+    const productSnippet = context?.productSnippet?.trim() ?? '';
+    const suffixParts = [
+      companyName ? `Soy de ${companyName}.` : '',
+      productSnippet ? productSnippet : '',
+    ].filter((value) => value.length > 0);
+    const suffix = suffixParts.length > 0 ? ` ${suffixParts.join(' ')}` : '';
+
     const variants = [
-      'Hola 👋 que tal, bienvenido. Dime en que te puedo ayudar.',
-      'Hey 🙌 como estas, dime que te gustaria saber.',
-      'Hola bro 🔥 bienvenido, aqui te ayudo con lo que necesites.',
-      'Saludos 👋 tranquilo, dime en que andas y te ayudo.',
+      `Hola 👋 que tal, bienvenido. Dime en que te puedo ayudar.${suffix}`,
+      `Hey 🙌 como estas, dime que te gustaria saber.${suffix}`,
+      `Hola bro 🔥 bienvenido, aqui te ayudo con lo que necesites.${suffix}`,
+      `Saludos 👋 tranquilo, dime en que andas y te ayudo.${suffix}`,
     ];
     const offset = parseInt(this.hashValue(contactId).slice(0, 2), 16) % variants.length;
     const orderedVariants = variants.slice(offset).concat(variants.slice(0, offset));
@@ -4144,6 +5465,7 @@ export class BotService {
   private buildConversationEndedReply(
     conversationMemory: ConversationMemoryState,
     closureDetected: boolean,
+    productSnippet?: string,
   ): string {
     const options = closureDetected
       ? [
@@ -4157,7 +5479,12 @@ export class BotService {
           'Perfecto, aqui estare cuando quieras volver a eso.',
         ];
 
-    return this.pickFirstUnsentMessage(options, conversationMemory.sentMessages);
+    const suffix = (productSnippet ?? '').trim();
+    const withContext = suffix
+      ? options.map((value) => `${value} ${suffix}`.replace(/\s+/g, ' ').trim())
+      : options;
+
+    return this.pickFirstUnsentMessage(withContext, conversationMemory.sentMessages);
   }
 
   private buildConversationEndedDecision(message: string): BotDecisionState {
@@ -5126,6 +6453,234 @@ export class BotService {
     }
 
     return intent === 'compra' || intent === 'cierre' || intent === 'interes' || intent === 'hot';
+  }
+
+  private validateAiKnowledgeQuality(params: {
+    message: string;
+    reply: string;
+    intent: BotIntent;
+    mediaCount: number;
+    relevantProduct: StructuredProduct | null;
+    allProducts: StructuredProduct[];
+  }): { valid: boolean; reason?: ResponseValidationReason } {
+    // If we're attaching media, the content value can be carried by the media + short caption.
+    if (params.mediaCount > 0) {
+      return { valid: true };
+    }
+
+    const messageNormalized = this.normalizeTextForMatch(params.message);
+    const replyNormalized = this.normalizeTextForMatch(params.reply);
+    const questionCount = (params.reply.match(/\?/g) ?? []).length;
+
+    if (!replyNormalized) {
+      return { valid: false, reason: 'no_new_content' };
+    }
+
+    // Only enforce product-backed answers when we actually have a catalog to use.
+    if (params.allProducts.length === 0) {
+      return { valid: true };
+    }
+
+    // Skip product enforcement for pure greetings / pure closures / company-only questions.
+    if (this.isGreetingOnlyMessage(params.message) || this.isCloseSignal(params.message)) {
+      return { valid: true };
+    }
+
+    const companyOnlyTerms = [
+      'ubicacion',
+      'direccion',
+      'horario',
+      'telefono',
+      'whatsapp',
+      'pago',
+      'cuenta',
+      'transferencia',
+      'tarjeta',
+      'mapa',
+    ];
+    if (companyOnlyTerms.some((term) => messageNormalized.includes(term))) {
+      return { valid: true };
+    }
+
+    const productTitle = params.relevantProduct?.titulo?.trim() ?? '';
+    const productTitleNormalized = productTitle ? this.normalizeTextForMatch(productTitle) : '';
+    const mentionsProduct = productTitleNormalized ? replyNormalized.includes(productTitleNormalized) : false;
+
+    const mentionsPrice =
+      /\b(rd|usd|dolar|dolares|peso|pesos)\b/.test(replyNormalized)
+      || replyNormalized.includes('precio')
+      || /\b\d{3,}\b/.test(replyNormalized);
+
+    const mentionsUsage = [
+      'como se usa',
+      'como se toma',
+      'modo de uso',
+      'dosis',
+      'toma',
+      'tomar',
+      'usar',
+    ].some((term) => replyNormalized.includes(term));
+
+    const mentionsBenefits = [
+      'beneficio',
+      'beneficios',
+      'resultado',
+      'resultados',
+      'ayuda',
+      'funciona',
+      'sirve',
+      'apetito',
+    ].some((term) => replyNormalized.includes(term));
+
+    const hasFunction = [
+      'funciona',
+      'sirve',
+      'se usa',
+      'se toma',
+      'modo de uso',
+      'toma',
+      'tomarlo',
+      'usar',
+    ].some((term) => replyNormalized.includes(this.normalizeTextForMatch(term)));
+
+    const extractedProductTokens = params.allProducts
+      .flatMap((product) => {
+        const blob = `${product.descripcionCorta ?? ''} ${product.descripcionCompleta ?? ''}`.trim();
+        return blob
+          .replace(/[\r\n]/g, ' ')
+          .split(/[^A-Za-zÁÉÍÓÚÜÑáéíóúüñ0-9]+/)
+          .map((token) => token.trim())
+          .filter((token) => token.length >= 5)
+          .slice(0, 12);
+      })
+      .map((token) => this.normalizeTextForMatch(token));
+
+    const hasBenefit = mentionsBenefits || extractedProductTokens.some((token) => token && replyNormalized.includes(token));
+
+    const needsDetected = [
+      messageNormalized.includes('bajar de peso') || messageNormalized.includes('rebajar') || messageNormalized.includes('adelgaz')
+        ? 'bajar de peso'
+        : null,
+      messageNormalized.includes('digest') || messageNormalized.includes('digestion')
+        ? 'digestion'
+        : null,
+      messageNormalized.includes('bienestar')
+        ? 'bienestar'
+        : null,
+    ].filter((value): value is string => Boolean(value));
+    const hasNeedConnection = needsDetected.length === 0
+      ? (replyNormalized.includes('para ti') || replyNormalized.includes('en tu caso') || replyNormalized.includes('si lo que buscas') || questionCount >= 1)
+      : (needsDetected.some((need) => replyNormalized.includes(this.normalizeTextForMatch(need)))
+        || replyNormalized.includes('si lo que buscas')
+        || replyNormalized.includes('para ti')
+        || replyNormalized.includes('en tu caso'));
+
+    const knownPriceStrings = params.allProducts
+      .flatMap((product) => [this.valueToText(product.precio), this.valueToText(product.precioMinimo)])
+      .map((value) => (value ?? '').trim())
+      .filter((value) => value.length > 0);
+
+    const normalizeMoneyNumber = (value: string): number | null => {
+      const digitsOnly = value.replace(/[^0-9]/g, '');
+      if (!digitsOnly) {
+        return null;
+      }
+      const num = Number.parseInt(digitsOnly, 10);
+      return Number.isFinite(num) ? num : null;
+    };
+
+    const extractedMoneyNumbers = (params.reply.match(/\b\d[\d.,]{2,}\b/g) ?? [])
+      .map((value) => normalizeMoneyNumber(value))
+      .filter((value): value is number => typeof value === 'number');
+
+    const knownMoneyNumbers = params.allProducts
+      .flatMap((product) => [product.precio, product.precioMinimo])
+      .map((value) => (typeof value === 'number' ? value : normalizeMoneyNumber(String(value ?? ''))))
+      .filter((value): value is number => typeof value === 'number');
+
+    const mentionsCurrency = /\brd\$|\busd\b|\$\s*\d/i.test(params.reply);
+    const hasKnownPriceIfMentionsPrice = !(mentionsPrice || mentionsCurrency)
+      ? true
+      : (
+          knownPriceStrings.some((value) => params.reply.toLowerCase().includes(value.toLowerCase()))
+          || (extractedMoneyNumbers.length > 0 && knownMoneyNumbers.some((known) => extractedMoneyNumbers.includes(known)))
+          || replyNormalized.includes('no tengo el precio')
+          || replyNormalized.includes('no esta configurado')
+          || replyNormalized.includes('no está configurado')
+        );
+
+    if (!hasKnownPriceIfMentionsPrice) {
+      return { valid: false, reason: 'coherence_mismatch' };
+    }
+
+    const broadInfoRequest =
+      (messageNormalized.includes('informacion') || messageNormalized.includes('info'))
+      && !messageNormalized.includes('precio')
+      && !messageNormalized.includes('como')
+      && !messageNormalized.includes('funciona')
+      && !messageNormalized.includes('beneficio')
+      && !messageNormalized.includes('resultado');
+    const isClarifyingGuidance = [
+      'dime',
+      'que te interesa',
+      'que quieres saber',
+      'con que te ayudo',
+      'en que te puedo ayudar',
+    ].some((phrase) => replyNormalized.includes(phrase));
+    if (broadInfoRequest && isClarifyingGuidance) {
+      return { valid: true };
+    }
+
+    const isTooGeneric =
+      replyNormalized.length < 70
+      && [
+        'claro',
+        'perfecto',
+        'te ayudo',
+        'te ayudo con eso',
+        'depende',
+        'tenemos varias opciones',
+        'tenemos opciones',
+        'dime',
+        'listo',
+      ].some((phrase) => replyNormalized.includes(phrase))
+      && !(mentionsProduct || mentionsPrice || mentionsUsage || mentionsBenefits);
+
+    if (isTooGeneric && (params.intent === 'interes' || params.intent === 'compra' || params.intent === 'duda')) {
+      return { valid: false, reason: 'generic_no_product' };
+    }
+
+    const askedBoth = messageNormalized.includes('ambas')
+      || messageNormalized.includes('las dos')
+      || messageNormalized.includes('los dos')
+      || messageNormalized.includes('las dos cosas')
+      || messageNormalized.includes('los dos');
+    if (askedBoth && !(mentionsBenefits && (mentionsUsage || mentionsPrice))) {
+      return { valid: false, reason: 'missing_dual_answer' };
+    }
+
+    const closeOrSellPhrases = [
+      'dame tu direccion',
+      'dame tu dirección',
+      'pasame tu ubicacion',
+      'pásame tu ubicación',
+      'para el pedido',
+      'vamos a pedirlo',
+      'vamos a pedir',
+      'te lo envio',
+      'te lo envío',
+    ];
+    const triesToClose = closeOrSellPhrases.some((phrase) => replyNormalized.includes(this.normalizeTextForMatch(phrase)));
+    if (triesToClose && !(hasBenefit && hasFunction)) {
+      return { valid: false, reason: 'sales_flow_violation' };
+    }
+
+    // Minimum enforcement for every non-greeting / non-closure when products exist.
+    if (!(hasBenefit && hasFunction && hasNeedConnection)) {
+      return { valid: false, reason: 'missing_minimum_product_value' };
+    }
+
+    return { valid: true };
   }
 
   private requiresDetailedResponse(message: string): boolean {

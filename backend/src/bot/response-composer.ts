@@ -180,6 +180,11 @@ export function composeFinalMessage(rawText: string, options?: ComposeOptions): 
   const questionSegments: string[] = [];
   let questionsUsed = 0;
 
+  // Always reserve room for at least one question when requested.
+  // Otherwise, long explanations can fill maxIdeas and drop the only guidance question.
+  const reservedForQuestions = maxQuestions > 0 ? 1 : 0;
+  const maxExplanationSegments = Math.max(1, maxIdeas - reservedForQuestions);
+
   // Prefer explanation first, question (guidance) last.
   for (const segment of segments) {
     const normalizedSegment = normalizeForCompare(segment);
@@ -194,7 +199,7 @@ export function composeFinalMessage(rawText: string, options?: ComposeOptions): 
 
     selectedSegments.push(segment);
     seen.add(normalizedSegment);
-    if (selectedSegments.length >= maxIdeas) {
+    if (selectedSegments.length >= maxExplanationSegments) {
       break;
     }
   }
