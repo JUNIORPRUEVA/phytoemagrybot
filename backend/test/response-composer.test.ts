@@ -29,6 +29,24 @@ test('composeFinalMessage selects the first option when text looks like multiple
   assert.equal(output, 'Te explico cómo funciona.');
 });
 
+test('composeFinalMessage preserves numbered steps when preceded by an intro line', () => {
+  const input = [
+    'Dale, te explico cómo se usa:',
+    '1) Empieza con una taza al día',
+    '2) Tómalo constante por varios días',
+    '3) Acompáñalo con agua',
+    '¿Quieres que te diga el precio también?',
+  ].join('\n');
+
+  const output = composeFinalMessage(input, { maxIdeas: 6, maxQuestions: 1 });
+
+  assert.match(output, /cómo se usa/i);
+  assert.match(output, /\n1\)/);
+  assert.match(output, /\n2\)/);
+  assert.match(output, /\n3\)/);
+  assert.match(output, /\?$/);
+});
+
 test('composeFinalMessage preserves bullet explanations (does not collapse to first bullet)', () => {
   const input = [
     'Claro, te explico:',

@@ -1086,6 +1086,69 @@ test('catalog request limits outgoing images to avoid saturating the client', as
   assert.equal(result.mediaFiles.length, 2);
 });
 
+test('AUTO TEST CASE 1: "quiero saber beneficios" responds with clear explanation and no product-chooser question', async () => {
+  const service = createService({
+    aiReply: [
+      'Claro, te explico los beneficios del Te Detox Premium:',
+      '- Apoya la digestión y te ayuda a sentirte más ligero/a',
+      '- Puede ayudar con la hinchazón y el bienestar general',
+      'Si quieres, también te digo el precio y cómo se usa. ¿Qué prefieres ahora?',
+    ].join('\n'),
+  });
+
+  const result = await service.processIncomingMessage('18095557001', 'quiero saber beneficios');
+
+  assert.equal(result.source, 'ai');
+  assert.doesNotMatch(result.reply.toLowerCase(), /de cual producto|de cuál producto/);
+  assert.match(result.reply.toLowerCase(), /beneficio|digest|bienestar|liger/);
+  assert.match(result.reply, /\n- /);
+  assert.match(result.reply, /\?$/);
+});
+
+test('AUTO TEST CASE 2: "como se usa" uses detailed style and explains before guiding', async () => {
+  let capturedParams: Record<string, unknown> | null = null;
+  const service = createService({
+    aiReply: [
+      'Dale, te explico cómo se usa:',
+      '1) Empieza con una taza al día',
+      '2) Tómalo constante por varios días para notar la diferencia',
+      '3) Acompáñalo con agua y comida ligera',
+      '¿Quieres que te diga el precio también?',
+    ].join('\n'),
+    onGenerateReply: (params) => {
+      capturedParams = params;
+    },
+  });
+
+  const result = await service.processIncomingMessage('18095557002', 'como se usa');
+
+  assert.equal(result.source, 'ai');
+  assert.equal((capturedParams as { responseStyle?: string } | null)?.responseStyle, 'detailed');
+  assert.doesNotMatch(result.reply.toLowerCase(), /de cual producto|de cuál producto/);
+  assert.match(result.reply.toLowerCase(), /como se usa|se usa|taza|toma/);
+  assert.match(result.reply, /\n1\)/);
+  assert.match(result.reply, /\?$/);
+});
+
+test('AUTO TEST CASE 3: "precio" responds directly (single active product assumed)', async () => {
+  const service = createService();
+  const result = await service.processIncomingMessage('18095557003', 'precio');
+
+  assert.equal(result.source, 'hardcode');
+  assert.doesNotMatch(result.reply.toLowerCase(), /de cual producto|de cuál producto/);
+  assert.match(result.reply, /Te Detox Premium/i);
+  assert.match(result.reply.toLowerCase(), /cuesta|rd\$|precio/);
+});
+
+test('AUTO TEST CASE 4: "hola" greets naturally and keeps the conversation open', async () => {
+  const service = createService();
+  const result = await service.processIncomingMessage('18095557004', 'hola');
+
+  assert.match(result.reply.toLowerCase(), /hola|hey|saludos|buenas/);
+  assert.match(result.reply, /\?/);
+  assert.doesNotMatch(result.reply.toLowerCase(), /de cual producto|de cuál producto/);
+});
+
 test('voice request by text uses audio when the answer needs explanation', async () => {
   const service = createService({
     generateReply: async () => ({

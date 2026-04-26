@@ -91,9 +91,17 @@ function extractFirstOptionIfLooksLikeList(text: string): string {
 
   // Only collapse to the first item when it looks like the model produced *alternative* answers.
   // Do NOT collapse normal bullet explanations (benefits, steps, etc.).
+  const explicitAlternativeCue = /\b(?:opci[oó]n|respuesta|elige|escoge|selecciona)\b/i.test(text);
+
+  // Heuristic: if a numbered list starts immediately (first non-empty line is "1)" etc.),
+  // it's likely multiple alternative answers and we can safely keep only the first.
+  // If there's an intro line before the list ("Te explico cómo se usa:") it's usually steps/benefits.
+  const firstListLineIndex = lines.findIndex((line) => /^\d+[).:-]\s+/.test(line) || /^[-•]\s+/.test(line));
+  const listStartsImmediately = firstListLineIndex === 0;
+
   const looksLikeAlternatives =
-    /\b(?:opci[oó]n|respuesta|elige|escoge|selecciona)\b/i.test(text) ||
-    (numberedLineCount >= 2 && bulletedLineCount === 0);
+    explicitAlternativeCue ||
+    (listStartsImmediately && numberedLineCount >= 2 && bulletedLineCount === 0);
   if (!looksLikeAlternatives) {
     return text;
   }

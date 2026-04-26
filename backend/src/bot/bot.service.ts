@@ -258,10 +258,10 @@ export class BotService {
 
         // RESPONSE COMPOSER hardening for ALL layers: remove duplicated sentences/lead phrases.
         const original = (result.reply ?? '').trim();
-        const composed =
-          result.source === 'ai' || result.source === 'cache'
-            ? (composeFinalMessage(original) || original)
-            : (composeFinalMessage(original, { maxIdeas: 6, maxQuestions: 1 }) || original);
+        // IMPORTANT: do NOT aggressively truncate AI replies here.
+        // AI replies are already composed upstream with dynamic options (detailed vs brief).
+        // We only want dedupe/lead hardening + max 1 question across layers.
+        const composed = composeFinalMessage(original, { maxIdeas: 6, maxQuestions: 1 }) || original;
 
         const duplicateRemoved = composed.trim() !== original;
         const patchedResult = duplicateRemoved ? { ...result, reply: composed.trim() } : result;
@@ -2610,6 +2610,11 @@ export class BotService {
     let nextBestAction: ThinkingAnalysis['nextBestAction'] = 'avanzar';
     let responseStrategy = 'responder natural y mover la conversacion.';
 
+    const wantsExplanation =
+      this.requiresDetailedResponse(userMessage)
+      || this.requiresInstructionalWalkthrough(userMessage)
+      || state.decision.intent === 'info';
+
     if (state.hotLead || state.decision.action === 'cerrar') {
       nextBestAction = 'cerrar';
       responseStrategy = 'cerrar suave y llevar al siguiente paso de compra.';
@@ -2619,7 +2624,7 @@ export class BotService {
     } else if (alreadyExplained) {
       nextBestAction = 'resumir';
       responseStrategy = 'resumir lo esencial sin explicar otra vez y empujar la conversacion.';
-    } else if (state.intent === 'duda' || state.decision.action === 'persuadir') {
+    } else if (wantsExplanation || state.intent === 'duda' || state.decision.action === 'persuadir') {
       nextBestAction = 'explicar';
       responseStrategy = 'explicar claro, resolver la duda y cerrar con una pregunta util.';
     } else if (state.intent === 'interes' || state.intent === 'compra') {
@@ -5143,6 +5148,13 @@ export class BotService {
       'me gustaría saber',
       'como funciona',
       'cómo funciona',
+      'como se usa',
+      'cómo se usa',
+      'como se toma',
+      'cómo se toma',
+      'modo de uso',
+      'paso por paso',
+      'instrucciones',
       'que contiene',
       'qué contiene',
       'beneficios',

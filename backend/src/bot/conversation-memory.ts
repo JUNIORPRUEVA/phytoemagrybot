@@ -247,7 +247,10 @@ export function validateResponseCandidate(
   const videoIds = normalizeStringList(response.videoIds ?? []);
   const now = Date.now();
 
-  const questionCount = text ? (text.match(/[¿?]/g) ?? []).length : 0;
+  // Count questions by the closing '?' only.
+  // In Spanish a single question usually contains both '¿' and '?',
+  // and counting both would incorrectly reject a valid single question.
+  const questionCount = text ? (text.match(/\?/g) ?? []).length : 0;
   if (questionCount > 1) {
     return { valid: false, reason: 'too_many_questions' };
   }
