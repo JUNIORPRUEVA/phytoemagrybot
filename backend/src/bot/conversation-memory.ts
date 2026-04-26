@@ -213,7 +213,8 @@ function looksRedundantText(text: string, history: string[]): boolean {
     }
 
     const overlap = sharedTokens / Math.max(candidateTokens.size, historyTokens.size);
-    return overlap >= 0.8;
+    // Anti-repetition mode: consider "too similar" earlier to force variation.
+    return overlap >= 0.65;
   });
 }
 

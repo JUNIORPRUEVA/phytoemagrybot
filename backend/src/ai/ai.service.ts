@@ -21,6 +21,27 @@ import {
 export class AiService {
   private static readonly MIN_REPLY_MAX_TOKENS = 420;
   private static readonly RETRY_REPLY_MAX_TOKENS = 720;
+  private static readonly MANDATORY_PROMPT_V2026 = [
+    'Eres un vendedor por WhatsApp (humano, dominicano, cero robot).',
+    '',
+    'REGLAS OBLIGATORIAS (NO NEGOCIABLE):',
+    '- NUNCA des una respuesta genérica. Nada de “te ayudo”, “claro”, “depende” sin contenido real.',
+    '- SIEMPRE menciona al menos 1 producto por su NOMBRE real (tal cual aparece en PRODUCTOS).',
+    '- SIEMPRE aporta valor mínimo en la misma respuesta:',
+    '  1) 1 beneficio concreto del producto,',
+    '  2) 1 función / cómo se usa (o qué hace),',
+    '  3) 1 conexión directa con la necesidad del cliente ("si lo que tú quieres es X...").',
+    '- Si el cliente pide precio: responde con el PRECIO REAL del contexto; si no existe, dilo claro sin inventar.',
+    '- Prohibido inventar teléfonos, direcciones, links, horarios, métodos de pago, condiciones o resultados.',
+    '- Responde como chat real: 2–6 líneas, natural, directo, con 0–1 pregunta.',
+    '- No repitas frases/estructura de respuestas anteriores; si el mensaje es parecido, varía enfoque y redacción.',
+    '',
+    'SI NO HAY PRODUCTOS EN EL CONTEXTO:',
+    '- No inventes productos.',
+    '- Indica que no puedes responder comercialmente hasta que el catálogo (PRODUCTOS) esté configurado.',
+    '',
+    'Tu respuesta final al cliente siempre es en español (dominicano natural).',
+  ].join('\n');
 
   constructor(private readonly promptTransformEngine: PromptTransformEngine) {}
 
@@ -224,8 +245,7 @@ export class AiService {
     const promptSections = this.buildBotContext(params.config);
 
     return [
-      params.fullPrompt.trim() ||
-        'Eres un asistente de ventas por WhatsApp. Responde claro, natural y con tono humano. Mantente breve, pero si el cliente pide explicacion o detalles, explica con naturalidad sin sonar robotico. Habla como una persona real dominicana y enfocate en vender bien.',
+      AiService.MANDATORY_PROMPT_V2026,
       ...promptSections,
       `Contacto actual: ${params.contactId}`,
       this.buildKnowledgePriorityInstruction(),
@@ -448,22 +468,8 @@ export class AiService {
       sections.push(`Productos disponibles:\n${productBlocks.join('\n\n')}`);
     }
 
-    sections.push(...this.readLegacyPromptSections(configurations));
-
-    return sections;
-  }
-
-  private readLegacyPromptSections(configurations: Record<string, unknown>): string[] {
-    const prompts = this.asRecord(configurations.prompts);
-    const sections: string[] = [];
-
-    this.appendPromptSection(sections, 'Saludo inicial', prompts['greeting']);
-    this.appendPromptSection(sections, 'Informacion de la empresa', prompts['companyInfo']);
-    this.appendPromptSection(sections, 'Catalogo y detalles de productos', prompts['productInfo']);
-    this.appendPromptSection(sections, 'Guia comercial y tono de ventas', prompts['salesGuidelines']);
-    this.appendPromptSection(sections, 'Manejo de objeciones', prompts['objectionHandling']);
-    this.appendPromptSection(sections, 'Cierre y conversion', prompts['closingPrompt']);
-    this.appendPromptSection(sections, 'Soporte y postventa', prompts['supportPrompt']);
+    // CRITICAL: Legacy prompts are intentionally NOT injected.
+    // They tend to contain prewritten greeting/price/company templates that bypass the dynamic system modules.
 
     return sections;
   }

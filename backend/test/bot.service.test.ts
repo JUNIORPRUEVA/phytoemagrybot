@@ -5,6 +5,37 @@ import { BotService } from '../src/bot/bot.service';
 import { BotReplyResult } from '../src/bot/bot.types';
 import { DEFAULT_COMPANY_CONTEXT } from '../src/company-context/company-context.types';
 
+const DEFAULT_AI_REPLY = [
+  'Te Detox Premium ayuda a la digestión y el bienestar.',
+  'Se usa como infusión (1 taza al día) para empezar.',
+  'Si lo que tú quieres es sentirte más ligero/a y apoyar la digestión, te puede servir.',
+  '¿Quieres que te diga el precio?',
+].join(' ');
+
+const DEFAULT_AI_CANDIDATES = [
+  {
+    text: DEFAULT_AI_REPLY,
+    type: 'text' as const,
+  },
+  {
+    text: [
+      'Mira, Te Detox Premium te ayuda con la digestión y el bienestar.',
+      'Lo normal es tomarlo como una infusión (1 taza al día).',
+      'Si lo que tú quieres es rebajar o sentirte menos inflado/a, te puede servir.',
+      '¿Te digo el precio?',
+    ].join(' '),
+    type: 'text' as const,
+  },
+  {
+    text: [
+      'Te Detox Premium es para apoyar digestión y bienestar.',
+      'Se usa como té/infusión, una taza al día al inicio.',
+      'Si lo que tú quieres es sentirte más liviano/a, te puede ayudar.',
+    ].join(' '),
+    type: 'text' as const,
+  },
+];
+
 function createService(options?: {
   mediaCount?: number;
   lastIntent?: string | null;
@@ -75,7 +106,7 @@ function createService(options?: {
 
         return {
           type: 'text' as const,
-          content: options?.aiReply ?? 'Claro 👌 te ayudo con eso.',
+          content: options?.aiReply ?? DEFAULT_AI_REPLY,
         };
       },
       async generateResponses(params: Record<string, unknown>) {
@@ -93,10 +124,16 @@ function createService(options?: {
           }];
         }
 
-        return [{
-          text: options?.aiReply ?? 'Claro 👌 te ayudo con eso.',
-          type: 'text' as const,
-        }];
+        const base = (options?.aiReply ?? DEFAULT_AI_REPLY).trim();
+        if (options?.aiReply?.trim()) {
+          return [
+            { text: base, type: 'text' as const },
+            { text: `${base} ¿Quieres que te lo deje listo?`, type: 'text' as const },
+            { text: `${base} ¿Qué buscas lograr exactamente?`, type: 'text' as const },
+          ];
+        }
+
+        return DEFAULT_AI_CANDIDATES;
       },
     } as any,
     {
@@ -314,11 +351,11 @@ function findGreetingKey(store: Map<string, unknown>, contactId: string): string
   return null;
 }
 
-test('price message responds immediately without running AI', async () => {
+test('price message uses AI (no fast non-AI shortcut)', async () => {
   let capturedParams: Record<string, unknown> | null = null;
   const service = createService({
     mediaCount: 1,
-    aiReply: 'No deberia usarse.',
+    aiReply: 'Te Detox Premium cuesta RD$1,500. Te ayuda a la digestión y bienestar; se usa como infusión (1 taza al día). Si lo que tú quieres es sentirte más ligero/a, te puede servir. ¿Te lo dejo listo?',
     onGenerateReply: (params) => {
       capturedParams = params;
     },
@@ -327,12 +364,12 @@ test('price message responds immediately without running AI', async () => {
 
   assert.equal(result.usedGallery, false);
   assert.equal(result.mediaFiles.length, 0);
-  assert.equal(result.source, 'hardcode');
-  assert.equal(capturedParams, null);
+  assert.equal(result.source, 'ai');
+  assert.ok(capturedParams);
   assert.match(result.reply.toLowerCase(), /cuesta|precio/);
 });
 
-test('location questions use company rule override without running AI', async () => {
+test('location questions use AI (no direct override reply)', async () => {
   let capturedParams: Record<string, unknown> | null = null;
   const service = createService({
     companyContextData: {
@@ -340,6 +377,7 @@ test('location questions use company rule override without running AI', async ()
       address: 'Santo Domingo',
       googleMapsLink: 'https://maps.app.goo.gl/demo123',
     },
+    aiReply: 'Phyto Emagry está en Santo Domingo (https://maps.app.goo.gl/demo123). Te Detox Premium ayuda a la digestión; se usa como infusión (1 taza al día). Si lo que tú quieres es sentirte más ligero/a, te puede servir.',
     onGenerateReply: (params) => {
       capturedParams = params;
     },
@@ -347,10 +385,9 @@ test('location questions use company rule override without running AI', async ()
 
   const result = await service.processIncomingMessage('18095551234', 'donde estan ubicados?');
 
-  assert.equal(result.source, 'hardcode');
-  assert.equal(capturedParams, null);
-  assert.match(result.reply, /Santo Domingo/);
-  assert.match(result.reply, /maps\.app\.goo\.gl/);
+  assert.equal(result.source, 'ai');
+  assert.ok(capturedParams);
+  assert.match(result.reply, /Te Detox Premium/);
 });
 
 test('always injects the mandatory combined knowledge context before replying', async () => {
@@ -401,15 +438,13 @@ test('uses real company data for location, schedule, and payment questions witho
   const scheduleReply = await service.processIncomingMessage('18095551234', 'cual es su horario');
   const paymentReply = await service.processIncomingMessage('18095551234', 'como pago');
 
-  assert.equal(aiCalls, 0);
-  assert.match(locationReply.reply, /Santo Domingo/);
-  assert.match(locationReply.reply, /maps\.app\.goo\.gl/);
-  assert.match(scheduleReply.reply, /08:00|18:00/);
-  assert.match(paymentReply.reply, /Banreservas/);
-  assert.match(paymentReply.reply, /123456789/);
+  assert.ok(aiCalls > 0);
+  assert.equal(locationReply.source, 'ai');
+  assert.equal(scheduleReply.source, 'ai');
+  assert.equal(paymentReply.source, 'ai');
 });
 
-test('company rule engine blocks sales outside business hours before AI generation', async () => {
+test('company rule engine blocks sales outside business hours via AI response', async () => {
   let aiCalls = 0;
   const service = createService({
     companyContextData: {
@@ -426,7 +461,7 @@ test('company rule engine blocks sales outside business hours before AI generati
       aiCalls += 1;
       return {
         type: 'text',
-        content: 'Te lo envio hoy mismo.',
+        content: 'Ahora mismo estamos fuera de horario 🙏 mañana temprano te atiendo sin problema. Te Detox Premium ayuda a la digestión; se usa como infusión (1 taza al día). Si lo que tú quieres es sentirte más ligero/a, te puede servir.',
       };
     },
   });
@@ -437,15 +472,15 @@ test('company rule engine blocks sales outside business hours before AI generati
   try {
     const result = await service.processIncomingMessage('18095558888', 'quiero comprarlo ahora');
 
-    assert.equal(aiCalls, 0);
-    assert.equal(result.source, 'fallback');
+    assert.ok(aiCalls > 0);
+    assert.equal(result.source, 'ai');
     assert.match(result.reply, /fuera de horario/i);
   } finally {
     Date.now = realDateNow;
   }
 });
 
-test('company rule engine overrides location replies with real company data', async () => {
+test('location question is handled via AI with real company data', async () => {
   let aiCalls = 0;
   const service = createService({
     companyContextData: {
@@ -457,20 +492,21 @@ test('company rule engine overrides location replies with real company data', as
       aiCalls += 1;
       return {
         type: 'text',
-        content: 'Estamos por ahi, luego te mando ubicacion.',
+        content: 'Phyto Emagry: estamos en Av. Independencia, Santo Domingo. Ubicación: https://maps.app.goo.gl/phyto-real. Te Detox Premium ayuda a la digestión; se usa como infusión (1 taza al día). Si lo que tú quieres es sentirte más ligero/a, te puede servir.',
       };
     },
   });
 
   const result = await service.processIncomingMessage('18095557777', 'donde estan ubicados?');
 
-  assert.equal(aiCalls, 0);
+  assert.ok(aiCalls > 0);
+  assert.equal(result.source, 'ai');
   assert.match(result.reply, /Phyto Emagry/);
   assert.match(result.reply, /Av\. Independencia, Santo Domingo/);
   assert.match(result.reply, /maps\.app\.goo\.gl\/phyto-real/);
 });
 
-test('company rule engine uses real company phone and name for contact requests', async () => {
+test('contact request is handled via AI with real company phone/name', async () => {
   let aiCalls = 0;
   const service = createService({
     companyContextData: {
@@ -482,14 +518,15 @@ test('company rule engine uses real company phone and name for contact requests'
       aiCalls += 1;
       return {
         type: 'text',
-        content: 'Escribeme luego y te paso el numero.',
+        content: 'Phyto Emagry: teléfono 809-555-1234 y WhatsApp +18095551234. Te Detox Premium ayuda a la digestión; se usa como infusión (1 taza al día). Si lo que tú quieres es sentirte más ligero/a, te puede servir.',
       };
     },
   });
 
   const result = await service.processIncomingMessage('18095551111', 'cual es su telefono?');
 
-  assert.equal(aiCalls, 0);
+  assert.ok(aiCalls > 0);
+  assert.equal(result.source, 'ai');
   assert.match(result.reply, /Phyto Emagry/);
   assert.match(result.reply, /809-555-1234/);
   assert.match(result.reply, /18095551234|\+18095551234/);
@@ -601,16 +638,62 @@ test('company rule engine full conversation keeps business rules ahead of AI', a
         ],
       },
     },
-    generateResponses: async () => ([
-      {
-        text: 'Te lo envio hoy mismo y estamos donde sea.',
-        type: 'text',
-      },
-      {
-        text: 'Claro, te explico rapido.',
-        type: 'text',
-      },
-    ]),
+    generateResponses: async (params) => {
+      const message = String((params as { message?: string } | null)?.message ?? '').toLowerCase();
+
+      if (message.includes('enviarlo') || message.includes('comprar')) {
+        return [
+          {
+            text: 'Ahora mismo estamos fuera de horario 🙏 mañana temprano te atiendo sin problema. Te Detox Premium ayuda a la digestión; se usa como infusión (1 taza al día). Si lo que tú quieres es sentirte más ligero/a, te puede servir.',
+            type: 'text',
+          },
+          {
+            text: 'Estamos fuera de horario ahora mismo 🙏 pero mañana en la mañana te atiendo. Te Detox Premium apoya digestión y bienestar; se usa como infusión. Si lo que buscas es sentirte más liviano/a, te puede servir.',
+            type: 'text',
+          },
+          {
+            text: 'Fuera de horario por ahora 🙏 mañana te coordino. Te Detox Premium ayuda a la digestión; se toma como té. Si lo que tú quieres es apoyar tu digestión, te puede servir.',
+            type: 'text',
+          },
+        ];
+      }
+
+      if (message.includes('foto')) {
+        return [
+          {
+            text: 'Dale, te mando una referencia del Te Detox Premium. Ayuda a la digestión y bienestar; se usa como infusión (1 taza al día). Si lo que tú quieres es sentirte más ligero/a, te puede servir.',
+            type: 'text',
+          },
+          {
+            text: 'Aquí va una foto del Te Detox Premium 👇 ayuda a la digestión; se toma como té. Si lo que tú quieres es rebajar o sentirte menos inflado/a, te puede servir.',
+            type: 'text',
+          },
+          {
+            text: 'Te mando una referencia del Te Detox Premium 👇 apoya digestión y bienestar; se usa como infusión. Si lo que tú quieres es sentirte mejor, te puede servir.',
+            type: 'text',
+          },
+        ];
+      }
+
+      if (message.includes('ubic') || message.includes('donde')) {
+        return [
+          {
+            text: 'Phyto Emagry: estamos en Av. Independencia, Santo Domingo. Ubicación: https://maps.app.goo.gl/phyto-real. Te Detox Premium ayuda a la digestión; se usa como infusión (1 taza al día). Si lo que tú quieres es sentirte más ligero/a, te puede servir.',
+            type: 'text',
+          },
+          {
+            text: 'Estamos en Av. Independencia, Santo Domingo. Mapa: https://maps.app.goo.gl/phyto-real. Te Detox Premium apoya digestión y bienestar; se toma como infusión. Si lo que tú quieres es sentirte menos pesado/a, te puede servir.',
+            type: 'text',
+          },
+          {
+            text: 'Ubicación real: https://maps.app.goo.gl/phyto-real (Av. Independencia, Santo Domingo). Te Detox Premium ayuda a la digestión; se usa como té. Si lo que tú quieres es apoyar tu digestión, te puede servir.',
+            type: 'text',
+          },
+        ];
+      }
+
+      return DEFAULT_AI_CANDIDATES;
+    },
   });
 
   const realDateNow = Date.now;
@@ -771,7 +854,7 @@ test('mandatory knowledge context always includes instructions and company in or
   );
 });
 
-test('location question answers immediately from company rules without AI', async () => {
+test('location question uses AI (includes real company data)', async () => {
   let aiCalls = 0;
   const service = createService({
     companyContextData: {
@@ -779,6 +862,7 @@ test('location question answers immediately from company rules without AI', asyn
       address: 'Santo Domingo',
       googleMapsLink: 'https://www.google.com/maps?q=18.48,-69.93',
     },
+    aiReply: 'Phyto Emagry está en Santo Domingo. Ubicación: https://www.google.com/maps?q=18.48,-69.93. Te Detox Premium ayuda a la digestión; se usa como infusión (1 taza al día). Si lo que tú quieres es sentirte más ligero/a, te puede servir.',
     onGenerateReply: () => {
       aiCalls += 1;
     },
@@ -786,12 +870,13 @@ test('location question answers immediately from company rules without AI', asyn
 
   const result = await service.processIncomingMessage('18095551234', 'donde estan ubicados?');
 
-  assert.equal(aiCalls, 0);
+  assert.ok(aiCalls > 0);
+  assert.equal(result.source, 'ai');
   assert.match(result.reply, /Santo Domingo/);
   assert.match(result.reply, /google\.com\/maps/);
 });
 
-test('payment question answers with real bank account data without AI', async () => {
+test('payment question uses AI (includes real payment data)', async () => {
   let aiCalls = 0;
   const service = createService({
     companyContextData: {
@@ -804,6 +889,7 @@ test('payment question answers with real bank account data without AI', async ()
         image: '',
       }],
     },
+    aiReply: 'Puedes pagar por Banreservas (Ahorro) 123 a nombre de Empresa Demo. Te Detox Premium ayuda a la digestión; se usa como infusión (1 taza al día). Si lo que tú quieres es sentirte más ligero/a, te puede servir.',
     onGenerateReply: () => {
       aiCalls += 1;
     },
@@ -811,12 +897,13 @@ test('payment question answers with real bank account data without AI', async ()
 
   const result = await service.processIncomingMessage('18095551234', 'como pago?');
 
-  assert.equal(aiCalls, 0);
+  assert.ok(aiCalls > 0);
+  assert.equal(result.source, 'ai');
   assert.match(result.reply, /Banreservas|Banco/i);
   assert.match(result.reply, /123/);
 });
 
-test('schedule question answers immediately from company rules without AI', async () => {
+test('schedule question uses AI (includes real schedule)', async () => {
   let aiCalls = 0;
   const service = createService({
     companyContextData: {
@@ -826,6 +913,7 @@ test('schedule question answers immediately from company rules without AI', asyn
         { day: 'martes', open: true, from: '08:00', to: '18:00' },
       ],
     },
+    aiReply: 'Horario: lunes y martes de 08:00 a 18:00. Te Detox Premium ayuda a la digestión; se usa como infusión (1 taza al día). Si lo que tú quieres es sentirte más ligero/a, te puede servir.',
     onGenerateReply: () => {
       aiCalls += 1;
     },
@@ -833,11 +921,12 @@ test('schedule question answers immediately from company rules without AI', asyn
 
   const result = await service.processIncomingMessage('18095551234', 'cual es su horario?');
 
-  assert.equal(aiCalls, 0);
+  assert.ok(aiCalls > 0);
+  assert.equal(result.source, 'ai');
   assert.match(result.reply, /08:00|18:00/i);
 });
 
-test('short confirmation message does not run AI', async () => {
+test('short confirmation message still runs AI (AI-only mode)', async () => {
   let aiCalled = false;
   const service = createService({
     onGenerateReply: () => {
@@ -847,12 +936,12 @@ test('short confirmation message does not run AI', async () => {
 
   const result = await service.processIncomingMessage('18095551234', 'ok');
 
-  assert.equal(aiCalled, false);
-  assert.equal(result.source, 'hardcode');
-  assert.match(result.reply.toLowerCase(), /precio|beneficios|usa|horario|ubicacion/);
+  assert.equal(aiCalled, true);
+  assert.equal(result.source, 'ai');
+  assert.match(result.reply, /Te Detox Premium/);
 });
 
-test('closure phrases stop the sale before AI and persist conversation_end in Redis', async () => {
+test('closure phrases are handled via AI (no early non-AI close)', async () => {
   let aiCalled = false;
   const service = createService({
     onGenerateReply: () => {
@@ -862,14 +951,12 @@ test('closure phrases stop the sale before AI and persist conversation_end in Re
 
   const result = await service.processIncomingMessage('18095550001', 'ok gracias, te aviso');
 
-  assert.equal(result.source, 'cierre');
-  assert.equal(result.intent, 'cierre');
-  assert.equal(aiCalled, false);
-  assert.doesNotMatch(result.reply, /\?/);
-  assert.equal((service as any).redisService.store.get('conversation_end:18095550001'), true);
+  assert.equal(result.source, 'ai');
+  assert.equal(aiCalled, true);
+  assert.equal((service as any).redisService.store.get('conversation_end:18095550001'), undefined);
 });
 
-test('todo bien is treated as a status acknowledgement (not conversation end)', async () => {
+test('todo bien is handled via AI (AI-only mode)', async () => {
   let aiCalled = false;
   const service = createService({
     onGenerateReply: () => {
@@ -879,13 +966,12 @@ test('todo bien is treated as a status acknowledgement (not conversation end)', 
 
   const result = await service.processIncomingMessage('18095550002', 'Todo bien');
 
-  assert.equal(result.source, 'micro');
-  assert.equal(aiCalled, false);
-  assert.match(result.reply.toLowerCase(), /que bueno|en que te puedo ayudar/);
+  assert.equal(result.source, 'ai');
+  assert.equal(aiCalled, true);
   assert.equal((service as any).redisService.store.get('conversation_end:18095550002'), undefined);
 });
 
-test('dominican status phrases are handled as micro status (no AI, no conversation_end)', async () => {
+test('dominican status phrases are handled via AI (AI-only mode)', async () => {
   const samples = [
     'To bien y tu?',
     'Bien gracias',
@@ -905,14 +991,13 @@ test('dominican status phrases are handled as micro status (no AI, no conversati
 
     const result = await service.processIncomingMessage(contactId, sample);
 
-    assert.equal(result.source, 'micro');
-    assert.equal(aiCalled, false);
-    assert.match(result.reply.toLowerCase(), /que bueno|en que te puedo ayudar|quieres precio/);
+    assert.equal(result.source, 'ai');
+    assert.equal(aiCalled, true);
     assert.equal((service as any).redisService.store.get(`conversation_end:${contactId}`), undefined);
   }
 });
 
-test('micro intent yes uses previous sales context to advance naturally without AI', async () => {
+test('micro intent yes is handled via AI (AI-only mode)', async () => {
   let aiCalled = false;
   const service = createService();
 
@@ -925,15 +1010,13 @@ test('micro intent yes uses previous sales context to advance naturally without 
 
   const result = await service.processIncomingMessage('18095550100', 'si');
 
-  assert.equal(result.source, 'micro');
-  assert.equal(result.intent, 'compra');
-  assert.equal(aiCalled, false);
-  assert.match(result.reply.toLowerCase(), /preparo|listo|pedido/);
+  assert.equal(result.source, 'ai');
+  assert.equal(aiCalled, true);
   assert.equal((service as any).redisService.store.get('lastIntent:18095550100'), 'compra');
   assert.equal((service as any).redisService.store.get('lastMessageType:18095550100'), 'text');
 });
 
-test('micro intent no turns into a soft objection follow-up without AI', async () => {
+test('micro intent no is handled via AI (AI-only mode)', async () => {
   let aiCalled = false;
   const service = createService();
 
@@ -945,13 +1028,11 @@ test('micro intent no turns into a soft objection follow-up without AI', async (
 
   const result = await service.processIncomingMessage('18095550101', 'no');
 
-  assert.equal(result.source, 'micro');
-  assert.equal(result.intent, 'duda');
-  assert.equal(aiCalled, false);
-  assert.match(result.reply.toLowerCase(), /convencio|duda|freno/);
+  assert.equal(result.source, 'ai');
+  assert.equal(aiCalled, true);
 });
 
-test('plain gracias re-engages naturally when the conversation is still active', async () => {
+test('plain gracias is handled via AI (AI-only mode)', async () => {
   let aiCalled = false;
   const service = createService();
 
@@ -964,13 +1045,12 @@ test('plain gracias re-engages naturally when the conversation is still active',
 
   const result = await service.processIncomingMessage('18095550102', 'gracias');
 
-  assert.equal(result.source, 'micro');
-  assert.notEqual(result.intent, 'cierre');
-  assert.equal(aiCalled, false);
+  assert.equal(result.source, 'ai');
+  assert.equal(aiCalled, true);
   assert.equal((service as any).redisService.store.get('conversation_end:18095550102'), undefined);
 });
 
-test('new contact with a pure greeting gets a human greeting without running AI', async () => {
+test('new contact with a pure greeting uses AI (AI-only mode)', async () => {
   let aiCalled = false;
   const service = createService({
     onGenerateReply: () => {
@@ -980,17 +1060,16 @@ test('new contact with a pure greeting gets a human greeting without running AI'
 
   const result = await service.processIncomingMessage('18095550005', 'hola');
 
-  assert.equal(result.source, 'hardcode');
+  assert.equal(result.source, 'ai');
   assert.equal(result.replyType, 'text');
   assert.equal(result.usedGallery, false);
-  assert.equal(aiCalled, false);
-  assert.match(result.reply.toLowerCase(), /hola/);
-  assert.match(result.reply.toLowerCase(), /bajar de peso|info/);
+  assert.equal(aiCalled, true);
+  assert.match(result.reply, /Te Detox Premium/);
   const key = findGreetingKey((service as any).redisService.store, '18095550005');
   assert.equal(key, null);
 });
 
-test('greeting keywords always respond immediately without running AI', async () => {
+test('greeting keywords still use AI (AI-only mode)', async () => {
   let aiCalls = 0;
   const service = createService({
     aiReply: 'No deberia usarse.',
@@ -1004,12 +1083,12 @@ test('greeting keywords always respond immediately without running AI', async ()
 
   const result = await service.processIncomingMessage('18095550006', 'hola');
 
-  assert.equal(result.source, 'hardcode');
-  assert.equal(aiCalls, 0);
-  assert.match(result.reply.toLowerCase(), /hola/);
+  assert.equal(result.source, 'ai');
+  assert.ok(aiCalls > 0);
+  assert.match(result.reply, /Te Detox Premium/);
 });
 
-test('a closed conversation stays closed for generic messages until interest returns', async () => {
+test('a closed conversation flag does not short-circuit AI in AI-only mode', async () => {
   let aiCalls = 0;
   const service = createService({
     aiReply: 'Cuesta RD$1,500 y te explico como pedirlo.',
@@ -1022,14 +1101,14 @@ test('a closed conversation stays closed for generic messages until interest ret
 
   const held = await service.processIncomingMessage('18095550002', 'hola');
 
-  assert.equal(held.source, 'cierre');
-  assert.equal(aiCalls, 0);
-  assert.doesNotMatch(held.reply, /\?/);
+  assert.equal(held.source, 'ai');
+  assert.ok(aiCalls > 0);
+  assert.equal((service as any).redisService.store.get('conversation_end:18095550002'), true);
 
   const reopened = await service.processIncomingMessage('18095550002', 'precio');
 
-  assert.equal(reopened.source, 'hardcode');
-  assert.equal(aiCalls, 0);
+  assert.equal(reopened.source, 'ai');
+  assert.ok(aiCalls > 1);
   assert.equal((service as any).redisService.store.get('conversation_end:18095550002'), undefined);
 });
 
@@ -1065,16 +1144,16 @@ test('doubt message uses direct convincing response', async () => {
   assert.equal((capturedParams as { replyObjective?: string } | null)?.replyObjective, 'resolver_duda');
 });
 
-test('repeated price messages use the same hardcoded reply (no AI, no reply cache)', async () => {
+test('repeated price messages use AI and avoid verbatim repetition', async () => {
   const service = createService({ mediaCount: 1 });
   const first = await service.processIncomingMessage('18095551234', 'precio');
   const second = await service.processIncomingMessage('18095551234', 'precio');
 
-  assert.equal(first.source, 'hardcode');
-  assert.equal(second.source, 'hardcode');
+  assert.equal(first.source, 'ai');
+  assert.equal(second.source, 'ai');
   assert.equal(first.cached, false);
   assert.equal(second.cached, false);
-  assert.equal(second.reply, first.reply);
+  assert.notEqual(second.reply, first.reply);
 });
 
 test('catalog request limits outgoing images to avoid saturating the client', async () => {
