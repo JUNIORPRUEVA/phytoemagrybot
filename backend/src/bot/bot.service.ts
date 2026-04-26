@@ -459,6 +459,13 @@ export class BotService {
             product: featuredProductForFix,
             message: normalizedMessage,
           });
+
+          const genericWithoutKnowledgeFix = allProducts.length === 0
+            && replyStats.criticalFailures.includes('RESPUESTA_SIN_BASE_DE_CONOCIMIENTO');
+          const catalogNotConfiguredReply = genericWithoutKnowledgeFix
+            ? 'Ahora mismo no tengo el catálogo configurado, pero te puedo orientar. ¿Qué te interesa saber primero: beneficios, cómo se usa o cómo hacer el pedido?'
+            : '';
+
           const companyName = this.parseCompanyNameFromCompanyDataText(companyDataTextForAudit);
           const companyApplicable = this.detectCompanyApplicability(normalizedMessage);
           const needsCompany = companyApplicable !== null && companyName.trim().length > 0;
@@ -466,23 +473,25 @@ export class BotService {
             ? adjustedResult.reply.toLowerCase().includes(companyName.trim().toLowerCase())
             : true;
 
-          const patchedReply = [
-            needsCompany && !hasCompanyAlready ? `Soy de ${companyName.trim()}.` : '',
-            adjustedResult.reply,
-            valueSnippet && allProducts.length > 0 && (
-              !replyStats.checks.usesProducts
-              || !replyStats.checks.hasBenefit
-              || !replyStats.checks.hasFunction
-              || !replyStats.checks.hasNeedConnection
-              || !this.replyMentionsAnyProduct(adjustedResult.reply, relevantProducts.length > 0 ? relevantProducts : allProducts)
-            )
-              ? valueSnippet
-              : '',
-          ]
-            .filter((value) => String(value || '').trim().length > 0)
-            .join(' ')
-            .replace(/\s+/g, ' ')
-            .trim();
+          const patchedReply = genericWithoutKnowledgeFix
+            ? catalogNotConfiguredReply
+            : [
+                needsCompany && !hasCompanyAlready ? `Soy de ${companyName.trim()}.` : '',
+                adjustedResult.reply,
+                valueSnippet && allProducts.length > 0 && (
+                  !replyStats.checks.usesProducts
+                  || !replyStats.checks.hasBenefit
+                  || !replyStats.checks.hasFunction
+                  || !replyStats.checks.hasNeedConnection
+                  || !this.replyMentionsAnyProduct(adjustedResult.reply, relevantProducts.length > 0 ? relevantProducts : allProducts)
+                )
+                  ? valueSnippet
+                  : '',
+              ]
+                .filter((value) => String(value || '').trim().length > 0)
+                .join(' ')
+                .replace(/\s+/g, ' ')
+                .trim();
 
           const patchedComposed = composeFinalMessage(patchedReply, { maxIdeas: 6, maxQuestions: 1 }) || patchedReply;
 
@@ -533,7 +542,7 @@ export class BotService {
 
         const mustForceBlock = this.isAiAuditEnabled() && this.isAiAuditForceBlock();
         const forceBlock = mustForceBlock && !replyStats.checks.usesProducts;
-        const adjusted = forceBlock
+        let adjusted = forceBlock
           ? {
               ...enforcementBlock,
               reply: 'AUDITORIA: RESPUESTA BLOQUEADA. La respuesta no uso PRODUCTOS/INSTRUCCIONES de forma verificable. Ajusta el flujo para basarse en conocimiento antes de responder.',
@@ -543,6 +552,21 @@ export class BotService {
               mediaFiles: [],
             }
           : enforcementBlock;
+
+        // If we changed the outgoing text during composition/enforcement, recompute the reply modality.
+        // This keeps audio selection aligned with the *final* text that will be spoken/sent.
+        if ((adjusted.mediaFiles?.length ?? 0) === 0) {
+          adjusted = {
+            ...adjusted,
+            replyType: this.resolvePreferredReplyType({
+              message: normalizedMessage,
+              reply: adjusted.reply,
+              intent: adjusted.intent,
+              action: adjusted.action,
+              metadata,
+            }),
+          };
+        }
 
         const finalized = finalizeResponse(layer, adjusted);
 
@@ -1826,7 +1850,6 @@ export class BotService {
         preferredReplyType,
         usedMemory,
       );
-      await this.cacheResponseIfEligible(responseCacheKey, result, conversationMemory);
 
       await this.markBotResponseInDecisionState(
         normalizedContactId,
@@ -1850,7 +1873,7 @@ export class BotService {
         mediaIds: result.mediaFiles.map((file) => file.fileUrl),
       });
       this.logReply(normalizedContactId, result);
-      return await finalizeResponseAudited('ai', result, {
+      const finalized = await finalizeResponseAudited('ai', result, {
         thinkingAnalysis,
         combinedContextLength: this.buildCombinedConversationContext(
           compactContextKnowledgeContext,
@@ -1859,6 +1882,8 @@ export class BotService {
         ).length,
         knowledgeContextLength: knowledgeContext.length,
       });
+      await this.cacheResponseIfEligible(responseCacheKey, finalized, conversationMemory);
+      return finalized;
     } catch (error) {
       this.logger.error(
         JSON.stringify({
@@ -2518,7 +2543,7 @@ export class BotService {
 
       const callToAction = hasQuestion
         ? ''
-        : '¿Quieres que te diga el precio y cómo pedirlo?';
+        : '¿Qué buscas lograr o qué duda tienes?';
 
       return [valueSnippet, callToAction]
         .filter(Boolean)
@@ -3192,13 +3217,13 @@ export class BotService {
     const requireProductos = !isCompanyOnly;
 
     const missing: Array<'INSTRUCCIONES' | 'PRODUCTOS' | 'EMPRESA'> = [];
-    if (!params.instructionsText.trim() || !hasInstrucciones) {
+    if (!hasInstrucciones) {
       missing.push('INSTRUCCIONES');
     }
-    if (requireProductos && (!Array.isArray(params.allProducts) || params.allProducts.length === 0 || !hasProductos)) {
+    if (requireProductos && !hasProductos) {
       missing.push('PRODUCTOS');
     }
-    if (requireEmpresa && (!params.companyDataText.trim() || !hasEmpresa)) {
+    if (requireEmpresa && !hasEmpresa) {
       missing.push('EMPRESA');
     }
 
@@ -3268,6 +3293,125 @@ export class BotService {
     return null;
   }
 
+  private inferNeedsFromNormalizedMessage(messageNormalized: string): string[] {
+    const needs = [
+      messageNormalized.includes('bajar de peso') || messageNormalized.includes('rebajar') || messageNormalized.includes('adelgaz')
+        ? 'bajar de peso'
+        : null,
+      messageNormalized.includes('digest') || messageNormalized.includes('digestion')
+        ? 'digestion'
+        : null,
+      messageNormalized.includes('bienestar')
+        ? 'bienestar'
+        : null,
+    ].filter((value): value is string => Boolean(value));
+
+    return Array.from(new Set(needs));
+  }
+
+  private hasNeedConnection(params: {
+    normalizedReply: string;
+    questionCount: number;
+    needs: string[];
+    connectionPhrases?: string[];
+  }): boolean {
+    const normalizedReply = params.normalizedReply;
+    if (!normalizedReply) {
+      return false;
+    }
+
+    const connectionPhrases = params.connectionPhrases ?? [
+      'si lo que buscas',
+      'para ti',
+      'en tu caso',
+      'segun lo que me dices',
+      'ya sabes',
+      'si te preocupa',
+      'si te interesa',
+      'lo importante es',
+    ];
+
+    return (
+      connectionPhrases.some((phrase) => normalizedReply.includes(this.normalizeTextForMatch(phrase)))
+      || (params.needs.length > 0
+        ? params.needs.some((need) => normalizedReply.includes(this.normalizeTextForMatch(need)))
+        : params.questionCount >= 1)
+    );
+  }
+
+  private tokenizeNormalized(text: string, params: { minTokenLength: number; maxTokens: number }): string[] {
+    if (!text?.trim()) {
+      return [];
+    }
+
+    return text
+      .replace(/[\r\n]/g, ' ')
+      .split(/[^A-Za-zÁÉÍÓÚÜÑáéíóúüñ0-9]+/)
+      .map((token) => token.trim())
+      .filter((token) => token.length >= params.minTokenLength)
+      .slice(0, params.maxTokens)
+      .map((token) => this.normalizeTextForMatch(token));
+  }
+
+  private replyMentionsPrice(reply: string, normalizedReply: string): boolean {
+    if (!normalizedReply) {
+      return false;
+    }
+
+    const hasCurrencyMarker = /\brd\$|\busd\b|\$\s*\d/i.test(reply);
+    const hasLargeNumber = /\b\d{3,}\b/.test(normalizedReply);
+    const hasMoneyWord = /\b(peso|pesos|rd|usd|dolar|dólar|dolares|dólares)\b/i.test(reply);
+    const hasExplicitPriceStatement = /\b(cuesta|vale)\b/i.test(reply) || /\bprecio\s*[:=]/i.test(reply);
+
+    return (
+      hasCurrencyMarker
+      || (hasLargeNumber && hasMoneyWord)
+      || (hasExplicitPriceStatement && hasLargeNumber)
+    );
+  }
+
+  private hasKnownPriceIfMentionsPrice(params: {
+    reply: string;
+    normalizedReply: string;
+    products: StructuredProduct[];
+    replyMentionsPrice: boolean;
+  }): boolean {
+    if (!params.replyMentionsPrice) {
+      return true;
+    }
+
+    const knownPriceStrings = params.products
+      .flatMap((product) => [this.valueToText(product.precio), this.valueToText(product.precioMinimo)])
+      .map((value) => (value ?? '').trim())
+      .filter((value) => value.length > 0);
+
+    const normalizeMoneyNumber = (value: string): number | null => {
+      const digitsOnly = value.replace(/[^0-9]/g, '');
+      if (!digitsOnly) {
+        return null;
+      }
+      const num = Number.parseInt(digitsOnly, 10);
+      return Number.isFinite(num) ? num : null;
+    };
+
+    const extractedMoneyNumbers = (params.reply.match(/\b\d[\d.,]{2,}\b/g) ?? [])
+      .map((value) => normalizeMoneyNumber(value))
+      .filter((value): value is number => typeof value === 'number');
+
+    const knownMoneyNumbers = params.products
+      .flatMap((product) => [product.precio, product.precioMinimo])
+      .map((value) => (typeof value === 'number' ? value : normalizeMoneyNumber(String(value ?? ''))))
+      .filter((value): value is number => typeof value === 'number');
+
+    return (
+      knownPriceStrings.some((value) => params.reply.toLowerCase().includes(value.toLowerCase()))
+      || (extractedMoneyNumbers.length > 0 && knownMoneyNumbers.some((known) => extractedMoneyNumbers.includes(known)))
+      || params.normalizedReply.includes('no tengo el precio')
+      || params.normalizedReply.includes('no esta configurado')
+      || params.normalizedReply.includes('no está configurado')
+    );
+  }
+
   private buildAiAuditReplyStats(params: {
     message: string;
     reply: string;
@@ -3298,6 +3442,51 @@ export class BotService {
 
     const messageNormalized = this.normalizeTextForMatch(params.message);
 
+    const intent = this.detectIntent(params.message);
+    const isGreetingOnly = this.isGreetingOnlyMessage(params.message);
+    const companyApplicable = this.detectCompanyApplicability(params.message);
+    const hasRelevantProducts = params.allProducts.length > 0 && this.filterRelevantProducts(params.allProducts, params.message).length > 0;
+    const hasGenericProductSignal = Boolean(messageNormalized) && [
+      'precio',
+      'cuanto',
+      'cuánto',
+      'vale',
+      'cuesta',
+      'beneficio',
+      'beneficios',
+      'como se usa',
+      'cómo se usa',
+      'modo de uso',
+      'instrucciones',
+      'funciona',
+      'sirve',
+      'resultado',
+      'resultados',
+      'rebajar',
+      'bajar de peso',
+      'adelgaz',
+      'comprar',
+      'pedido',
+      'ordenar',
+      'lo quiero',
+      'me interesa',
+      'informacion',
+      'información',
+      'info',
+      'detalle',
+      'detalles',
+    ].some((keyword) => messageNormalized.includes(this.normalizeTextForMatch(keyword)));
+
+    // Only require PRODUCTOS-based value when the user's message is actually about products.
+    // Greetings, closure acknowledgements, and company-only questions should not be blocked.
+    const isCompanyOnlyQuestion = companyApplicable !== null && !hasRelevantProducts && !hasGenericProductSignal;
+    const requiresProductValue =
+      params.allProducts.length > 0
+      && !isGreetingOnly
+      && intent !== 'cierre'
+      && !isCompanyOnlyQuestion
+      && (hasRelevantProducts || hasGenericProductSignal || intent === 'hot' || intent === 'compra' || intent === 'interes' || intent === 'duda');
+
     const usesProducts = params.allProducts.length === 0
       ? false
       : this.replyMentionsAnyProduct(reply, relevantPool);
@@ -3306,26 +3495,54 @@ export class BotService {
     const hasBracketTags = /\[(INSTRUCCIONES|PRODUCTOS|EMPRESA|PRODUCTOS_RELEVANTES|PRODUCTO_RELEVANTE)\]/i.test(reply);
     const respectsInstructions = questionCount <= 1 && !hasBracketTags && reply.length > 0;
 
-    const companyApplicable = this.detectCompanyApplicability(params.message);
     const companyConfigured = params.companyDataText.trim().length > 0;
-    const companyName = this.parseCompanyNameFromCompanyDataText(params.companyDataText);
-    const companyHints = [
-      companyName,
-      'Telefono:',
-      'Teléfono:',
-      'Direccion:',
-      'Dirección:',
-      'Google Maps:',
-      'WhatsApp:',
-      'Banco:',
-      'Cuenta',
-    ].filter((value) => String(value || '').trim().length > 0);
+
+    // Company context can be plain-text rules or JSON-ish content depending on configuration.
+    // Extract high-signal values when possible so validation doesn't depend on labels.
+    const companyJson = (() => {
+      const match = params.companyDataText.match(/\{[\s\S]*\}/);
+      if (!match) {
+        return null;
+      }
+
+      try {
+        return JSON.parse(match[0]) as Record<string, unknown>;
+      } catch {
+        return null;
+      }
+    })();
+
+    const companyName = this.parseCompanyNameFromCompanyDataText(params.companyDataText)
+      || String((companyJson as any)?.company_name ?? (companyJson as any)?.companyName ?? (companyJson as any)?.name ?? '').trim();
+    const companyAddress = String((companyJson as any)?.address ?? (companyJson as any)?.direccion ?? '').trim();
+    const companyPhone = String((companyJson as any)?.phone ?? (companyJson as any)?.telefono ?? '').trim();
+    const companyPhoneDigits = companyPhone.replace(/[^0-9]/g, '');
+
+    const replyLower = reply.toLowerCase();
+    const replyHasAnyTime = /\b\d{1,2}:\d{2}\b/.test(reply);
+    const replyHasMaps = /google\.com\/maps|maps\.app|\bmaps\b/i.test(reply);
+    const replyHasBankWords = /\bbanco\b|\bcuenta\b|transfer/i.test(reply);
+    const replyHasAddressWords = /\bdireccion\b|\bdirecci[oó]n\b|\bubic/i.test(reply);
+    const replyHasWhatsapp = /whatsapp/i.test(reply);
+    const replyHasPhoneLike = /(?:\+?\d{1,3}[\s-]?)?(?:\(?\d{3}\)?[\s-]?)\d{3}[\s-]?\d{4}/.test(reply);
+    const replyDigits = reply.replace(/[^0-9]/g, '');
+
     const usesCompanyIfApplies =
       companyApplicable === null
         ? true
         : (!companyConfigured
           ? true
-          : companyHints.some((hint) => reply.toLowerCase().includes(String(hint).toLowerCase())));
+          : (
+              companyApplicable === 'location'
+                ? (Boolean(companyAddress) && replyLower.includes(companyAddress.toLowerCase())) || replyHasMaps || replyHasAddressWords
+                : companyApplicable === 'hours'
+                  ? replyHasAnyTime || /horario|abierto|cerrado|lunes|martes|miercoles|miércoles|jueves|viernes|sabado|sábado|domingo/i.test(reply)
+                  : companyApplicable === 'payment'
+                    ? replyHasBankWords || /\b\d{3,}\b/.test(replyLower)
+                    : companyApplicable === 'contact'
+                      ? replyHasWhatsapp || replyHasPhoneLike || (companyPhoneDigits.length > 0 && replyDigits.includes(companyPhoneDigits)) || (companyName.length > 0 && replyLower.includes(companyName.toLowerCase()))
+                      : true
+            ));
 
     const normalizedReply = this.normalizeTextForMatch(reply);
     const genericPatterns = [
@@ -3346,12 +3563,8 @@ export class BotService {
         .join(' '))
       .join(' ');
     const extractedProductTokens = (productKeywordPool || '')
-      .replace(/[\r\n]/g, ' ')
-      .split(/[^A-Za-zÁÉÍÓÚÜÑáéíóúüñ0-9]+/)
-      .map((token) => token.trim())
-      .filter((token) => token.length >= 5)
-      .slice(0, 20)
-      .map((token) => this.normalizeTextForMatch(token));
+      ? this.tokenizeNormalized(productKeywordPool, { minTokenLength: 5, maxTokens: 20 })
+      : [];
 
     const usesProductsByKeywords = Boolean(normalizedReply)
       && extractedProductTokens.some((token) => token && normalizedReply.includes(token));
@@ -3427,64 +3640,32 @@ export class BotService {
         || extractedProductTokens.some((token) => token && normalizedReply.includes(token))
       );
 
-    const needs = [
-      messageNormalized.includes('bajar de peso') || messageNormalized.includes('rebajar') || messageNormalized.includes('adelgaz')
-        ? 'bajar de peso'
-        : null,
-      messageNormalized.includes('digest') || messageNormalized.includes('digestion') || messageNormalized.includes('digestion')
-        ? 'digestion'
-        : null,
-      messageNormalized.includes('bienestar')
-        ? 'bienestar'
-        : null,
-    ].filter((value): value is string => Boolean(value));
+    const needs = this.inferNeedsFromNormalizedMessage(messageNormalized);
 
-    const connectionPhrases = ['si lo que buscas', 'para ti', 'en tu caso', 'segun lo que me dices'];
-    const hasNeedConnection = Boolean(normalizedReply)
-      && (
-        connectionPhrases.some((phrase) => normalizedReply.includes(this.normalizeTextForMatch(phrase)))
-        || (needs.length > 0
-          ? needs.some((need) => normalizedReply.includes(this.normalizeTextForMatch(need)))
-          : questionCount >= 1)
-      );
+    const connectionPhrases = [
+      'si lo que buscas',
+      'para ti',
+      'en tu caso',
+      'segun lo que me dices',
+      'ya sabes',
+      'si te preocupa',
+      'si te interesa',
+      'lo importante es',
+    ];
+    const hasNeedConnection = this.hasNeedConnection({
+      normalizedReply,
+      questionCount,
+      needs,
+      connectionPhrases,
+    });
 
-    const replyMentionsPrice = Boolean(normalizedReply)
-      && (
-        normalizedReply.includes('precio')
-        || /\brd\$|\busd\b|\$\s*\d/i.test(reply)
-        || /\b\d{3,}\b/.test(normalizedReply)
-      );
-    const knownPriceStrings = params.allProducts
-      .flatMap((product) => [this.valueToText(product.precio), this.valueToText(product.precioMinimo)])
-      .map((value) => (value ?? '').trim())
-      .filter((value) => value.length > 0);
-
-    const normalizeMoneyNumber = (value: string): number | null => {
-      const digitsOnly = value.replace(/[^0-9]/g, '');
-      if (!digitsOnly) {
-        return null;
-      }
-      const num = Number.parseInt(digitsOnly, 10);
-      return Number.isFinite(num) ? num : null;
-    };
-
-    const extractedMoneyNumbers = (reply.match(/\b\d[\d.,]{2,}\b/g) ?? [])
-      .map((value) => normalizeMoneyNumber(value))
-      .filter((value): value is number => typeof value === 'number');
-
-    const knownMoneyNumbers = params.allProducts
-      .flatMap((product) => [product.precio, product.precioMinimo])
-      .map((value) => (typeof value === 'number' ? value : normalizeMoneyNumber(String(value ?? ''))))
-      .filter((value): value is number => typeof value === 'number');
-    const hasKnownPriceIfMentionsPrice = !replyMentionsPrice
-      ? true
-      : (
-          knownPriceStrings.some((value) => reply.toLowerCase().includes(value.toLowerCase()))
-          || (extractedMoneyNumbers.length > 0 && knownMoneyNumbers.some((known) => extractedMoneyNumbers.includes(known)))
-          || normalizedReply.includes('no tengo el precio')
-          || normalizedReply.includes('no esta configurado')
-          || normalizedReply.includes('no está configurado')
-        );
+    const replyMentionsPrice = this.replyMentionsPrice(reply, normalizedReply);
+    const hasKnownPriceIfMentionsPrice = this.hasKnownPriceIfMentionsPrice({
+      reply,
+      normalizedReply,
+      products: params.allProducts,
+      replyMentionsPrice,
+    });
 
     const configuredPhoneMatch = (params.companyDataText || '').match(/(?:^|\n)Telefono:\s*([^\n]+)/i);
     const configuredPhoneDigits = (configuredPhoneMatch?.[1] ?? '').replace(/[^0-9]/g, '');
@@ -3514,19 +3695,19 @@ export class BotService {
       && closeOrSellPhrases.some((phrase) => normalizedReply.includes(this.normalizeTextForMatch(phrase)));
     const salesFlowOk = !triesToClose || (hasBenefit && hasFunction);
 
-    if (params.allProducts.length > 0 && !usesProductsExpanded) {
+    if (requiresProductValue && !usesProductsExpanded) {
       severeFailures.push('FALLA_GRAVE: respuesta_no_usa_productos');
     }
 
-    if (params.allProducts.length > 0 && !hasBenefit) {
+    if (requiresProductValue && !hasBenefit) {
       severeFailures.push('FALLA_GRAVE: respuesta_sin_beneficio_producto');
     }
 
-    if (params.allProducts.length > 0 && !hasFunction) {
+    if (requiresProductValue && !hasFunction) {
       severeFailures.push('FALLA_GRAVE: respuesta_sin_funcion_o_uso');
     }
 
-    if (params.allProducts.length > 0 && !hasNeedConnection) {
+    if (requiresProductValue && !hasNeedConnection) {
       severeFailures.push('FALLA_GRAVE: respuesta_sin_conexion_con_necesidad');
     }
 
@@ -3560,13 +3741,13 @@ export class BotService {
       criticalFailures,
       warnings,
       checks: {
-        usesProducts: usesProductsExpanded,
+        usesProducts: requiresProductValue ? usesProductsExpanded : true,
         respectsInstructions,
         usesCompanyIfApplies,
         genericWithoutKnowledge,
-        hasBenefit,
-        hasFunction,
-        hasNeedConnection,
+        hasBenefit: requiresProductValue ? hasBenefit : true,
+        hasFunction: requiresProductValue ? hasFunction : true,
+        hasNeedConnection: requiresProductValue ? hasNeedConnection : true,
         coherentWithProducts,
         salesFlowOk,
       },
@@ -3752,7 +3933,7 @@ export class BotService {
     const need = this.inferNeedLabelFromMessage(params.message);
     const connection = need
       ? `Si lo que buscas es ${need}, te puede servir.`
-      : 'Si lo que buscas es precio, uso o resultados, te guio.';
+      : 'Si lo que buscas es cómo se usa y qué resultados notar, te guío.';
 
     const benefitLine = benefit ? `${title}: ${benefit}.` : `${title}.`;
     const functionLine = benefit
@@ -6506,10 +6687,12 @@ export class BotService {
     const productTitleNormalized = productTitle ? this.normalizeTextForMatch(productTitle) : '';
     const mentionsProduct = productTitleNormalized ? replyNormalized.includes(productTitleNormalized) : false;
 
-    const mentionsPrice =
-      /\b(rd|usd|dolar|dolares|peso|pesos)\b/.test(replyNormalized)
-      || replyNormalized.includes('precio')
-      || /\b\d{3,}\b/.test(replyNormalized);
+    const replyMentionsPrice = this.replyMentionsPrice(params.reply, replyNormalized);
+
+    const mentionsPrice = replyMentionsPrice
+      || replyNormalized.includes('no tengo el precio')
+      || replyNormalized.includes('no esta configurado')
+      || replyNormalized.includes('no está configurado');
 
     const mentionsUsage = [
       'como se usa',
@@ -6546,68 +6729,25 @@ export class BotService {
     const extractedProductTokens = params.allProducts
       .flatMap((product) => {
         const blob = `${product.descripcionCorta ?? ''} ${product.descripcionCompleta ?? ''}`.trim();
-        return blob
-          .replace(/[\r\n]/g, ' ')
-          .split(/[^A-Za-zÁÉÍÓÚÜÑáéíóúüñ0-9]+/)
-          .map((token) => token.trim())
-          .filter((token) => token.length >= 5)
-          .slice(0, 12);
+        return this.tokenizeNormalized(blob, { minTokenLength: 5, maxTokens: 12 });
       })
-      .map((token) => this.normalizeTextForMatch(token));
+      .filter((token) => token.length > 0);
 
     const hasBenefit = mentionsBenefits || extractedProductTokens.some((token) => token && replyNormalized.includes(token));
 
-    const needsDetected = [
-      messageNormalized.includes('bajar de peso') || messageNormalized.includes('rebajar') || messageNormalized.includes('adelgaz')
-        ? 'bajar de peso'
-        : null,
-      messageNormalized.includes('digest') || messageNormalized.includes('digestion')
-        ? 'digestion'
-        : null,
-      messageNormalized.includes('bienestar')
-        ? 'bienestar'
-        : null,
-    ].filter((value): value is string => Boolean(value));
-    const hasNeedConnection = needsDetected.length === 0
-      ? (replyNormalized.includes('para ti') || replyNormalized.includes('en tu caso') || replyNormalized.includes('si lo que buscas') || questionCount >= 1)
-      : (needsDetected.some((need) => replyNormalized.includes(this.normalizeTextForMatch(need)))
-        || replyNormalized.includes('si lo que buscas')
-        || replyNormalized.includes('para ti')
-        || replyNormalized.includes('en tu caso'));
+    const needsDetected = this.inferNeedsFromNormalizedMessage(messageNormalized);
+    const hasNeedConnection = this.hasNeedConnection({
+      normalizedReply: replyNormalized,
+      questionCount,
+      needs: needsDetected,
+    });
 
-    const knownPriceStrings = params.allProducts
-      .flatMap((product) => [this.valueToText(product.precio), this.valueToText(product.precioMinimo)])
-      .map((value) => (value ?? '').trim())
-      .filter((value) => value.length > 0);
-
-    const normalizeMoneyNumber = (value: string): number | null => {
-      const digitsOnly = value.replace(/[^0-9]/g, '');
-      if (!digitsOnly) {
-        return null;
-      }
-      const num = Number.parseInt(digitsOnly, 10);
-      return Number.isFinite(num) ? num : null;
-    };
-
-    const extractedMoneyNumbers = (params.reply.match(/\b\d[\d.,]{2,}\b/g) ?? [])
-      .map((value) => normalizeMoneyNumber(value))
-      .filter((value): value is number => typeof value === 'number');
-
-    const knownMoneyNumbers = params.allProducts
-      .flatMap((product) => [product.precio, product.precioMinimo])
-      .map((value) => (typeof value === 'number' ? value : normalizeMoneyNumber(String(value ?? ''))))
-      .filter((value): value is number => typeof value === 'number');
-
-    const mentionsCurrency = /\brd\$|\busd\b|\$\s*\d/i.test(params.reply);
-    const hasKnownPriceIfMentionsPrice = !(mentionsPrice || mentionsCurrency)
-      ? true
-      : (
-          knownPriceStrings.some((value) => params.reply.toLowerCase().includes(value.toLowerCase()))
-          || (extractedMoneyNumbers.length > 0 && knownMoneyNumbers.some((known) => extractedMoneyNumbers.includes(known)))
-          || replyNormalized.includes('no tengo el precio')
-          || replyNormalized.includes('no esta configurado')
-          || replyNormalized.includes('no está configurado')
-        );
+    const hasKnownPriceIfMentionsPrice = this.hasKnownPriceIfMentionsPrice({
+      reply: params.reply,
+      normalizedReply: replyNormalized,
+      products: params.allProducts,
+      replyMentionsPrice,
+    });
 
     if (!hasKnownPriceIfMentionsPrice) {
       return { valid: false, reason: 'coherence_mismatch' };
