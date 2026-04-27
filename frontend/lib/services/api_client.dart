@@ -56,6 +56,8 @@ class ApiClient {
 
   String? _sessionToken;
 
+  String? get sessionToken => _sessionToken;
+
   void setSessionToken(String? token) {
     final normalized = token?.trim() ?? '';
     _sessionToken = normalized.isEmpty ? null : normalized;
@@ -172,6 +174,30 @@ class ApiClient {
     }, retry: retry);
   }
 
+  Future<List<Map<String, dynamic>>> postMultipartFiles(
+    String path, {
+    required List<({Uint8List bytes, String name, String mime})> files,
+    String fieldName = 'files',
+    bool retry = false,
+  }) {
+    return _sendForList(() async {
+      final request = http.MultipartRequest('POST', _buildUri(path));
+      request.headers.addAll(_multipartHeaders);
+      for (final f in files) {
+        request.files.add(
+          http.MultipartFile.fromBytes(
+            fieldName,
+            f.bytes,
+            filename: f.name,
+            contentType: MediaType.parse(f.mime),
+          ),
+        );
+      }
+      final streamed = await request.send().timeout(_timeout);
+      return http.Response.fromStream(streamed);
+    }, retry: retry);
+  }
+
   Uri _buildUri(String path, {Map<String, String>? queryParameters}) {
     final normalizedBaseUrl = baseUrl.replaceAll(RegExp(r'/+$'), '');
     return Uri.parse('$normalizedBaseUrl$path').replace(
@@ -213,19 +239,28 @@ class ApiClient {
     required bool retry,
   }) async {
     final response = await _send(request, retry: retry);
-    final decoded = response.body.isEmpty
+    final dynamic raw = response.body.isEmpty
         ? <dynamic>[]
-        : jsonDecode(response.body) as List<dynamic>;
+        : jsonDecode(response.body);
 
-    if (response.statusCode >= 200 && response.statusCode < 300) {
-      return decoded.whereType<Map<String, dynamic>>().toList();
+    // Backend may return a Map on error (e.g. {statusCode, message}) instead of a List.
+    if (raw is! List) {
+      final map = raw is Map<String, dynamic> ? raw : <String, dynamic>{};
+      throw _toApiException(
+        response.statusCode,
+        map['message'] as String?,
+      );
     }
 
-    final first = decoded.isNotEmpty && decoded.first is Map<String, dynamic>
-        ? decoded.first as Map<String, dynamic>
+    if (response.statusCode >= 200 && response.statusCode < 300) {
+      return raw.whereType<Map<String, dynamic>>().toList();
+    }
+
+    final first = raw.isNotEmpty && raw.first is Map<String, dynamic>
+        ? raw.first as Map<String, dynamic>
         : <String, dynamic>{};
 
-    throw _toApiException(response.statusCode, first['message']);
+    throw _toApiException(response.statusCode, first['message'] as String?);
   }
 
   Future<http.Response> _send(

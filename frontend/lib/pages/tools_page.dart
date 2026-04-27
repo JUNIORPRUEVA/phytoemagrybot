@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../services/api_service.dart';
 import '../widgets/app_text_field.dart';
 import '../widgets/secondary_page_layout.dart';
+// ProductData used in products section
 
 class ToolsPage extends StatefulWidget {
   const ToolsPage({
@@ -58,6 +59,22 @@ class _ToolsPageState extends State<ToolsPage> implements ToolsPageStateAccess {
   String? _loadError;
   _ToolSection? _selectedSection;
 
+  // ── Products state ────────────────────────────────────────────────────────
+  List<ProductData> _products = const <ProductData>[];
+  bool _isLoadingProducts = false;
+  String? _productsError;
+  bool _isSavingProduct = false;
+  String? _editingProductId;
+  bool _activoEdit = true;
+  final TextEditingController _prodTituloCtrl = TextEditingController();
+  final TextEditingController _prodDescCortaCtrl = TextEditingController();
+  final TextEditingController _prodDescCompletaCtrl = TextEditingController();
+  final TextEditingController _prodPrecioCtrl = TextEditingController();
+  final TextEditingController _prodPrecioMinCtrl = TextEditingController();
+  final TextEditingController _prodStockCtrl = TextEditingController();
+  final TextEditingController _prodImagenesCtrl = TextEditingController();
+  final TextEditingController _prodVideosCtrl = TextEditingController();
+
   @override
   void initState() {
     super.initState();
@@ -78,6 +95,14 @@ class _ToolsPageState extends State<ToolsPage> implements ToolsPageStateAccess {
     _maxDescuentoController.dispose();
     _vendedorNumeroController.dispose();
     _vendedorEmailController.dispose();
+    _prodTituloCtrl.dispose();
+    _prodDescCortaCtrl.dispose();
+    _prodDescCompletaCtrl.dispose();
+    _prodPrecioCtrl.dispose();
+    _prodPrecioMinCtrl.dispose();
+    _prodStockCtrl.dispose();
+    _prodImagenesCtrl.dispose();
+    _prodVideosCtrl.dispose();
     super.dispose();
   }
 
@@ -103,6 +128,127 @@ class _ToolsPageState extends State<ToolsPage> implements ToolsPageStateAccess {
     _followup2DelayController.text = config.followup2DelayMinutes.toString();
     _followup3DelayController.text = config.followup3DelayHours.toString();
     _maxFollowupsController.text = config.maxFollowups.toString();
+  }
+
+  Future<void> _loadProducts() async {
+    if (!mounted) return;
+    setState(() {
+      _isLoadingProducts = true;
+      _productsError = null;
+    });
+    try {
+      final List<ProductData> products = await widget.apiService.getProducts();
+      if (!mounted) return;
+      setState(() { _products = products; });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() { _productsError = error.toString().replaceFirst('Exception: ', ''); });
+    } finally {
+      if (mounted) setState(() { _isLoadingProducts = false; });
+    }
+  }
+
+  List<String> _splitUrls(String text) => text
+      .split(RegExp(r'[\n,]'))
+      .map((String s) => s.trim())
+      .where((String s) => s.isNotEmpty)
+      .toList();
+
+  void _openProductSheet([ProductData? existing]) {
+    _editingProductId = existing?.id;
+    _activoEdit = existing?.activo ?? true;
+    _prodTituloCtrl.text = existing?.titulo ?? '';
+    _prodDescCortaCtrl.text = existing?.descripcionCorta ?? '';
+    _prodDescCompletaCtrl.text = existing?.descripcionCompleta ?? '';
+    _prodPrecioCtrl.text = existing?.precio?.toStringAsFixed(0) ?? '';
+    _prodPrecioMinCtrl.text = existing?.precioMinimo?.toStringAsFixed(0) ?? '';
+    _prodStockCtrl.text = (existing?.stock ?? 0).toString();
+    _prodImagenesCtrl.text = (existing?.imagenesJson ?? <String>[]).join('\n');
+    _prodVideosCtrl.text = (existing?.videosJson ?? <String>[]).join('\n');
+
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (BuildContext sheetCtx) => _ProductFormSheet(
+        tituloCtrl: _prodTituloCtrl,
+        descCortaCtrl: _prodDescCortaCtrl,
+        descCompletaCtrl: _prodDescCompletaCtrl,
+        precioCtrl: _prodPrecioCtrl,
+        precioMinCtrl: _prodPrecioMinCtrl,
+        stockCtrl: _prodStockCtrl,
+        imagenesCtrl: _prodImagenesCtrl,
+        videosCtrl: _prodVideosCtrl,
+        activo: _activoEdit,
+        onActivoChanged: (bool v) => setState(() { _activoEdit = v; }),
+        isEditing: _editingProductId != null,
+        isSaving: _isSavingProduct,
+        onSave: () => _saveProduct(sheetCtx),
+      ),
+    );
+  }
+
+  Future<void> _saveProduct(BuildContext sheetCtx) async {
+    final String titulo = _prodTituloCtrl.text.trim();
+    if (titulo.isEmpty) {
+      _showMessage('El titulo del producto es obligatorio.', isError: true);
+      return;
+    }
+    setState(() { _isSavingProduct = true; });
+    try {
+      final ProductData dto = ProductData(
+        id: _editingProductId ?? '',
+        titulo: titulo,
+        descripcionCorta: _prodDescCortaCtrl.text.trim(),
+        descripcionCompleta: _prodDescCompletaCtrl.text.trim(),
+        precio: double.tryParse(_prodPrecioCtrl.text.trim()),
+        precioMinimo: double.tryParse(_prodPrecioMinCtrl.text.trim()),
+        stock: int.tryParse(_prodStockCtrl.text.trim()) ?? 0,
+        activo: _activoEdit,
+        imagenesJson: _splitUrls(_prodImagenesCtrl.text),
+        videosJson: _splitUrls(_prodVideosCtrl.text),
+      );
+      if (_editingProductId != null) {
+        await widget.apiService.updateProduct(_editingProductId!, dto);
+        _showMessage('Producto actualizado.');
+      } else {
+        await widget.apiService.createProduct(dto);
+        _showMessage('Producto creado.');
+      }
+      if (!mounted) return;
+      Navigator.of(sheetCtx).pop();
+      await _loadProducts();
+    } catch (error) {
+      if (!mounted) return;
+      _showMessage(error.toString().replaceFirst('Exception: ', ''), isError: true);
+    } finally {
+      if (mounted) setState(() { _isSavingProduct = false; });
+    }
+  }
+
+  Future<void> _deleteProduct(ProductData product) async {
+    final bool? confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Eliminar producto'),
+        content: Text('Eliminar "${product.titulo}"? Esta accion no se puede deshacer.'),
+        actions: <Widget>[
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Eliminar', style: TextStyle(color: Color(0xFF9F1239))),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      await widget.apiService.deleteProduct(product.id);
+      _showMessage('Producto eliminado.');
+      await _loadProducts();
+    } catch (error) {
+      _showMessage(error.toString().replaceFirst('Exception: ', ''), isError: true);
+    }
   }
 
   Future<void> _loadConfig() async {
@@ -135,6 +281,8 @@ class _ToolsPageState extends State<ToolsPage> implements ToolsPageStateAccess {
         });
       }
     }
+    // Load products independently so a missing table shows an error only in that section
+    _loadProducts();
   }
 
   int _parsePositiveInt(
@@ -293,7 +441,9 @@ class _ToolsPageState extends State<ToolsPage> implements ToolsPageStateAccess {
       case _ToolSection.followup:
         return 'Seguimiento automatico';
       case _ToolSection.botTools:
-        return 'Herramientas del bot';
+        return 'Acciones del bot';
+      case _ToolSection.products:
+        return 'Catalogo de productos';
     }
   }
 
@@ -334,6 +484,8 @@ class _ToolsPageState extends State<ToolsPage> implements ToolsPageStateAccess {
         return Icons.schedule_send_rounded;
       case _ToolSection.botTools:
         return Icons.build_circle_outlined;
+      case _ToolSection.products:
+        return Icons.inventory_2_rounded;
     }
   }
 
@@ -361,6 +513,10 @@ class _ToolsPageState extends State<ToolsPage> implements ToolsPageStateAccess {
           _toolsConfig.escalarAVendedorEnabled,
         ].where((bool e) => e).length;
         return '$enabled / 6 activas';
+      case _ToolSection.products:
+        if (_isLoadingProducts) return 'Cargando...';
+        final int activos = _products.where((ProductData p) => p.activo).length;
+        return '${_products.length} registrados ($activos activos)';
     }
   }
 
@@ -393,6 +549,13 @@ class _ToolsPageState extends State<ToolsPage> implements ToolsPageStateAccess {
         description: 'Function Calling: stock, catalogo, pedidos y mas.',
         status: _sectionStatus(_ToolSection.botTools),
         icon: _sectionIcon(_ToolSection.botTools),
+      ),
+      _ToolMenuItemData(
+        section: _ToolSection.products,
+        title: _sectionTitle(_ToolSection.products),
+        description: 'Gestiona los productos del catalogo que el bot puede consultar y vender.',
+        status: _sectionStatus(_ToolSection.products),
+        icon: _sectionIcon(_ToolSection.products),
       ),
     ];
   }
@@ -444,9 +607,10 @@ class _ToolsPageState extends State<ToolsPage> implements ToolsPageStateAccess {
           _ToolSection.voice => _buildVoiceSection(isBusy),
           _ToolSection.followup => _buildFollowupSection(isBusy),
           _ToolSection.botTools => _buildBotToolsSection(),
+          _ToolSection.products => _buildProductsSection(),
         },
         const SizedBox(height: 24),
-        if (section != _ToolSection.botTools) ...<Widget>[
+        if (section != _ToolSection.botTools && section != _ToolSection.products) ...<Widget>[
           Wrap(
             spacing: 12,
             runSpacing: 12,
@@ -764,6 +928,139 @@ class _ToolsPageState extends State<ToolsPage> implements ToolsPageStateAccess {
     );
   }
 
+  Widget _buildProductsSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Row(
+          children: <Widget>[
+            Expanded(
+              child: Text(
+                _isLoadingProducts
+                    ? 'Cargando...'
+                    : '${_products.length} registrados',
+                style: const TextStyle(
+                    color: Color(0xFF64748B), fontSize: 13, fontWeight: FontWeight.w600),
+              ),
+            ),
+            FilledButton.icon(
+              onPressed: _isLoadingProducts ? null : () => _openProductSheet(),
+              icon: const Icon(Icons.add_rounded, size: 18),
+              label: const Text('Agregar'),
+              style: FilledButton.styleFrom(backgroundColor: const Color(0xFF111827)),
+            ),
+          ],
+        ),
+        if (_productsError != null) ...<Widget>[
+          const SizedBox(height: 12),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: const Color(0xFFFFF1F2),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: const Color(0xFFFDA4AF)),
+            ),
+            child: Text(_productsError!, style: const TextStyle(color: Color(0xFF9F1239))),
+          ),
+        ],
+        const SizedBox(height: 14),
+        if (_isLoadingProducts)
+          const Center(child: Padding(padding: EdgeInsets.all(24), child: CircularProgressIndicator()))
+        else if (_products.isEmpty)
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: const Color(0xFFE2E8F0)),
+            ),
+            child: const Text(
+              'Todavia no hay productos. Pulsa «Agregar» para crear el primero.',
+              style: TextStyle(color: Color(0xFF64748B), height: 1.5),
+            ),
+          )
+        else
+          ..._products.map((ProductData p) => Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: Container(
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(color: const Color(0xFFE2E8F0)),
+              ),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+              child: Row(
+                children: <Widget>[
+                  Container(
+                    width: 10,
+                    height: 10,
+                    margin: const EdgeInsets.only(right: 12, top: 2),
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: p.activo ? const Color(0xFF16A34A) : const Color(0xFFCBD5E1),
+                    ),
+                  ),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: <Widget>[
+                        Text(p.titulo,
+                            style: const TextStyle(fontWeight: FontWeight.w700, color: Color(0xFF0F172A))),
+                        if (p.descripcionCorta.isNotEmpty)
+                          Text(p.descripcionCorta,
+                              style: const TextStyle(fontSize: 12, color: Color(0xFF64748B)),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis),
+                        const SizedBox(height: 4),
+                        Wrap(
+                          spacing: 10,
+                          children: <Widget>[
+                            if (p.precio != null)
+                              Text(
+                                'RD\$${p.precio!.toStringAsFixed(0)}',
+                                style: const TextStyle(
+                                    fontSize: 12, color: Color(0xFF2563EB), fontWeight: FontWeight.w600),
+                              ),
+                            Text('Stock: ${p.stock}',
+                                style: const TextStyle(fontSize: 12, color: Color(0xFF64748B))),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[
+                      IconButton(
+                        icon: const Icon(Icons.edit_rounded, size: 18),
+                        color: const Color(0xFF2563EB),
+                        tooltip: 'Editar',
+                        onPressed: () => _openProductSheet(p),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.delete_rounded, size: 18),
+                        color: const Color(0xFF9F1239),
+                        tooltip: 'Eliminar',
+                        onPressed: () => _deleteProduct(p),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          )),
+        const SizedBox(height: 12),
+        OutlinedButton.icon(
+          onPressed: _isLoadingProducts ? null : _loadProducts,
+          icon: const Icon(Icons.refresh_rounded, size: 16),
+          label: const Text('Recargar lista'),
+        ),
+      ],
+    );
+  }
+
   Widget _buildFollowupSection(bool isBusy) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -893,7 +1190,146 @@ class _ToolsPageState extends State<ToolsPage> implements ToolsPageStateAccess {
   }
 }
 
-enum _ToolSection { access, voice, followup, botTools }
+enum _ToolSection { access, voice, followup, botTools, products }
+
+// ── Product form bottom sheet ─────────────────────────────────────────────────
+
+class _ProductFormSheet extends StatefulWidget {
+  const _ProductFormSheet({
+    required this.tituloCtrl,
+    required this.descCortaCtrl,
+    required this.descCompletaCtrl,
+    required this.precioCtrl,
+    required this.precioMinCtrl,
+    required this.stockCtrl,
+    required this.imagenesCtrl,
+    required this.videosCtrl,
+    required this.activo,
+    required this.onActivoChanged,
+    required this.isEditing,
+    required this.isSaving,
+    required this.onSave,
+  });
+
+  final TextEditingController tituloCtrl;
+  final TextEditingController descCortaCtrl;
+  final TextEditingController descCompletaCtrl;
+  final TextEditingController precioCtrl;
+  final TextEditingController precioMinCtrl;
+  final TextEditingController stockCtrl;
+  final TextEditingController imagenesCtrl;
+  final TextEditingController videosCtrl;
+  final bool activo;
+  final ValueChanged<bool> onActivoChanged;
+  final bool isEditing;
+  final bool isSaving;
+  final VoidCallback onSave;
+
+  @override
+  State<_ProductFormSheet> createState() => _ProductFormSheetState();
+}
+
+class _ProductFormSheetState extends State<_ProductFormSheet> {
+  late bool _activo;
+
+  @override
+  void initState() {
+    super.initState();
+    _activo = widget.activo;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return DraggableScrollableSheet(
+      initialChildSize: 0.92,
+      minChildSize: 0.5,
+      maxChildSize: 0.97,
+      builder: (_, ScrollController sc) => Container(
+        decoration: const BoxDecoration(
+          color: Color(0xFFF8FAFC),
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+        child: ListView(
+          controller: sc,
+          padding: const EdgeInsets.fromLTRB(20, 20, 20, 32),
+          children: <Widget>[
+            Row(
+              children: <Widget>[
+                Expanded(
+                  child: Text(
+                    widget.isEditing ? 'Editar producto' : 'Nuevo producto',
+                    style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: Color(0xFF0F172A)),
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.close_rounded),
+                  onPressed: () => Navigator.of(context).pop(),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            AppTextField(label: 'Titulo *', controller: widget.tituloCtrl, hintText: 'Nombre del producto'),
+            const SizedBox(height: 12),
+            AppTextField(label: 'Descripcion corta', controller: widget.descCortaCtrl, hintText: 'Breve descripcion visible al cliente'),
+            const SizedBox(height: 12),
+            AppTextField(label: 'Descripcion completa', controller: widget.descCompletaCtrl, hintText: 'Detalles completos del producto', maxLines: 3),
+            const SizedBox(height: 12),
+            Row(
+              children: <Widget>[
+                Expanded(
+                  child: AppTextField(
+                    label: 'Precio (RD\$)',
+                    controller: widget.precioCtrl,
+                    hintText: '1500',
+                    keyboardType: TextInputType.number,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: AppTextField(
+                    label: 'Precio minimo',
+                    controller: widget.precioMinCtrl,
+                    hintText: '1200',
+                    keyboardType: TextInputType.number,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            AppTextField(label: 'Stock', controller: widget.stockCtrl, hintText: '10', keyboardType: TextInputType.number),
+            const SizedBox(height: 12),
+            AppTextField(label: 'URLs de imagenes (una por linea)', controller: widget.imagenesCtrl, hintText: 'https://...', maxLines: 3),
+            const SizedBox(height: 12),
+            AppTextField(label: 'URLs de videos (una por linea)', controller: widget.videosCtrl, hintText: 'https://...', maxLines: 2),
+            const SizedBox(height: 16),
+            SwitchListTile(
+              value: _activo,
+              onChanged: (bool v) {
+                setState(() { _activo = v; });
+                widget.onActivoChanged(v);
+              },
+              title: const Text('Producto activo', style: TextStyle(color: Color(0xFF0F172A), fontWeight: FontWeight.w700)),
+              subtitle: const Text('Los productos inactivos no aparecen en el catalogo del bot.'),
+              contentPadding: EdgeInsets.zero,
+            ),
+            const SizedBox(height: 20),
+            ElevatedButton.icon(
+              onPressed: widget.isSaving ? null : widget.onSave,
+              icon: const Icon(Icons.save_rounded),
+              label: Text(widget.isSaving ? 'Guardando...' : (widget.isEditing ? 'Actualizar producto' : 'Guardar producto')),
+              style: ElevatedButton.styleFrom(
+                minimumSize: const Size(double.infinity, 52),
+                backgroundColor: const Color(0xFF111827),
+                foregroundColor: Colors.white,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
 
 class _ToolMenuItemData {
   const _ToolMenuItemData({

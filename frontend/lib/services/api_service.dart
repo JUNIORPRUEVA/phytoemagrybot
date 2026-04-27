@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
@@ -2030,6 +2033,34 @@ class ApiService {
 
   Future<void> deleteProduct(String id) async {
     await _apiClient.deleteJson('/products/$id');
+  }
+
+  /// Uploads image/video files to storage and returns public URLs.
+  Future<List<String>> uploadProductMedia(
+    List<({Uint8List bytes, String name, String mime})> files,
+  ) async {
+    if (files.isEmpty) return <String>[];
+    final request = http.MultipartRequest(
+      'POST',
+      Uri.parse('${_apiClient.baseUrl}/products/upload-media'),
+    );
+    final token = _apiClient.sessionToken;
+    if (token != null) request.headers['Authorization'] = 'Bearer $token';
+    for (final f in files) {
+      request.files.add(
+        http.MultipartFile.fromBytes('files', f.bytes, filename: f.name),
+      );
+    }
+    final streamed = await request.send().timeout(const Duration(seconds: 60));
+    final body = await streamed.stream.bytesToString();
+    if (streamed.statusCode < 200 || streamed.statusCode >= 300) {
+      throw Exception('Error al subir archivos (${streamed.statusCode})');
+    }
+    final dynamic decoded = jsonDecode(body);
+    if (decoded is Map && decoded['urls'] is List) {
+      return (decoded['urls'] as List).cast<String>();
+    }
+    return <String>[];
   }
 
   // ─── Tools Config ────────────────────────────────────────────────────────────

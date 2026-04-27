@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../pages/bot_prompt_config_page.dart';
 import '../pages/config_page.dart';
-import '../pages/products_page.dart';
+import '../pages/tools_page.dart';
 import '../pages/users_page.dart';
 import '../services/auth_service.dart';
 import '../services/api_client.dart';
@@ -45,8 +45,8 @@ class _DashboardShellState extends State<DashboardShell> {
   int _mobileLastPrimaryPageIndex = 0;
   final GlobalKey<State<BotPromptConfigPage>> _promptPageKey =
       GlobalKey<State<BotPromptConfigPage>>();
-    final GlobalKey<State<ProductsPage>> _productsPageKey =
-      GlobalKey<State<ProductsPage>>();
+  final GlobalKey<State<ToolsPage>> _toolsDirectPageKey =
+      GlobalKey<State<ToolsPage>>();
   final GlobalKey<State<ConfigPage>> _configPageKey =
       GlobalKey<State<ConfigPage>>();
   late final ApiService _apiService;
@@ -171,11 +171,16 @@ class _DashboardShellState extends State<DashboardShell> {
         onConfigUpdated: _refreshOverview,
         onRequestBack: () => _selectPage(_mobileMainPageIndex),
       ),
-      ProductsPage(
-        key: _productsPageKey,
+      ToolsPage(
+        key: _toolsDirectPageKey,
         apiService: _apiService,
         onConfigUpdated: _refreshOverview,
         onRequestBack: () => _selectPage(_mobileMainPageIndex),
+        onNavigationChanged: () {
+          if (mounted) {
+            setState(() {});
+          }
+        },
       ),
       ConfigPage(
         key: _configPageKey,
@@ -196,14 +201,14 @@ class _DashboardShellState extends State<DashboardShell> {
 
     final labels = <String>[
       'Instrucciones',
-      'Productos',
+      'Herramientas',
       'Configuracion',
       if (isAdmin) 'Usuarios',
     ];
 
     final icons = <IconData>[
       Icons.auto_awesome_rounded,
-      Icons.inventory_2_rounded,
+      Icons.build_rounded,
       Icons.settings_rounded,
       if (isAdmin) Icons.group_rounded,
     ];
@@ -216,6 +221,7 @@ class _DashboardShellState extends State<DashboardShell> {
     final configState = _configPageKey.currentState as ConfigPageStateAccess?;
     final configTitle = configState?.currentTitle() ?? labels[_configPageIndex];
     final canNavigateConfigBack = configState?.canNavigateBack() ?? false;
+    final toolsDirectState = _toolsDirectPageKey.currentState as ToolsPageStateAccess?;
     final bool isMobileMainPage =
         isMobile && _selectedIndex == _mobileMainPageIndex;
     final int mobileNavIndex = _mobileBottomNavIndices.indexOf(
@@ -225,7 +231,9 @@ class _DashboardShellState extends State<DashboardShell> {
       !isMobile && _selectedIndex == _configPageIndex && canNavigateConfigBack;
     final String currentAppBarTitle = _selectedIndex == _configPageIndex
       ? configTitle
-      : labels[_selectedIndex];
+      : _selectedIndex == _galleryPageIndex
+        ? (toolsDirectState?.currentTitle() ?? labels[_galleryPageIndex])
+        : labels[_selectedIndex];
 
     return Scaffold(
       drawer: isMobile
@@ -386,17 +394,7 @@ class _DashboardShellState extends State<DashboardShell> {
                   .toList(),
             )
           : _AppFooter(overviewFuture: _overviewFuture),
-      floatingActionButton: _selectedIndex == _galleryPageIndex
-          ? FloatingActionButton(
-              onPressed: () {
-                final state = _productsPageKey.currentState as ProductsPageStateAccess?;
-                state?.triggerAddProductSheet();
-              },
-              backgroundColor: const Color(0xFF111827),
-              foregroundColor: Colors.white,
-              child: const Icon(Icons.add_rounded),
-            )
-          : isMobile && _selectedIndex == _promptPageIndex
+      floatingActionButton: isMobile && _selectedIndex == _promptPageIndex
           ? FloatingActionButton.extended(
               onPressed: () {
                 final state =

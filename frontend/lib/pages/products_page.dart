@@ -203,7 +203,7 @@ class _ProductsPageState extends State<ProductsPage>
           Row(children: <Widget>[
             Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: <Widget>[
               if (!isMobile) ...<Widget>[
-                const Text('PRODUCTOS', style: TextStyle(color: Color(0xFF0F172A), fontSize: 28, fontWeight: FontWeight.w900, letterSpacing: 0.8)),
+                const Text('HERRAMIENTAS', style: TextStyle(color: Color(0xFF0F172A), fontSize: 28, fontWeight: FontWeight.w900, letterSpacing: 0.8)),
                 const SizedBox(height: 6),
               ],
               Text('${_products.length} registrados', style: const TextStyle(color: Color(0xFF64748B), fontSize: 13, fontWeight: FontWeight.w600)),

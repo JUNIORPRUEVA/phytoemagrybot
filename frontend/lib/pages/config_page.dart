@@ -5,7 +5,6 @@ import '../widgets/secondary_page_layout.dart';
 import 'company_context_page.dart';
 import 'connect_whatsapp_page.dart';
 import 'memory_page.dart';
-import 'tools_page.dart';
 
 class ConfigPage extends StatefulWidget {
   const ConfigPage({
@@ -30,14 +29,12 @@ abstract class ConfigPageStateAccess {
   Future<void> reloadCurrentSection();
 }
 
-enum _ConfigSection { channels, company, tools, memory }
+enum _ConfigSection { channels, company, memory }
 
 class _ConfigPageState extends State<ConfigPage>
     implements ConfigPageStateAccess {
   final GlobalKey<State<CompanyContextPage>> _companyPageKey =
       GlobalKey<State<CompanyContextPage>>();
-  final GlobalKey<State<ToolsPage>> _toolsPageKey =
-      GlobalKey<State<ToolsPage>>();
   final GlobalKey<State<MemoryPage>> _memoryPageKey =
       GlobalKey<State<MemoryPage>>();
 
@@ -120,14 +117,6 @@ class _ConfigPageState extends State<ConfigPage>
       }
     }
 
-    if (_selectedSection == _ConfigSection.tools) {
-      final toolsState = _toolsPageKey.currentState as ToolsPageStateAccess?;
-      final handled = toolsState?.handleBackNavigation() ?? false;
-      if (handled) {
-        return true;
-      }
-    }
-
     if (_selectedSection == _ConfigSection.memory) {
       final memoryState = _memoryPageKey.currentState as MemoryPageStateAccess?;
       final handled = memoryState?.handleBackNavigation() ?? false;
@@ -157,9 +146,6 @@ class _ConfigPageState extends State<ConfigPage>
         final companyState =
             _companyPageKey.currentState as CompanyContextPageStateAccess?;
         return companyState?.currentTitle() ?? 'Empresa';
-      case _ConfigSection.tools:
-        final toolsState = _toolsPageKey.currentState as ToolsPageStateAccess?;
-        return toolsState?.currentTitle() ?? 'Herramientas';
       case _ConfigSection.memory:
         return 'Memoria';
     }
@@ -175,19 +161,6 @@ class _ConfigPageState extends State<ConfigPage>
     if (_selectedSection == _ConfigSection.memory) {
       final memoryState = _memoryPageKey.currentState as MemoryPageStateAccess?;
       await (memoryState?.reload() ?? Future<void>.value());
-      return;
-    }
-
-    if (_selectedSection == _ConfigSection.company) {
-      final companyState =
-          _companyPageKey.currentState as CompanyContextPageStateAccess?;
-      await (companyState?.reload() ?? Future<void>.value());
-      return;
-    }
-
-    if (_selectedSection == _ConfigSection.tools) {
-      final toolsState = _toolsPageKey.currentState as ToolsPageStateAccess?;
-      await (toolsState?.reload() ?? Future<void>.value());
       return;
     }
 
@@ -259,14 +232,6 @@ class _ConfigPageState extends State<ConfigPage>
           ),
           const SizedBox(height: 12),
           _ConfigSectionTile(
-            icon: Icons.extension_rounded,
-            title: 'Herramientas',
-            subtitle:
-                'Llaves de acceso, voz del bot y reglas de seguimiento.',
-            onTap: () => _openSection(_ConfigSection.tools),
-          ),
-          const SizedBox(height: 12),
-          _ConfigSectionTile(
             icon: Icons.psychology_alt_rounded,
             title: 'Memoria',
             subtitle:
@@ -292,14 +257,6 @@ class _ConfigPageState extends State<ConfigPage>
           onConfigUpdated: _handleNestedConfigUpdated,
           onRequestBack: _closeSection,
           onMainViewChanged: (_) => _handleNestedNavigationChanged(),
-        );
-      case _ConfigSection.tools:
-        return ToolsPage(
-          key: _toolsPageKey,
-          apiService: widget.apiService,
-          onConfigUpdated: _handleNestedConfigUpdated,
-          onRequestBack: _closeSection,
-          onNavigationChanged: _handleNestedNavigationChanged,
         );
       case _ConfigSection.memory:
         return MemoryPage(
