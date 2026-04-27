@@ -510,10 +510,8 @@ export class WhatsAppService implements OnModuleInit {
         `/chat/sendPresence/${instanceName}`,
         {
           number,
-          options: {
-            presence,
-            delay: 30000,
-          },
+          presence,
+          delay: 30000,
         },
       );
 
