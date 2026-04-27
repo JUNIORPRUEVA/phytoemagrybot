@@ -489,10 +489,19 @@ export class WhatsAppService implements OnModuleInit {
     try {
       const instanceName = this.getRequiredInstanceName(resolved.whatsapp);
 
-      // Use the raw address directly — do NOT call getRequiredOutboundAddress because
-      // it throws on @lid JIDs, which would silently kill the presence call.
-      const number = to.trim();
-      if (!number) return;
+      // Evolution API sendPresence expects just the phone number (no @s.whatsapp.net suffix)
+      const rawNumber = to.trim();
+      if (!rawNumber) return;
+      const number = rawNumber.includes('@') ? rawNumber.split('@')[0] : rawNumber;
+
+      this.logger.log(
+        JSON.stringify({
+          event: 'whatsapp_presence_sending',
+          presence,
+          number,
+          instanceName,
+        }),
+      );
 
       // delay: 30000 = show the indicator for up to 30 s.
       // WhatsApp automatically clears it the moment the real message lands,
@@ -506,6 +515,15 @@ export class WhatsAppService implements OnModuleInit {
             delay: 30000,
           },
         },
+      );
+
+      this.logger.log(
+        JSON.stringify({
+          event: 'whatsapp_presence_sent',
+          presence,
+          number,
+          instanceName,
+        }),
       );
     } catch (error) {
       // Presence is best-effort — never block the reply on failure, but log for debugging
