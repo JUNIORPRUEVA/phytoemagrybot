@@ -488,19 +488,37 @@ export class WhatsAppService implements OnModuleInit {
   ): Promise<void> {
     try {
       const instanceName = this.getRequiredInstanceName(resolved.whatsapp);
-      const finalJid = this.getRequiredOutboundAddress(to);
+
+      // Use the raw address directly — do NOT call getRequiredOutboundAddress because
+      // it throws on @lid JIDs, which would silently kill the presence call.
+      const number = to.trim();
+      if (!number) return;
+
+      // delay: 30000 = show the indicator for up to 30 s.
+      // WhatsApp automatically clears it the moment the real message lands,
+      // so the indicator is always dismissed at the right time.
       await this.createEvolutionClient(resolved.whatsapp).post(
         `/chat/sendPresence/${instanceName}`,
         {
-          number: finalJid,
+          number,
           options: {
             presence,
-            delay: 1200,
+            delay: 30000,
           },
         },
       );
-    } catch {
-      // Presence is best-effort — never block the reply on failure
+    } catch (error) {
+      // Presence is best-effort — never block the reply on failure, but log for debugging
+      this.logger.warn(
+        JSON.stringify({
+          event: 'whatsapp_presence_failed',
+          presence,
+          to,
+          error: error instanceof Error ? error.message : 'Unknown error',
+          status: axios.isAxiosError(error) ? (error.response?.status ?? null) : null,
+          data: axios.isAxiosError(error) ? (error.response?.data ?? null) : null,
+        }),
+      );
     }
   }
 
