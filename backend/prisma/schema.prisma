@@ -157,17 +157,18 @@ model ConversationMessage {
 }
 
 model ClientMemory {
-  id         Int      @id @default(autoincrement())
-  contactId  String   @unique @map("contact_id")
-  name       String?
-  objective  String?
-  interest   String?
-  objections Json?
-  status     String   @default("nuevo")
-  lastIntent String?  @map("last_intent")
-  notes      String?
-  expiresAt  DateTime @map("expires_at")
-  updatedAt  DateTime @updatedAt @map("updated_at")
+  id           Int      @id @default(autoincrement())
+  contactId    String   @unique @map("contact_id")
+  name         String?
+  objective    String?
+  interest     String?
+  objections   Json?
+  status       String   @default("nuevo")
+  lastIntent   String?  @map("last_intent")
+  notes        String?
+  personalData Json?    @map("personal_data")
+  expiresAt    DateTime @map("expires_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
 
   @@index([expiresAt])
   @@map("client_memory")

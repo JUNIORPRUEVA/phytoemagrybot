@@ -6,6 +6,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
 import {
   ClientInterest,
+  ClientPersonalData,
   MemoryDeleteResult,
   ClientMemorySnapshot,
   ClientObjective,
@@ -441,6 +442,13 @@ export class MemoryService implements OnModuleInit {
     });
     const legacyNotes = mergedObjections.length > 0 ? mergedObjections.join(' | ') : null;
 
+    // Personal data: extract from message, then MERGE with existing — never overwrite
+    // unless the client explicitly signals a change ("mi nuevo número es", "cambié mi dirección", etc.)
+    const existingPersonalData = this.readPersonalData(current?.personalData);
+    const extractedPersonalData = this.extractPersonalData(normalizedText);
+    const isExplicitUpdate = this.isExplicitPersonalDataUpdate(normalizedText);
+    const mergedPersonalData = this.mergePersonalData(existingPersonalData, extractedPersonalData, isExplicitUpdate);
+
     const memory = await this.prisma.clientMemory.upsert({
       where: { contactId: normalizedContactId },
       create: {
@@ -452,6 +460,7 @@ export class MemoryService implements OnModuleInit {
         status: detectedStatus,
         lastIntent: legacyIntent,
         notes: legacyNotes,
+        personalData: mergedPersonalData as object,
         expiresAt: this.buildLongMemoryExpiry(),
       },
       update: {
@@ -462,6 +471,7 @@ export class MemoryService implements OnModuleInit {
         status: detectedStatus,
         lastIntent: legacyIntent,
         notes: legacyNotes,
+        personalData: mergedPersonalData as object,
         expiresAt: this.buildLongMemoryExpiry(),
       },
     });
@@ -846,12 +856,18 @@ export class MemoryService implements OnModuleInit {
     }
 
     const extracted = this.extractProfileSignal(text);
+    const personalData = this.extractPersonalData(text);
+    const hasPersonalData =
+      !!personalData.phone || !!personalData.address || !!personalData.location ||
+      (personalData.preferences?.length ?? 0) > 0;
+
     return Boolean(
       extracted.name ||
         extracted.objective ||
         extracted.interest ||
         extracted.objections.length > 0 ||
-        extracted.status,
+        extracted.status ||
+        hasPersonalData,
     );
   }
 
@@ -991,6 +1007,148 @@ export class MemoryService implements OnModuleInit {
     return null;
   }
 
+  private extractStatus(normalized: string): ClientStatus | null {
+    if (
+      ['ya compre', 'ya compré', 'ya pague', 'ya pagué', 'soy cliente', 'me llego', 'me llegó']
+        .some((keyword) => normalized.includes(keyword))
+    ) {
+      return 'cliente';
+    }
+
+    if (
+      ['precio', 'cuanto cuesta', 'cuánto cuesta', 'lo quiero', 'comprar', 'pedido', 'resultado', 'funciona']
+        .some((keyword) => normalized.includes(keyword))
+    ) {
+      return 'interesado';
+    }
+
+    return null;
+  }
+
+  /**
+   * Extract personal data (phone, address, location, preferences) from a message.
+   */
+  private extractPersonalData(text: string): ClientPersonalData {
+    const normalized = text.toLowerCase();
+    const data: ClientPersonalData = {};
+
+    // Phone number patterns: "mi número es X", "mi cel es X", raw number 10+ digits
+    const phonePatterns = [
+      /(?:mi\s+n[uú]mero(?:\s+es)?|mi\s+cel(?:ular)?(?:\s+es)?|mi\s+tel(?:[eé]fono)?(?:\s+es)?|puedes contactarme(?:\s+al)?|ll[aá]mame(?:\s+al)?)\s*([\d()\s\-+]{7,20})/i,
+      /\b(\+?[0-9][\d\s\-().]{8,18}[0-9])\b/,
+    ];
+    for (const pattern of phonePatterns) {
+      const match = text.match(pattern);
+      const raw = (match?.[1] ?? match?.[0])?.replace(/\s+/g, '').replace(/[()]/g, '').trim();
+      if (raw && raw.replace(/\D/g, '').length >= 7) {
+        data.phone = raw;
+        break;
+      }
+    }
+
+    // Address patterns: "mi dirección es X", "vivo en X", "me encuentro en X"
+    const addressPatterns = [
+      /(?:mi\s+direcci[oó]n(?:\s+es)?|vivo\s+en|me\s+encuentro\s+en|mi\s+casa\s+(?:es|est[aá]\s+en)|me\s+queda\s+en)\s+([^,.!?\n]{5,120})/i,
+    ];
+    for (const pattern of addressPatterns) {
+      const match = text.match(pattern);
+      const value = match?.[1]?.trim();
+      if (value) { data.address = value; break; }
+    }
+
+    // Location / GPS / neighborhood
+    const locationPatterns = [
+      /(?:estoy\s+en|me\s+encuentro\s+en|vivo\s+en|mi\s+zona\s+es|mi\s+sector\s+es|mi\s+barrio\s+es|quedo\s+en)\s+([^,.!?\n]{3,80})/i,
+      /(?:maps?\.google|gps|ubicaci[oó]n)[:\s]+([^\s]{10,})/i,
+    ];
+    for (const pattern of locationPatterns) {
+      const match = text.match(pattern);
+      const value = match?.[1]?.trim();
+      if (value && !data.address) { data.location = value; break; }
+    }
+
+    // Preferences: "me gusta X", "prefiero X", "no me gusta X", "quiero X sin Y"
+    const preferences: string[] = [];
+    const prefPatterns = [
+      /(?:me\s+gusta(?:n)?|prefiero|me\s+encanta(?:n)?)\s+([^,.!?\n]{3,60})/gi,
+      /(?:no\s+me\s+gusta(?:n)?|no\s+quiero|prefiero\s+no)\s+([^,.!?\n]{3,60})/gi,
+    ];
+    for (const pattern of prefPatterns) {
+      let match: RegExpExecArray | null;
+      while ((match = pattern.exec(text)) !== null) {
+        const value = match[1]?.trim();
+        if (value) preferences.push(value.slice(0, 60));
+      }
+    }
+    if (preferences.length > 0) data.preferences = preferences;
+
+    return data;
+  }
+
+  /**
+   * Detect if the client is explicitly saying their data CHANGED
+   * (e.g. "mi nuevo número es...", "cambié mi dirección", "ahora vivo en...").
+   */
+  private isExplicitPersonalDataUpdate(text: string): boolean {
+    const normalized = text.toLowerCase();
+    return [
+      'mi nuevo', 'mi nueva', 'cambi', 'actualiza', 'ahora vivo', 'ahora mi',
+      'me cambi', 'me mud', 'ya no vivo', 'nuevo número', 'nuevo cel', 'nueva dirección',
+    ].some((phrase) => normalized.includes(phrase));
+  }
+
+  /**
+   * Merge existing personal data with newly extracted data.
+   * Strategy:
+   *  - If isExplicitUpdate = true: replace the changed field with new value
+   *  - If isExplicitUpdate = false: only SET fields that are currently empty (additive, never overwrite)
+   *  - preferences: always additive (append new ones, deduplicate)
+   */
+  private mergePersonalData(
+    existing: ClientPersonalData,
+    extracted: ClientPersonalData,
+    isExplicitUpdate: boolean,
+  ): ClientPersonalData {
+    const merged: ClientPersonalData = { ...existing };
+
+    if (extracted.phone) {
+      if (isExplicitUpdate || !merged.phone) merged.phone = extracted.phone;
+    }
+    if (extracted.address) {
+      if (isExplicitUpdate || !merged.address) merged.address = extracted.address;
+    }
+    if (extracted.location) {
+      if (isExplicitUpdate || !merged.location) merged.location = extracted.location;
+    }
+    if (extracted.preferences && extracted.preferences.length > 0) {
+      const existing_prefs = merged.preferences ?? [];
+      const combined = [...existing_prefs, ...extracted.preferences];
+      // deduplicate case-insensitively, keep last 20
+      const seen = new Set<string>();
+      merged.preferences = combined
+        .filter((p) => { const k = p.toLowerCase(); if (seen.has(k)) return false; seen.add(k); return true; })
+        .slice(-20);
+    }
+
+    return merged;
+  }
+
+  /**
+   * Read personalData JSON from DB into a typed ClientPersonalData object.
+   */
+  private readPersonalData(value: unknown): ClientPersonalData {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+    const raw = value as Record<string, unknown>;
+    return {
+      phone: typeof raw.phone === 'string' ? raw.phone : undefined,
+      address: typeof raw.address === 'string' ? raw.address : undefined,
+      location: typeof raw.location === 'string' ? raw.location : undefined,
+      preferences: Array.isArray(raw.preferences)
+        ? (raw.preferences as unknown[]).filter((p): p is string => typeof p === 'string')
+        : undefined,
+    };
+  }
+
   private readObjections(value: unknown): string[] {
     if (!Array.isArray(value)) {
       return [];
@@ -1056,6 +1214,7 @@ export class MemoryService implements OnModuleInit {
       status: this.normalizeStatus(memory?.status ?? null),
       lastIntent: this.buildLegacyIntent(memory),
       notes: this.buildLegacyNotes(memory),
+      personalData: this.readPersonalData(memory?.personalData),
       updatedAt: memory?.updatedAt ?? null,
       expiresAt: memory?.expiresAt ?? null,
     };

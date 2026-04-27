@@ -10,6 +10,17 @@ export interface StoredMessage {
   createdAt?: Date;
 }
 
+/**
+ * Personal data that must NEVER be overwritten unless the client explicitly says it changed.
+ * Fields are additive: new data is merged, existing data is preserved.
+ */
+export interface ClientPersonalData {
+  phone?: string | null;
+  address?: string | null;
+  location?: string | null;         // GPS / neighborhood / city they share
+  preferences?: string[];           // "me gusta X", "prefiero Y", "no me gusta Z"
+}
+
 export interface ClientMemorySnapshot {
   contactId: string;
   name: string | null;
@@ -19,6 +30,7 @@ export interface ClientMemorySnapshot {
   status: ClientStatus;
   lastIntent: string | null;
   notes: string | null;
+  personalData: ClientPersonalData;
   updatedAt: Date | null;
   expiresAt: Date | null;
 }

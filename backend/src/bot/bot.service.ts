@@ -71,7 +71,24 @@ export class BotService {
       (m) => !(m.role === 'user' && m.content === normalizedMessage),
     );
 
-    const systemPrompt = await this.buildKnowledgeContext(config, botConfig);
+    const systemPrompt = await this.buildKnowledgeContext(
+      config,
+      botConfig,
+      memoryContext.clientMemory,
+      memoryContext.summary,
+    );
+
+    this.logger.log(
+      JSON.stringify({
+        event: 'bot_memory_context',
+        contactId: normalizedContactId,
+        historyMessages: history.length,
+        hasClientMemory: !!memoryContext.clientMemory.status || !!memoryContext.clientMemory.name,
+        hasSummary: !!memoryContext.summary.summary,
+        clientStatus: memoryContext.clientMemory.status,
+        clientName: memoryContext.clientMemory.name,
+      }),
+    );
 
     const aiReply = await this.aiService.generateSimpleReply({
       openaiKey: config.openaiKey,
@@ -189,19 +206,74 @@ export class BotService {
   private async buildKnowledgeContext(
     config: Awaited<ReturnType<ClientConfigService['getConfig']>>,
     botConfig: Awaited<ReturnType<BotConfigService['getConfig']>>,
+    clientMemory?: import('../memory/memory.types').ClientMemorySnapshot,
+    conversationSummary?: import('../memory/memory.types').ConversationSummarySnapshot,
   ): Promise<string> {
     const instructions = this.buildInstructionsBlock(config, botConfig);
     const products = this.buildProductsBlock(config);
     const company = (await this.companyContextService.buildAgentContext()).trim();
+    const memory = this.buildMemoryBlock(clientMemory, conversationSummary);
 
-    return [
+    const blocks: string[] = [
       '[INSTRUCCIONES]',
       instructions || 'Sin instrucciones configuradas.',
       '[PRODUCTOS]',
       products || 'Catálogo no configurado. No inventes productos.',
       '[EMPRESA]',
       company || 'Información de empresa no configurada.',
-    ].join('\n\n');
+    ];
+
+    if (memory) {
+      blocks.push('[MEMORIA DEL CLIENTE]', memory);
+    }
+
+    return blocks.join('\n\n');
+  }
+
+  private buildMemoryBlock(
+    clientMemory?: import('../memory/memory.types').ClientMemorySnapshot,
+    conversationSummary?: import('../memory/memory.types').ConversationSummarySnapshot,
+  ): string {
+    const lines: string[] = [];
+
+    if (clientMemory) {
+      const statusLabels: Record<string, string> = {
+        nuevo: 'Nuevo (aún no ha comprado)',
+        interesado: 'Interesado (está evaluando)',
+        cliente: 'Ya es cliente (ha comprado)',
+      };
+      if (clientMemory.name) lines.push(`Nombre del cliente: ${clientMemory.name}`);
+      if (clientMemory.status) lines.push(`Estado: ${statusLabels[clientMemory.status] ?? clientMemory.status}`);
+      if (clientMemory.objective) {
+        const objLabels: Record<string, string> = {
+          rebajar: 'Quiere bajar de peso',
+          info: 'Busca información',
+          comprar: 'Quiere comprar',
+        };
+        lines.push(`Objetivo: ${objLabels[clientMemory.objective] ?? clientMemory.objective}`);
+      }
+      if (clientMemory.interest) lines.push(`Interés principal: ${clientMemory.interest}`);
+      if (clientMemory.lastIntent) lines.push(`Última intención detectada: ${clientMemory.lastIntent}`);
+      if (clientMemory.objections.length > 0) {
+        lines.push(`Objeciones que ha expresado: ${clientMemory.objections.join(', ')}`);
+      }
+      if (clientMemory.notes) lines.push(`Notas: ${clientMemory.notes}`);
+
+      // Personal data — permanent profile fields
+      const pd = clientMemory.personalData;
+      if (pd.phone) lines.push(`Teléfono del cliente: ${pd.phone}`);
+      if (pd.address) lines.push(`Dirección del cliente: ${pd.address}`);
+      if (pd.location) lines.push(`Ubicación / zona: ${pd.location}`);
+      if (pd.preferences && pd.preferences.length > 0) {
+        lines.push(`Preferencias del cliente: ${pd.preferences.join(', ')}`);
+      }
+    }
+
+    if (conversationSummary?.summary) {
+      lines.push(`\nResumen de conversación previa:\n${conversationSummary.summary}`);
+    }
+
+    return lines.join('\n');
   }
 
   private buildInstructionsBlock(
