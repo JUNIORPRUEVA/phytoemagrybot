@@ -48,6 +48,7 @@ class ClientConfigData {
     this.botRules = const <String>[],
     this.salesPrompts = const SalesPromptBundleData(),
     this.products = const <ProductCatalogItemData>[],
+    this.toolsConfig = const BotToolsConfigData(),
   });
 
   final int id;
@@ -93,6 +94,7 @@ class ClientConfigData {
   final List<String> botRules;
   final SalesPromptBundleData salesPrompts;
   final List<ProductCatalogItemData> products;
+  final BotToolsConfigData toolsConfig;
 
   bool get whatsappConfigured =>
       evolutionApiUrl.isNotEmpty &&
@@ -192,6 +194,7 @@ class ClientConfigData {
       botRules: botRules,
       salesPrompts: salesPrompts,
       products: products,
+      toolsConfig: toolsConfig,
     );
   }
 
@@ -241,6 +244,7 @@ class ClientConfigData {
       botRules: const <String>[],
       salesPrompts: const SalesPromptBundleData(),
       products: const <ProductCatalogItemData>[],
+      toolsConfig: const BotToolsConfigData(),
     );
   }
 
@@ -282,6 +286,7 @@ class ClientConfigData {
       .map((dynamic item) => item.toString().trim())
       .where((String item) => item.isNotEmpty)
       .toList();
+    final toolsRaw = configurations['tools'] as Map<String, dynamic>?;
 
     return ClientConfigData(
       id: (json['id'] as int?) ?? 1,
@@ -327,6 +332,7 @@ class ClientConfigData {
       botRules: rules,
       salesPrompts: SalesPromptBundleData.fromJson(salesPrompts),
       products: products.map(ProductCatalogItemData.fromJson).toList(),
+      toolsConfig: BotToolsConfigData.fromJson(toolsRaw),
     );
   }
 }
@@ -498,6 +504,146 @@ class ProductCatalogItemData {
       'keywords': keywords,
       'mediaIds': mediaIds,
       'mediaUrls': mediaUrls,
+    };
+  }
+}
+
+/// Represents a product stored in the `products` database table.
+class ProductData {
+  const ProductData({
+    this.id = '',
+    this.titulo = '',
+    this.descripcionCorta = '',
+    this.descripcionCompleta = '',
+    this.precio,
+    this.precioMinimo,
+    this.stock = 0,
+    this.activo = true,
+    this.imagenesJson = const <String>[],
+    this.videosJson = const <String>[],
+  });
+
+  final String id;
+  final String titulo;
+  final String descripcionCorta;
+  final String descripcionCompleta;
+  final double? precio;
+  final double? precioMinimo;
+  final int stock;
+  final bool activo;
+  final List<String> imagenesJson;
+  final List<String> videosJson;
+
+  factory ProductData.fromJson(Map<String, dynamic> json) {
+    double? parseDouble(dynamic v) {
+      if (v == null) return null;
+      if (v is num) return v.toDouble();
+      return double.tryParse(v.toString());
+    }
+
+    List<String> parseStringList(dynamic v) {
+      if (v is List) {
+        return v.map((dynamic i) => i.toString().trim()).where((String s) => s.isNotEmpty).toList();
+      }
+      return const <String>[];
+    }
+
+    return ProductData(
+      id: (json['id'] as String?) ?? '',
+      titulo: (json['titulo'] as String?) ?? '',
+      descripcionCorta: (json['descripcionCorta'] as String?) ?? '',
+      descripcionCompleta: (json['descripcionCompleta'] as String?) ?? '',
+      precio: parseDouble(json['precio']),
+      precioMinimo: parseDouble(json['precioMinimo']),
+      stock: (json['stock'] as int?) ?? 0,
+      activo: (json['activo'] as bool?) ?? true,
+      imagenesJson: parseStringList(json['imagenesJson']),
+      videosJson: parseStringList(json['videosJson']),
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return <String, dynamic>{
+      if (id.isNotEmpty) 'id': id,
+      'titulo': titulo,
+      'descripcionCorta': descripcionCorta,
+      'descripcionCompleta': descripcionCompleta,
+      if (precio != null) 'precio': precio,
+      if (precioMinimo != null) 'precioMinimo': precioMinimo,
+      'stock': stock,
+      'activo': activo,
+      'imagenesJson': imagenesJson,
+      'videosJson': videosJson,
+    };
+  }
+}
+
+/// Configuration for the 6 bot tools stored at configurations.tools.
+class BotToolsConfigData {
+  const BotToolsConfigData({
+    this.consultarStockEnabled = true,
+    this.consultarCatalogoEnabled = true,
+    this.generarCotizacionEnabled = true,
+    this.generarCotizacionCostoEnvio = 200.0,
+    this.aplicarDescuentoEnabled = false,
+    this.aplicarDescuentoMaxPorcentaje = 10,
+    this.crearPedidoEnabled = true,
+    this.escalarAVendedorEnabled = false,
+    this.escalarAVendedorNumero = '',
+    this.escalarAVendedorEmail = '',
+  });
+
+  final bool consultarStockEnabled;
+  final bool consultarCatalogoEnabled;
+  final bool generarCotizacionEnabled;
+  final double generarCotizacionCostoEnvio;
+  final bool aplicarDescuentoEnabled;
+  final int aplicarDescuentoMaxPorcentaje;
+  final bool crearPedidoEnabled;
+  final bool escalarAVendedorEnabled;
+  final String escalarAVendedorNumero;
+  final String escalarAVendedorEmail;
+
+  factory BotToolsConfigData.fromJson(Map<String, dynamic>? json) {
+    if (json == null) return const BotToolsConfigData();
+    final consultarStock = (json['consultarStock'] as Map<String, dynamic>?) ?? <String, dynamic>{};
+    final consultarCatalogo = (json['consultarCatalogo'] as Map<String, dynamic>?) ?? <String, dynamic>{};
+    final generarCotizacion = (json['generarCotizacion'] as Map<String, dynamic>?) ?? <String, dynamic>{};
+    final aplicarDescuento = (json['aplicarDescuento'] as Map<String, dynamic>?) ?? <String, dynamic>{};
+    final crearPedido = (json['crearPedido'] as Map<String, dynamic>?) ?? <String, dynamic>{};
+    final escalarAVendedor = (json['escalarAVendedor'] as Map<String, dynamic>?) ?? <String, dynamic>{};
+    return BotToolsConfigData(
+      consultarStockEnabled: (consultarStock['enabled'] as bool?) ?? true,
+      consultarCatalogoEnabled: (consultarCatalogo['enabled'] as bool?) ?? true,
+      generarCotizacionEnabled: (generarCotizacion['enabled'] as bool?) ?? true,
+      generarCotizacionCostoEnvio: ((generarCotizacion['costoEnvio'] as num?) ?? 200).toDouble(),
+      aplicarDescuentoEnabled: (aplicarDescuento['enabled'] as bool?) ?? false,
+      aplicarDescuentoMaxPorcentaje: (aplicarDescuento['maxPorcentaje'] as int?) ?? 10,
+      crearPedidoEnabled: (crearPedido['enabled'] as bool?) ?? true,
+      escalarAVendedorEnabled: (escalarAVendedor['enabled'] as bool?) ?? false,
+      escalarAVendedorNumero: (escalarAVendedor['numero'] as String?) ?? '',
+      escalarAVendedorEmail: (escalarAVendedor['email'] as String?) ?? '',
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return <String, dynamic>{
+      'consultarStock': <String, dynamic>{'enabled': consultarStockEnabled},
+      'consultarCatalogo': <String, dynamic>{'enabled': consultarCatalogoEnabled},
+      'generarCotizacion': <String, dynamic>{
+        'enabled': generarCotizacionEnabled,
+        'costoEnvio': generarCotizacionCostoEnvio,
+      },
+      'aplicarDescuento': <String, dynamic>{
+        'enabled': aplicarDescuentoEnabled,
+        'maxPorcentaje': aplicarDescuentoMaxPorcentaje,
+      },
+      'crearPedido': <String, dynamic>{'enabled': crearPedidoEnabled},
+      'escalarAVendedor': <String, dynamic>{
+        'enabled': escalarAVendedorEnabled,
+        'numero': escalarAVendedorNumero,
+        'email': escalarAVendedorEmail,
+      },
     };
   }
 }
@@ -1857,6 +2003,44 @@ class ApiService {
     _cachedConfigAt = null;
     _cachedHealth = null;
     _cachedHealthAt = null;
+  }
+
+  // ─── Products CRUD ──────────────────────────────────────────────────────────
+
+  Future<List<ProductData>> getProducts() async {
+    final List<Map<String, dynamic>> data = await _apiClient.getJsonList('/products');
+    return data.map(ProductData.fromJson).toList();
+  }
+
+  Future<ProductData> createProduct(ProductData product) async {
+    final Map<String, dynamic> data = await _apiClient.postJson(
+      '/products',
+      body: product.toJson(),
+    );
+    return ProductData.fromJson(data);
+  }
+
+  Future<ProductData> updateProduct(String id, ProductData product) async {
+    final Map<String, dynamic> data = await _apiClient.putJson(
+      '/products/$id',
+      body: product.toJson(),
+    );
+    return ProductData.fromJson(data);
+  }
+
+  Future<void> deleteProduct(String id) async {
+    await _apiClient.deleteJson('/products/$id');
+  }
+
+  // ─── Tools Config ────────────────────────────────────────────────────────────
+
+  Future<void> saveToolsConfig(BotToolsConfigData toolsConfig) async {
+    _invalidateConfigCache();
+    await _configRepository.save(<String, dynamic>{
+      'configurations': <String, dynamic>{
+        'tools': toolsConfig.toJson(),
+      },
+    });
   }
 }
 

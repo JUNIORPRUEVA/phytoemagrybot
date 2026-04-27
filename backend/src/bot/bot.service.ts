@@ -7,6 +7,8 @@ import { MemoryService } from '../memory/memory.service';
 import { StoredMessage } from '../memory/memory.types';
 import { BotDecisionAction, BotDecisionIntent, ContactStage } from './bot-decision.types';
 import { BotIntent, BotReplyResult, BotTestReport, BotTestStepResult } from './bot.types';
+import { ToolsService } from '../tools/tools.service';
+import { ToolsExecutor } from '../tools/tools.executor';
 
 interface StructuredProduct {
   id: string;
@@ -30,6 +32,8 @@ export class BotService {
     private readonly companyContextService: CompanyContextService,
     private readonly clientConfigService: ClientConfigService,
     private readonly memoryService: MemoryService,
+    private readonly toolsService: ToolsService,
+    private readonly toolsExecutor: ToolsExecutor,
   ) {}
 
   async processIncomingMessage(
@@ -90,15 +94,35 @@ export class BotService {
       }),
     );
 
-    const aiReply = await this.aiService.generateSimpleReply({
-      openaiKey: config.openaiKey,
-      modelName: config.aiSettings?.modelName,
-      temperature: config.aiSettings?.temperature,
-      maxTokens: config.aiSettings?.maxCompletionTokens,
-      systemPrompt,
-      history,
-      message: normalizedMessage,
-    });
+    const rawToolsConfig = this.asRecord(
+      this.asRecord(config.configurations).tools,
+    );
+    const toolsConfig = this.toolsService.resolveConfig(rawToolsConfig);
+    const openAiTools = this.toolsService.buildOpenAITools(toolsConfig);
+    const hasTools = openAiTools.length > 0;
+
+    const aiReply = hasTools
+      ? await this.aiService.generateReplyWithTools({
+          openaiKey: config.openaiKey,
+          modelName: config.aiSettings?.modelName,
+          temperature: config.aiSettings?.temperature,
+          maxTokens: config.aiSettings?.maxCompletionTokens,
+          systemPrompt,
+          history,
+          message: normalizedMessage,
+          tools: openAiTools,
+          executeToolCall: (toolName, args) =>
+            this.toolsExecutor.execute(toolName, args, normalizedContactId, toolsConfig),
+        })
+      : await this.aiService.generateSimpleReply({
+          openaiKey: config.openaiKey,
+          modelName: config.aiSettings?.modelName,
+          temperature: config.aiSettings?.temperature,
+          maxTokens: config.aiSettings?.maxCompletionTokens,
+          systemPrompt,
+          history,
+          message: normalizedMessage,
+        });
 
     const finalReply = aiReply.content.trim();
 
@@ -218,7 +242,7 @@ export class BotService {
       '[INSTRUCCIONES]',
       instructions || 'Sin instrucciones configuradas.',
       '[PRODUCTOS]',
-      products || 'Catálogo no configurado. No inventes productos.',
+      products || 'Usa la herramienta consultar_catalogo para ver los productos disponibles. No inventes productos si no tienes la información.',
       '[EMPRESA]',
       company || 'Información de empresa no configurada.',
     ];

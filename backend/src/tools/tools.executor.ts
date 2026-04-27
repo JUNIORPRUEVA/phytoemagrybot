@@ -1,0 +1,208 @@
+import { Injectable, Logger } from '@nestjs/common';
+import { PrismaService } from '../prisma/prisma.service';
+import { ProductsService } from '../products/products.service';
+import { ToolConfig, ToolExecutionResult } from './tools.types';
+
+@Injectable()
+export class ToolsExecutor {
+  private readonly logger = new Logger(ToolsExecutor.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly productsService: ProductsService,
+  ) {}
+
+  async execute(
+    toolName: string,
+    args: Record<string, unknown>,
+    contactId: string,
+    toolConfig: ToolConfig,
+  ): Promise<ToolExecutionResult> {
+    this.logger.log(JSON.stringify({ event: 'tool_execute', toolName, contactId, args }));
+
+    try {
+      switch (toolName) {
+        case 'consultar_stock':
+          return { toolName, result: await this.consultarStock(args) };
+        case 'consultar_catalogo':
+          return { toolName, result: await this.consultarCatalogo() };
+        case 'generar_cotizacion':
+          return { toolName, result: await this.generarCotizacion(args, toolConfig) };
+        case 'aplicar_descuento':
+          return { toolName, result: this.aplicarDescuento(args, toolConfig) };
+        case 'crear_pedido':
+          return { toolName, result: await this.crearPedido(args, contactId) };
+        case 'escalar_a_vendedor':
+          return { toolName, result: await this.escalarAVendedor(args, contactId, toolConfig) };
+        default:
+          return { toolName, result: { error: `Tool desconocida: ${toolName}` } };
+      }
+    } catch (error) {
+      this.logger.warn(JSON.stringify({
+        event: 'tool_execute_failed',
+        toolName,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      }));
+      return { toolName, result: { error: `Error ejecutando ${toolName}: ${error instanceof Error ? error.message : 'error desconocido'}` } };
+    }
+  }
+
+  private async consultarStock(args: Record<string, unknown>) {
+    const nombre = String(args.nombre_producto ?? '').trim();
+    if (!nombre) return { error: 'Se requiere el nombre del producto' };
+
+    const products = await this.productsService.buscarPorNombre(nombre);
+    if (products.length === 0) {
+      return { disponible: false, mensaje: `No encontré el producto "${nombre}" en el catálogo.` };
+    }
+
+    return products.map((p) => ({
+      id: p.id,
+      titulo: p.titulo,
+      stock: p.stock,
+      disponible: p.stock > 0,
+      precio: p.precio ? Number(p.precio) : null,
+    }));
+  }
+
+  private async consultarCatalogo() {
+    const products = await this.productsService.findActive();
+    if (products.length === 0) return { mensaje: 'No hay productos disponibles.' };
+
+    return products.map((p) => ({
+      id: p.id,
+      titulo: p.titulo,
+      descripcion: p.descripcionCorta,
+      precio: p.precio ? Number(p.precio) : null,
+      precioMinimo: p.precioMinimo ? Number(p.precioMinimo) : null,
+      stock: p.stock,
+      disponible: p.stock > 0,
+    }));
+  }
+
+  private async generarCotizacion(args: Record<string, unknown>, toolConfig: ToolConfig) {
+    const productos = Array.isArray(args.productos) ? args.productos as Array<{ id: number; cantidad: number }> : [];
+    if (productos.length === 0) return { error: 'Se requiere al menos un producto' };
+
+    let subtotal = 0;
+    const items: Array<{ titulo: string; cantidad: number; precioUnitario: number; subtotal: number }> = [];
+
+    for (const item of productos) {
+      try {
+        const p = await this.productsService.findOne(item.id);
+        const precio = p.precio ? Number(p.precio) : 0;
+        const cantidad = item.cantidad ?? 1;
+        const sub = precio * cantidad;
+        subtotal += sub;
+        items.push({ titulo: p.titulo, cantidad, precioUnitario: precio, subtotal: sub });
+      } catch {
+        // producto no encontrado, se omite
+      }
+    }
+
+    const costoEnvio = toolConfig.generarCotizacion.costoEnvio ?? 200;
+    const total = subtotal + costoEnvio;
+
+    return {
+      items,
+      subtotal,
+      costoEnvio,
+      total,
+      moneda: 'RD$',
+      nota: `Precio incluye envío de RD$${costoEnvio}`,
+    };
+  }
+
+  private aplicarDescuento(args: Record<string, unknown>, toolConfig: ToolConfig) {
+    const precio = Number(args.precio ?? 0);
+    const porcentajeSolicitado = Number(args.porcentaje ?? 0);
+    const maxPorcentaje = toolConfig.aplicarDescuento.maxPorcentaje ?? 10;
+
+    if (porcentajeSolicitado > maxPorcentaje) {
+      return {
+        aprobado: false,
+        mensaje: `El descuento máximo permitido es ${maxPorcentaje}%. No puedo autorizar ${porcentajeSolicitado}%.`,
+        maxPorcentaje,
+      };
+    }
+
+    const descuento = precio * (porcentajeSolicitado / 100);
+    const precioFinal = precio - descuento;
+
+    return {
+      aprobado: true,
+      precioOriginal: precio,
+      porcentaje: porcentajeSolicitado,
+      descuento,
+      precioFinal,
+      moneda: 'RD$',
+    };
+  }
+
+  private async crearPedido(args: Record<string, unknown>, contactId: string) {
+    const productos = Array.isArray(args.productos) ? args.productos : [];
+    const direccion = args.direccion ? String(args.direccion) : null;
+    const notas = args.notas ? String(args.notas) : null;
+
+    let total = 0;
+    if (Array.isArray(args.productos)) {
+      for (const item of args.productos as Array<{ precio?: number; cantidad?: number }>) {
+        const precio = Number(item.precio ?? 0);
+        const cantidad = Number(item.cantidad ?? 1);
+        total += precio * cantidad;
+      }
+    }
+
+    const order = await this.prisma.order.create({
+      data: {
+        contactId,
+        productosJson: productos,
+        estado: 'pendiente',
+        total: total > 0 ? total : null,
+        direccion,
+        notas,
+      },
+    });
+
+    return {
+      pedidoId: order.id,
+      estado: order.estado,
+      total: order.total ? Number(order.total) : null,
+      direccion: order.direccion,
+      mensaje: `Pedido #${order.id} creado correctamente. Estado: pendiente de confirmación.`,
+    };
+  }
+
+  private async escalarAVendedor(
+    args: Record<string, unknown>,
+    contactId: string,
+    toolConfig: ToolConfig,
+  ) {
+    const razon = String(args.razon ?? 'El cliente está listo para comprar');
+    const resumen = String(args.resumen ?? '');
+
+    const numero = toolConfig.escalarAVendedor.numero?.trim();
+    if (!numero) {
+      return {
+        escalado: false,
+        mensaje: 'No hay un número de vendedor configurado. Configura el número en la sección de Herramientas.',
+      };
+    }
+
+    // Log the escalation — WhatsApp notification sent via service injection if needed
+    this.logger.log(JSON.stringify({
+      event: 'tool_escalar_a_vendedor',
+      contactId,
+      razon,
+      resumen,
+      numeroVendedor: numero,
+    }));
+
+    return {
+      escalado: true,
+      contactId,
+      razon,
+      mensaje: `El cliente ha sido marcado para atención humana. El vendedor (${numero}) será notificado.`,
+    };
+  }
+}

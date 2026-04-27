@@ -42,13 +42,19 @@ class _ToolsPageState extends State<ToolsPage> implements ToolsPageStateAccess {
   final TextEditingController _followup3DelayController =
       TextEditingController();
   final TextEditingController _maxFollowupsController = TextEditingController();
+  final TextEditingController _costoEnvioController = TextEditingController();
+  final TextEditingController _maxDescuentoController = TextEditingController();
+  final TextEditingController _vendedorNumeroController = TextEditingController();
+  final TextEditingController _vendedorEmailController = TextEditingController();
 
   bool _isLoading = true;
   bool _isSaving = false;
+  bool _isSavingBotTools = false;
   bool _allowAudioReplies = true;
   bool _followupEnabled = false;
   bool _stopIfUserReply = true;
   ClientConfigData _config = ClientConfigData.empty();
+  BotToolsConfigData _toolsConfig = const BotToolsConfigData();
   String? _loadError;
   _ToolSection? _selectedSection;
 
@@ -68,11 +74,24 @@ class _ToolsPageState extends State<ToolsPage> implements ToolsPageStateAccess {
     _followup2DelayController.dispose();
     _followup3DelayController.dispose();
     _maxFollowupsController.dispose();
+    _costoEnvioController.dispose();
+    _maxDescuentoController.dispose();
+    _vendedorNumeroController.dispose();
+    _vendedorEmailController.dispose();
     super.dispose();
+  }
+
+  void _initBotToolsControllers(BotToolsConfigData cfg) {
+    _costoEnvioController.text = cfg.generarCotizacionCostoEnvio.toStringAsFixed(0);
+    _maxDescuentoController.text = cfg.aplicarDescuentoMaxPorcentaje.toString();
+    _vendedorNumeroController.text = cfg.escalarAVendedorNumero;
+    _vendedorEmailController.text = cfg.escalarAVendedorEmail;
   }
 
   void _applyConfig(ClientConfigData config) {
     _config = config;
+    _toolsConfig = config.toolsConfig;
+    _initBotToolsControllers(config.toolsConfig);
     _openAiKeyController.clear();
     _elevenLabsBaseUrlController.text = config.elevenLabsBaseUrl;
     _audioVoiceIdController.text = config.audioVoiceId;
@@ -273,6 +292,8 @@ class _ToolsPageState extends State<ToolsPage> implements ToolsPageStateAccess {
         return 'Voz del bot';
       case _ToolSection.followup:
         return 'Seguimiento automatico';
+      case _ToolSection.botTools:
+        return 'Herramientas del bot';
     }
   }
 
@@ -311,6 +332,8 @@ class _ToolsPageState extends State<ToolsPage> implements ToolsPageStateAccess {
         return Icons.graphic_eq_rounded;
       case _ToolSection.followup:
         return Icons.schedule_send_rounded;
+      case _ToolSection.botTools:
+        return Icons.build_circle_outlined;
     }
   }
 
@@ -328,6 +351,16 @@ class _ToolsPageState extends State<ToolsPage> implements ToolsPageStateAccess {
         return _allowAudioReplies ? 'Audio activo' : 'Audio apagado';
       case _ToolSection.followup:
         return _followupEnabled ? _followupCadenceLabel() : 'Pausado';
+      case _ToolSection.botTools:
+        final int enabled = <bool>[
+          _toolsConfig.consultarStockEnabled,
+          _toolsConfig.consultarCatalogoEnabled,
+          _toolsConfig.generarCotizacionEnabled,
+          _toolsConfig.aplicarDescuentoEnabled,
+          _toolsConfig.crearPedidoEnabled,
+          _toolsConfig.escalarAVendedorEnabled,
+        ].where((bool e) => e).length;
+        return '$enabled / 6 activas';
     }
   }
 
@@ -353,6 +386,13 @@ class _ToolsPageState extends State<ToolsPage> implements ToolsPageStateAccess {
         description: 'Tiempos y reglas de recontacto.',
         status: _sectionStatus(_ToolSection.followup),
         icon: _sectionIcon(_ToolSection.followup),
+      ),
+      _ToolMenuItemData(
+        section: _ToolSection.botTools,
+        title: _sectionTitle(_ToolSection.botTools),
+        description: 'Function Calling: stock, catalogo, pedidos y mas.',
+        status: _sectionStatus(_ToolSection.botTools),
+        icon: _sectionIcon(_ToolSection.botTools),
       ),
     ];
   }
@@ -403,22 +443,25 @@ class _ToolsPageState extends State<ToolsPage> implements ToolsPageStateAccess {
           _ToolSection.access => _buildAccessSection(isBusy),
           _ToolSection.voice => _buildVoiceSection(isBusy),
           _ToolSection.followup => _buildFollowupSection(isBusy),
+          _ToolSection.botTools => _buildBotToolsSection(),
         },
         const SizedBox(height: 24),
-        Wrap(
-          spacing: 12,
-          runSpacing: 12,
-          children: <Widget>[
-            ElevatedButton(
-              onPressed: isBusy ? null : _saveTools,
-              child: Text(_isSaving ? 'Guardando...' : 'Guardar cambios'),
-            ),
-            OutlinedButton(
-              onPressed: isBusy ? null : _loadConfig,
-              child: const Text('Recargar'),
-            ),
-          ],
-        ),
+        if (section != _ToolSection.botTools) ...<Widget>[
+          Wrap(
+            spacing: 12,
+            runSpacing: 12,
+            children: <Widget>[
+              ElevatedButton(
+                onPressed: isBusy ? null : _saveTools,
+                child: Text(_isSaving ? 'Guardando...' : 'Guardar cambios'),
+              ),
+              OutlinedButton(
+                onPressed: isBusy ? null : _loadConfig,
+                child: const Text('Recargar'),
+              ),
+            ],
+          ),
+        ],
       ],
     );
   }
@@ -528,6 +571,192 @@ class _ToolsPageState extends State<ToolsPage> implements ToolsPageStateAccess {
                   _allowAudioReplies = value;
                 });
               },
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  // ─── Bot Tools Section ─────────────────────────────────────────────────────
+
+  Widget _buildBotToolsSection() {
+    final bool busy = _isSavingBotTools;
+
+    Future<void> saveBotTools() async {
+      final double costoEnvio = double.tryParse(_costoEnvioController.text.trim().replaceAll(',', '.')) ?? _toolsConfig.generarCotizacionCostoEnvio;
+      final int maxPct = int.tryParse(_maxDescuentoController.text.trim()) ?? _toolsConfig.aplicarDescuentoMaxPorcentaje;
+
+      final BotToolsConfigData updated = BotToolsConfigData(
+        consultarStockEnabled: _toolsConfig.consultarStockEnabled,
+        consultarCatalogoEnabled: _toolsConfig.consultarCatalogoEnabled,
+        generarCotizacionEnabled: _toolsConfig.generarCotizacionEnabled,
+        generarCotizacionCostoEnvio: costoEnvio,
+        aplicarDescuentoEnabled: _toolsConfig.aplicarDescuentoEnabled,
+        aplicarDescuentoMaxPorcentaje: maxPct,
+        crearPedidoEnabled: _toolsConfig.crearPedidoEnabled,
+        escalarAVendedorEnabled: _toolsConfig.escalarAVendedorEnabled,
+        escalarAVendedorNumero: _vendedorNumeroController.text.trim(),
+        escalarAVendedorEmail: _vendedorEmailController.text.trim(),
+      );
+
+      setState(() { _isSavingBotTools = true; });
+      try {
+        await widget.apiService.saveToolsConfig(updated);
+        if (!mounted) return;
+        setState(() { _toolsConfig = updated; });
+        widget.onConfigUpdated();
+        _showMessage('Herramientas guardadas.');
+      } catch (error) {
+        if (!mounted) return;
+        _showMessage(error.toString(), isError: true);
+      } finally {
+        if (mounted) setState(() { _isSavingBotTools = false; });
+      }
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        _DetailGroup(
+          title: 'Consultar stock',
+          children: <Widget>[
+            _PlainToggleRow(
+              title: 'Consultar stock de un producto',
+              description: 'El bot puede verificar si un producto tiene disponibilidad.',
+              value: _toolsConfig.consultarStockEnabled,
+              enabled: !busy,
+              onChanged: (bool v) => setState(() => _toolsConfig = BotToolsConfigData(
+                consultarStockEnabled: v, consultarCatalogoEnabled: _toolsConfig.consultarCatalogoEnabled,
+                generarCotizacionEnabled: _toolsConfig.generarCotizacionEnabled, generarCotizacionCostoEnvio: _toolsConfig.generarCotizacionCostoEnvio,
+                aplicarDescuentoEnabled: _toolsConfig.aplicarDescuentoEnabled, aplicarDescuentoMaxPorcentaje: _toolsConfig.aplicarDescuentoMaxPorcentaje,
+                crearPedidoEnabled: _toolsConfig.crearPedidoEnabled, escalarAVendedorEnabled: _toolsConfig.escalarAVendedorEnabled,
+                escalarAVendedorNumero: _toolsConfig.escalarAVendedorNumero, escalarAVendedorEmail: _toolsConfig.escalarAVendedorEmail)),
+            ),
+          ],
+        ),
+        const SizedBox(height: 18),
+        _DetailGroup(
+          title: 'Consultar catalogo',
+          children: <Widget>[
+            _PlainToggleRow(
+              title: 'Ver catalogo completo de productos',
+              description: 'El bot puede listar todos los productos activos con precios.',
+              value: _toolsConfig.consultarCatalogoEnabled,
+              enabled: !busy,
+              onChanged: (bool v) => setState(() => _toolsConfig = BotToolsConfigData(
+                consultarStockEnabled: _toolsConfig.consultarStockEnabled, consultarCatalogoEnabled: v,
+                generarCotizacionEnabled: _toolsConfig.generarCotizacionEnabled, generarCotizacionCostoEnvio: _toolsConfig.generarCotizacionCostoEnvio,
+                aplicarDescuentoEnabled: _toolsConfig.aplicarDescuentoEnabled, aplicarDescuentoMaxPorcentaje: _toolsConfig.aplicarDescuentoMaxPorcentaje,
+                crearPedidoEnabled: _toolsConfig.crearPedidoEnabled, escalarAVendedorEnabled: _toolsConfig.escalarAVendedorEnabled,
+                escalarAVendedorNumero: _toolsConfig.escalarAVendedorNumero, escalarAVendedorEmail: _toolsConfig.escalarAVendedorEmail)),
+            ),
+          ],
+        ),
+        const SizedBox(height: 18),
+        _DetailGroup(
+          title: 'Generar cotizacion',
+          children: <Widget>[
+            _PlainToggleRow(
+              title: 'Calcular precio total con envio',
+              description: 'El bot suma el costo de envio a la orden del cliente.',
+              value: _toolsConfig.generarCotizacionEnabled,
+              enabled: !busy,
+              onChanged: (bool v) => setState(() => _toolsConfig = BotToolsConfigData(
+                consultarStockEnabled: _toolsConfig.consultarStockEnabled, consultarCatalogoEnabled: _toolsConfig.consultarCatalogoEnabled,
+                generarCotizacionEnabled: v, generarCotizacionCostoEnvio: _toolsConfig.generarCotizacionCostoEnvio,
+                aplicarDescuentoEnabled: _toolsConfig.aplicarDescuentoEnabled, aplicarDescuentoMaxPorcentaje: _toolsConfig.aplicarDescuentoMaxPorcentaje,
+                crearPedidoEnabled: _toolsConfig.crearPedidoEnabled, escalarAVendedorEnabled: _toolsConfig.escalarAVendedorEnabled,
+                escalarAVendedorNumero: _toolsConfig.escalarAVendedorNumero, escalarAVendedorEmail: _toolsConfig.escalarAVendedorEmail)),
+            ),
+            _FormFieldBlock(
+              title: 'Costo de envio (RD\$)',
+              description: 'Monto fijo que se suma a cada cotizacion.',
+              field: AppTextField(label: 'Costo de envio', controller: _costoEnvioController,
+                hintText: '200', keyboardType: TextInputType.number, enabled: !busy && _toolsConfig.generarCotizacionEnabled),
+            ),
+          ],
+        ),
+        const SizedBox(height: 18),
+        _DetailGroup(
+          title: 'Aplicar descuento',
+          children: <Widget>[
+            _PlainToggleRow(
+              title: 'Autorizar descuentos',
+              description: 'El bot puede aprobar descuentos hasta un maximo definido.',
+              value: _toolsConfig.aplicarDescuentoEnabled,
+              enabled: !busy,
+              onChanged: (bool v) => setState(() => _toolsConfig = BotToolsConfigData(
+                consultarStockEnabled: _toolsConfig.consultarStockEnabled, consultarCatalogoEnabled: _toolsConfig.consultarCatalogoEnabled,
+                generarCotizacionEnabled: _toolsConfig.generarCotizacionEnabled, generarCotizacionCostoEnvio: _toolsConfig.generarCotizacionCostoEnvio,
+                aplicarDescuentoEnabled: v, aplicarDescuentoMaxPorcentaje: _toolsConfig.aplicarDescuentoMaxPorcentaje,
+                crearPedidoEnabled: _toolsConfig.crearPedidoEnabled, escalarAVendedorEnabled: _toolsConfig.escalarAVendedorEnabled,
+                escalarAVendedorNumero: _toolsConfig.escalarAVendedorNumero, escalarAVendedorEmail: _toolsConfig.escalarAVendedorEmail)),
+            ),
+            _FormFieldBlock(
+              title: 'Descuento maximo (%)',
+              description: 'El bot rechazara cualquier descuento mayor a este valor.',
+              field: AppTextField(label: 'Porcentaje maximo', controller: _maxDescuentoController,
+                hintText: '10', keyboardType: TextInputType.number, enabled: !busy && _toolsConfig.aplicarDescuentoEnabled),
+            ),
+          ],
+        ),
+        const SizedBox(height: 18),
+        _DetailGroup(
+          title: 'Crear pedido',
+          children: <Widget>[
+            _PlainToggleRow(
+              title: 'Registrar pedidos automaticamente',
+              description: 'Cuando el cliente quiera comprar, el bot crea la orden en la base de datos.',
+              value: _toolsConfig.crearPedidoEnabled,
+              enabled: !busy,
+              onChanged: (bool v) => setState(() => _toolsConfig = BotToolsConfigData(
+                consultarStockEnabled: _toolsConfig.consultarStockEnabled, consultarCatalogoEnabled: _toolsConfig.consultarCatalogoEnabled,
+                generarCotizacionEnabled: _toolsConfig.generarCotizacionEnabled, generarCotizacionCostoEnvio: _toolsConfig.generarCotizacionCostoEnvio,
+                aplicarDescuentoEnabled: _toolsConfig.aplicarDescuentoEnabled, aplicarDescuentoMaxPorcentaje: _toolsConfig.aplicarDescuentoMaxPorcentaje,
+                crearPedidoEnabled: v, escalarAVendedorEnabled: _toolsConfig.escalarAVendedorEnabled,
+                escalarAVendedorNumero: _toolsConfig.escalarAVendedorNumero, escalarAVendedorEmail: _toolsConfig.escalarAVendedorEmail)),
+            ),
+          ],
+        ),
+        const SizedBox(height: 18),
+        _DetailGroup(
+          title: 'Escalar a vendedor',
+          children: <Widget>[
+            _PlainToggleRow(
+              title: 'Transferir conversacion al vendedor',
+              description: 'El bot notifica al equipo cuando no puede cerrar la venta.',
+              value: _toolsConfig.escalarAVendedorEnabled,
+              enabled: !busy,
+              onChanged: (bool v) => setState(() => _toolsConfig = BotToolsConfigData(
+                consultarStockEnabled: _toolsConfig.consultarStockEnabled, consultarCatalogoEnabled: _toolsConfig.consultarCatalogoEnabled,
+                generarCotizacionEnabled: _toolsConfig.generarCotizacionEnabled, generarCotizacionCostoEnvio: _toolsConfig.generarCotizacionCostoEnvio,
+                aplicarDescuentoEnabled: _toolsConfig.aplicarDescuentoEnabled, aplicarDescuentoMaxPorcentaje: _toolsConfig.aplicarDescuentoMaxPorcentaje,
+                crearPedidoEnabled: _toolsConfig.crearPedidoEnabled, escalarAVendedorEnabled: v,
+                escalarAVendedorNumero: _toolsConfig.escalarAVendedorNumero, escalarAVendedorEmail: _toolsConfig.escalarAVendedorEmail)),
+            ),
+            _FormFieldBlock(
+              title: 'Numero de vendedor',
+              description: 'WhatsApp del vendedor para notificaciones.',
+              field: AppTextField(label: 'Numero', controller: _vendedorNumeroController,
+                hintText: '+18491234567', enabled: !busy && _toolsConfig.escalarAVendedorEnabled),
+            ),
+            _FormFieldBlock(
+              title: 'Email del vendedor',
+              description: 'Email alternativo para escalacion.',
+              field: AppTextField(label: 'Email', controller: _vendedorEmailController,
+                hintText: 'ventas@empresa.com', enabled: !busy && _toolsConfig.escalarAVendedorEnabled),
+            ),
+          ],
+        ),
+        const SizedBox(height: 24),
+        Wrap(
+          spacing: 12,
+          runSpacing: 12,
+          children: <Widget>[
+            ElevatedButton(
+              onPressed: busy ? null : saveBotTools,
+              child: Text(busy ? 'Guardando...' : 'Guardar herramientas'),
             ),
           ],
         ),
@@ -664,7 +893,7 @@ class _ToolsPageState extends State<ToolsPage> implements ToolsPageStateAccess {
   }
 }
 
-enum _ToolSection { access, voice, followup }
+enum _ToolSection { access, voice, followup, botTools }
 
 class _ToolMenuItemData {
   const _ToolMenuItemData({

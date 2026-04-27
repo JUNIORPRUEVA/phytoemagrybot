@@ -123,6 +123,21 @@ class ApiClient {
     );
   }
 
+  Future<Map<String, dynamic>> putJson(
+    String path, {
+    Map<String, dynamic>? body,
+    bool retry = true,
+  }) {
+    return _sendForMap(
+      () => _client.put(
+        _buildUri(path),
+        headers: _jsonHeaders,
+        body: jsonEncode(body ?? <String, dynamic>{}),
+      ),
+      retry: retry,
+    );
+  }
+
   Future<Map<String, dynamic>> deleteJson(String path, {bool retry = true}) {
     return _sendForMap(
       () => _client.delete(_buildUri(path), headers: _jsonHeaders),

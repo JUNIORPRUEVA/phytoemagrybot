@@ -9,6 +9,7 @@ import {
   AssistantReply,
   AssistantResponseCandidate,
   GenerateReplyParams,
+  GenerateReplyWithToolsParams,
   SimpleGenerateReplyParams,
 } from './ai.types';
 
@@ -59,6 +60,98 @@ export class AiService {
       return { type: 'text', content };
     } catch (error) {
       if (error instanceof InternalServerErrorException) throw error;
+      throw new BadGatewayException('OpenAI request failed');
+    }
+  }
+
+  /**
+   * Reply with OpenAI Function Calling. Executes up to 3 tool-call rounds.
+   */
+  async generateReplyWithTools(params: GenerateReplyWithToolsParams): Promise<AssistantReply> {
+    if (!params.openaiKey.trim()) {
+      throw new InternalServerErrorException('OpenAI API key is not configured');
+    }
+
+    const openai = new OpenAI({ apiKey: params.openaiKey });
+    const modelName = params.modelName?.trim() || process.env.OPENAI_MODEL?.trim() || 'gpt-4o-mini';
+    const temperature = params.temperature ?? 0.4;
+    const maxTokens = Math.max(
+      params.maxTokens ?? AiService.DEFAULT_MAX_TOKENS,
+      AiService.DEFAULT_MAX_TOKENS,
+    );
+
+    const messages: OpenAI.ChatCompletionMessageParam[] = [
+      { role: 'system', content: params.systemPrompt },
+      ...params.history.slice(-AiService.MEMORY_WINDOW).map((m) => ({
+        role: m.role as 'user' | 'assistant',
+        content: m.content.slice(0, 500),
+      })),
+      { role: 'user', content: params.message.slice(0, 500) },
+    ];
+
+    const toolsUsed: string[] = [];
+    const MAX_ROUNDS = 3;
+
+    try {
+      for (let round = 0; round < MAX_ROUNDS; round++) {
+        const completion = await openai.chat.completions.create({
+          model: modelName,
+          temperature,
+          max_completion_tokens: maxTokens,
+          messages,
+          tools: params.tools,
+          tool_choice: 'auto',
+        });
+
+        const choice = completion.choices[0];
+        if (!choice) throw new InternalServerErrorException('OpenAI returned no choices');
+
+        const assistantMessage = choice.message;
+        messages.push(assistantMessage as OpenAI.ChatCompletionMessageParam);
+
+        // No tool calls — final answer
+        if (!assistantMessage.tool_calls || assistantMessage.tool_calls.length === 0) {
+          const content = assistantMessage.content?.trim();
+          if (!content) throw new InternalServerErrorException('OpenAI returned an empty response');
+          return { type: 'text', content, toolsUsed };
+        }
+
+        // Execute each tool call
+        for (const toolCall of assistantMessage.tool_calls) {
+          const fnName = toolCall.function.name;
+          let args: Record<string, unknown> = {};
+          try {
+            args = JSON.parse(toolCall.function.arguments || '{}') as Record<string, unknown>;
+          } catch {
+            // keep empty args
+          }
+
+          toolsUsed.push(fnName);
+          const result = await params.executeToolCall(fnName, args);
+
+          messages.push({
+            role: 'tool',
+            tool_call_id: toolCall.id,
+            content: JSON.stringify(result),
+          });
+        }
+      }
+
+      // Fallback: ask for a final answer without tools
+      const fallback = await openai.chat.completions.create({
+        model: modelName,
+        temperature,
+        max_completion_tokens: maxTokens,
+        messages,
+      });
+      const content = fallback.choices[0]?.message?.content?.trim();
+      if (!content) throw new InternalServerErrorException('OpenAI returned an empty response');
+      return { type: 'text', content, toolsUsed };
+    } catch (error) {
+      if (
+        error instanceof InternalServerErrorException ||
+        error instanceof BadGatewayException
+      ) throw error;
       throw new BadGatewayException('OpenAI request failed');
     }
   }

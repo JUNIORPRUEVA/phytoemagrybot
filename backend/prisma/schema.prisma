@@ -256,3 +256,37 @@ model MediaFile {
 
   @@map("media_files")
 }
+
+model Product {
+  id                   Int      @id @default(autoincrement())
+  titulo               String
+  descripcionCorta     String?  @map("descripcion_corta")
+  descripcionCompleta  String?  @map("descripcion_completa")
+  precio               Decimal? @db.Decimal(10, 2)
+  precioMinimo         Decimal? @map("precio_minimo") @db.Decimal(10, 2)
+  stock                Int      @default(0)
+  activo               Boolean  @default(true)
+  imagenesJson         Json     @default("[]") @map("imagenes_json")
+  videosJson           Json     @default("[]") @map("videos_json")
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @updatedAt @map("updated_at")
+
+  @@index([activo])
+  @@map("products")
+}
+
+model Order {
+  id          Int      @id @default(autoincrement())
+  contactId   String   @map("contact_id")
+  productosJson Json   @map("productos_json")
+  estado      String   @default("pendiente")
+  total       Decimal? @db.Decimal(10, 2)
+  direccion   String?
+  notas       String?
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@index([contactId])
+  @@index([estado])
+  @@map("orders")
+}

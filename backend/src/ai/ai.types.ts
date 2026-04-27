@@ -1,6 +1,7 @@
 import { AppConfigRecord } from '../config/config.types';
 import { StoredMessage } from '../memory/memory.types';
 import { BotDecisionAction, BotDecisionIntent } from '../bot/bot-decision.types';
+import { OpenAITool, ToolExecutionResult } from '../tools/tools.types';
 
 export type AssistantReplyType = 'text' | 'audio';
 export type AssistantResponseStyle = 'brief' | 'balanced' | 'detailed';
@@ -14,6 +15,7 @@ export type AssistantReplyObjective =
 export interface AssistantReply {
   type: AssistantReplyType;
   content: string;
+  toolsUsed?: string[];
 }
 
 export interface AssistantResponseCandidate {
@@ -52,4 +54,10 @@ export interface SimpleGenerateReplyParams {
   systemPrompt: string;
   history: StoredMessage[];
   message: string;
+}
+
+/** Used by BotService when tools are enabled. */
+export interface GenerateReplyWithToolsParams extends SimpleGenerateReplyParams {
+  tools: OpenAITool[];
+  executeToolCall: (toolName: string, args: Record<string, unknown>) => Promise<ToolExecutionResult>;
 }

@@ -12,7 +12,9 @@ import { HealthController } from './health.controller';
 import { MediaModule } from './media/media.module';
 import { MemoryModule } from './memory/memory.module';
 import { PrismaModule } from './prisma/prisma.module';
+import { ProductsModule } from './products/products.module';
 import { RedisModule } from './redis/redis.module';
+import { ToolsModule } from './tools/tools.module';
 import { UsersModule } from './users/users.module';
 import { WhatsAppModule } from './whatsapp/whatsapp.module';
 
@@ -35,6 +37,8 @@ import { WhatsAppModule } from './whatsapp/whatsapp.module';
     MediaModule,
     AiModule,
     BotModule,
+    ProductsModule,
+    ToolsModule,
     WhatsAppModule,
   ],
   controllers: [HealthController],

@@ -4,6 +4,7 @@ import { BotConfigModule } from '../bot-config/bot-config.module';
 import { CompanyContextModule } from '../company-context/company-context.module';
 import { ClientConfigModule } from '../config/config.module';
 import { MemoryModule } from '../memory/memory.module';
+import { ToolsModule } from '../tools/tools.module';
 import { BotController } from './bot.controller';
 import { BotService } from './bot.service';
 
@@ -14,6 +15,7 @@ import { BotService } from './bot.service';
     BotConfigModule,
     CompanyContextModule,
     MemoryModule,
+    ToolsModule,
   ],
   controllers: [BotController],
   providers: [BotService],
