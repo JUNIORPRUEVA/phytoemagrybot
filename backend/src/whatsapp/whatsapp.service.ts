@@ -846,6 +846,11 @@ export class WhatsAppService implements OnModuleInit {
     const spamGroupWindowMs = resolved.config.botSettings?.spamGroupWindowMs ?? 2000;
 
     if (incoming.type === 'text') {
+      // Fire "composing" presence IMMEDIATELY — before the grouping window delay
+      // so the user sees the typing indicator right away, not seconds later.
+      const earlyPresenceTo = incoming.outboundAddress || `${incoming.number}@s.whatsapp.net`;
+      this.sendPresence(resolved, earlyPresenceTo, 'composing').catch(() => undefined);
+
       await this.redisService.appendGroupedMessage(
         incoming.number,
         incoming.message,
