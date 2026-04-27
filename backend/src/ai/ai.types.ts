@@ -23,6 +23,7 @@ export interface AssistantResponseCandidate {
   type?: AssistantReplyType;
 }
 
+/** Used by FollowupService (legacy path). */
 export interface GenerateReplyParams {
   config: AppConfigRecord;
   fullPrompt: string;
@@ -40,4 +41,15 @@ export interface GenerateReplyParams {
   regenerationInstruction?: string;
   candidateCount?: number;
   thinkingInstruction?: string;
+}
+
+/** Used by BotService (simple 3-module path). */
+export interface SimpleGenerateReplyParams {
+  openaiKey: string;
+  modelName?: string;
+  temperature?: number;
+  maxTokens?: number;
+  systemPrompt: string;
+  history: StoredMessage[];
+  message: string;
 }
