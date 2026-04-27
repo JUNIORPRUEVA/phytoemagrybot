@@ -506,6 +506,7 @@ export class WhatsAppService implements OnModuleInit {
       // delay: 30000 = show the indicator for up to 30 s.
       // WhatsApp automatically clears it the moment the real message lands,
       // so the indicator is always dismissed at the right time.
+      // Use a 5s timeout so slow/unavailable cloud endpoints fail fast.
       await this.createEvolutionClient(resolved.whatsapp).post(
         `/chat/sendPresence/${instanceName}`,
         {
@@ -513,6 +514,7 @@ export class WhatsAppService implements OnModuleInit {
           presence,
           delay: 30000,
         },
+        { timeout: 5000 },
       );
 
       this.logger.log(
@@ -523,18 +525,9 @@ export class WhatsAppService implements OnModuleInit {
           instanceName,
         }),
       );
-    } catch (error) {
-      // Presence is best-effort — never block the reply on failure, but log for debugging
-      this.logger.warn(
-        JSON.stringify({
-          event: 'whatsapp_presence_failed',
-          presence,
-          to,
-          error: error instanceof Error ? error.message : 'Unknown error',
-          status: axios.isAxiosError(error) ? (error.response?.status ?? null) : null,
-          data: axios.isAxiosError(error) ? (error.response?.data ?? null) : null,
-        }),
-      );
+    } catch {
+      // Presence is best-effort — silently ignore all failures so they
+      // never pollute logs or slow down the reply pipeline.
     }
   }
 
