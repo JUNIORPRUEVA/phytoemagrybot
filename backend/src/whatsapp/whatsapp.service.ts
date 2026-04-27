@@ -475,6 +475,35 @@ export class WhatsAppService implements OnModuleInit {
     };
   }
 
+  /**
+   * Sends a WhatsApp presence indicator to the contact.
+   * presence: 'composing' → "escribiendo..." (typing)
+   * presence: 'recording' → "grabando audio..." (recording)
+   * Errors are silently swallowed so a presence failure never blocks a reply.
+   */
+  private async sendPresence(
+    resolved: ResolvedWhatsAppClient,
+    to: string,
+    presence: 'composing' | 'recording',
+  ): Promise<void> {
+    try {
+      const instanceName = this.getRequiredInstanceName(resolved.whatsapp);
+      const finalJid = this.getRequiredOutboundAddress(to);
+      await this.createEvolutionClient(resolved.whatsapp).post(
+        `/chat/sendPresence/${instanceName}`,
+        {
+          number: finalJid,
+          options: {
+            presence,
+            delay: 1200,
+          },
+        },
+      );
+    } catch {
+      // Presence is best-effort — never block the reply on failure
+    }
+  }
+
   async sendText(
     resolved: ResolvedWhatsAppClient,
     to: string,
@@ -1050,6 +1079,10 @@ export class WhatsAppService implements OnModuleInit {
     this.logDeliveryStage('ai_processing_started', diagnostic);
     const incomingAudioStreak = await this.updateIncomingAudioStreak(contactId, messageType);
     const incomingColdStreak = await this.updateIncomingColdStreak(contactId, message);
+
+    // Show "typing..." presence while the bot processes and writes the response
+    this.sendPresence(resolved, effectiveOutboundAddress, 'composing').catch(() => undefined);
+
     let botReply: Awaited<ReturnType<BotService['processIncomingMessage']>>;
     try {
       botReply = await this.botService.processIncomingMessage(contactId, message, {
@@ -1243,6 +1276,8 @@ export class WhatsAppService implements OnModuleInit {
         sendAs,
         message: replyToSend,
       });
+      // Show "recording audio..." presence before sending the voice note
+      this.sendPresence(resolved, effectiveOutboundAddress, 'recording').catch(() => undefined);
       this.logDeliveryStage('evolution_send_attempt', diagnostic, {
         sendAs,
       });
