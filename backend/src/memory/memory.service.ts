@@ -1007,24 +1007,6 @@ export class MemoryService implements OnModuleInit {
     return null;
   }
 
-  private extractStatus(normalized: string): ClientStatus | null {
-    if (
-      ['ya compre', 'ya compré', 'ya pague', 'ya pagué', 'soy cliente', 'me llego', 'me llegó']
-        .some((keyword) => normalized.includes(keyword))
-    ) {
-      return 'cliente';
-    }
-
-    if (
-      ['precio', 'cuanto cuesta', 'cuánto cuesta', 'lo quiero', 'comprar', 'pedido', 'resultado', 'funciona']
-        .some((keyword) => normalized.includes(keyword))
-    ) {
-      return 'interesado';
-    }
-
-    return null;
-  }
-
   /**
    * Extract personal data (phone, address, location, preferences) from a message.
    */
