@@ -834,7 +834,7 @@ export class WhatsAppService implements OnModuleInit {
 
     await this.followupService.registerUserReply(incoming.number);
 
-    const spamGroupWindowMs = resolved.config.botSettings?.spamGroupWindowMs ?? 2000;
+    const spamGroupWindowMs = resolved.config.botSettings?.spamGroupWindowMs ?? 800;
 
     if (incoming.type === 'text') {
       // Fire "composing" presence IMMEDIATELY — before the grouping window delay
@@ -870,6 +870,13 @@ export class WhatsAppService implements OnModuleInit {
     const groupedMessage = await this.redisService.consumeGroupedMessage(contactId);
 
     if (!groupedMessage?.message.trim()) {
+      this.logger.warn(
+        JSON.stringify({
+          event: 'grouped_message_flush_empty',
+          contactId,
+          note: 'message was null or empty when flush fired — possible Redis TTL expiry',
+        }),
+      );
       return;
     }
 
