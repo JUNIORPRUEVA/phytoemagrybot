@@ -310,6 +310,16 @@ export class BotService {
     const rules = this.asStringList(instructions.rules);
     const salesPrompts = this.asRecord(instructions.salesPrompts);
 
+    // Prompt sessions configured from the Prompts page (configurations.prompts)
+    const prompts = this.asRecord(configurations.prompts);
+    const greetingPrompt = this.asString(prompts.greeting);
+    const companyInfoPrompt = this.asString(prompts.companyInfo);
+    const productInfoPrompt = this.asString(prompts.productInfo);
+    const salesGuidelinesPrompt = this.asString(prompts.salesGuidelines);
+    const objectionHandlingPrompt = this.asString(prompts.objectionHandling);
+    const closingPrompt = this.asString(prompts.closingPrompt);
+    const supportPrompt = this.asString(prompts.supportPrompt);
+
     const basePrompt = [config.promptBase, this.botConfigService.getFullPrompt(botConfig)]
       .map((s) => s.trim())
       .filter(Boolean)
@@ -318,6 +328,7 @@ export class BotService {
     const lines: string[] = [];
     if (basePrompt) lines.push(basePrompt);
 
+    // Identity fields from configurations.instructions.identity
     const identityFields = [
       this.asString(identity.assistantName) ? 'Nombre: ' + this.asString(identity.assistantName) : '',
       this.asString(identity.role) ? 'Rol: ' + this.asString(identity.role) : '',
@@ -331,10 +342,12 @@ export class BotService {
 
     if (identityFields.length > 0) lines.push(identityFields.join('\n'));
 
+    // Rules from configurations.instructions.rules
     if (rules.length > 0) {
       lines.push('Reglas:\n' + rules.map((r) => '- ' + r).join('\n'));
     }
 
+    // Sales prompts from configurations.instructions.salesPrompts
     const salesFields = [
       this.asString(salesPrompts.opening) ? 'Apertura: ' + this.asString(salesPrompts.opening) : '',
       this.asString(salesPrompts.qualification) ? 'Calificacion: ' + this.asString(salesPrompts.qualification) : '',
@@ -347,6 +360,17 @@ export class BotService {
     if (salesFields.length > 0) {
       lines.push('Ventas:\n' + salesFields.join('\n'));
     }
+
+    // Prompt sessions from the Prompts page (configurations.prompts) — these are
+    // the most important instructions; every non-empty session is injected verbatim
+    // so the bot fully follows each configured section.
+    if (greetingPrompt) lines.push('[SALUDO]\n' + greetingPrompt);
+    if (companyInfoPrompt) lines.push('[EMPRESA - INSTRUCCIONES]\n' + companyInfoPrompt);
+    if (productInfoPrompt) lines.push('[PRODUCTOS - INSTRUCCIONES]\n' + productInfoPrompt);
+    if (salesGuidelinesPrompt) lines.push('[VENTAS Y CONVERSION]\n' + salesGuidelinesPrompt);
+    if (objectionHandlingPrompt) lines.push('[MANEJO DE OBJECIONES]\n' + objectionHandlingPrompt);
+    if (closingPrompt) lines.push('[CIERRE]\n' + closingPrompt);
+    if (supportPrompt) lines.push('[SOPORTE Y POSTVENTA]\n' + supportPrompt);
 
     return lines.join('\n\n');
   }
