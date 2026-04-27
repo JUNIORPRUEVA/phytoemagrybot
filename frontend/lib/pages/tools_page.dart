@@ -1,3 +1,6 @@
+import 'dart:typed_data';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
 import '../services/api_service.dart';
@@ -63,17 +66,13 @@ class _ToolsPageState extends State<ToolsPage> implements ToolsPageStateAccess {
   List<ProductData> _products = const <ProductData>[];
   bool _isLoadingProducts = false;
   String? _productsError;
-  bool _isSavingProduct = false;
   String? _editingProductId;
-  bool _activoEdit = true;
   final TextEditingController _prodTituloCtrl = TextEditingController();
   final TextEditingController _prodDescCortaCtrl = TextEditingController();
   final TextEditingController _prodDescCompletaCtrl = TextEditingController();
   final TextEditingController _prodPrecioCtrl = TextEditingController();
   final TextEditingController _prodPrecioMinCtrl = TextEditingController();
   final TextEditingController _prodStockCtrl = TextEditingController();
-  final TextEditingController _prodImagenesCtrl = TextEditingController();
-  final TextEditingController _prodVideosCtrl = TextEditingController();
 
   @override
   void initState() {
@@ -101,8 +100,6 @@ class _ToolsPageState extends State<ToolsPage> implements ToolsPageStateAccess {
     _prodPrecioCtrl.dispose();
     _prodPrecioMinCtrl.dispose();
     _prodStockCtrl.dispose();
-    _prodImagenesCtrl.dispose();
-    _prodVideosCtrl.dispose();
     super.dispose();
   }
 
@@ -148,23 +145,14 @@ class _ToolsPageState extends State<ToolsPage> implements ToolsPageStateAccess {
     }
   }
 
-  List<String> _splitUrls(String text) => text
-      .split(RegExp(r'[\n,]'))
-      .map((String s) => s.trim())
-      .where((String s) => s.isNotEmpty)
-      .toList();
-
   void _openProductSheet([ProductData? existing]) {
     _editingProductId = existing?.id;
-    _activoEdit = existing?.activo ?? true;
     _prodTituloCtrl.text = existing?.titulo ?? '';
     _prodDescCortaCtrl.text = existing?.descripcionCorta ?? '';
     _prodDescCompletaCtrl.text = existing?.descripcionCompleta ?? '';
     _prodPrecioCtrl.text = existing?.precio?.toStringAsFixed(0) ?? '';
     _prodPrecioMinCtrl.text = existing?.precioMinimo?.toStringAsFixed(0) ?? '';
     _prodStockCtrl.text = (existing?.stock ?? 0).toString();
-    _prodImagenesCtrl.text = (existing?.imagenesJson ?? <String>[]).join('\n');
-    _prodVideosCtrl.text = (existing?.videosJson ?? <String>[]).join('\n');
 
     showModalBottomSheet<void>(
       context: context,
@@ -177,24 +165,28 @@ class _ToolsPageState extends State<ToolsPage> implements ToolsPageStateAccess {
         precioCtrl: _prodPrecioCtrl,
         precioMinCtrl: _prodPrecioMinCtrl,
         stockCtrl: _prodStockCtrl,
-        imagenesCtrl: _prodImagenesCtrl,
-        videosCtrl: _prodVideosCtrl,
-        activo: _activoEdit,
-        onActivoChanged: (bool v) => setState(() { _activoEdit = v; }),
+        initialImages: existing?.imagenesJson ?? <String>[],
+        initialVideos: existing?.videosJson ?? <String>[],
+        initialActivo: existing?.activo ?? true,
         isEditing: _editingProductId != null,
-        isSaving: _isSavingProduct,
-        onSave: () => _saveProduct(sheetCtx),
+        apiService: widget.apiService,
+        onSave: (List<String> images, List<String> videos, bool activo) =>
+            _saveProduct(sheetCtx, images, videos, activo),
       ),
     );
   }
 
-  Future<void> _saveProduct(BuildContext sheetCtx) async {
+  Future<void> _saveProduct(
+    BuildContext sheetCtx,
+    List<String> images,
+    List<String> videos,
+    bool activo,
+  ) async {
     final String titulo = _prodTituloCtrl.text.trim();
     if (titulo.isEmpty) {
       _showMessage('El titulo del producto es obligatorio.', isError: true);
       return;
     }
-    setState(() { _isSavingProduct = true; });
     try {
       final ProductData dto = ProductData(
         id: _editingProductId ?? '',
@@ -204,9 +196,9 @@ class _ToolsPageState extends State<ToolsPage> implements ToolsPageStateAccess {
         precio: double.tryParse(_prodPrecioCtrl.text.trim()),
         precioMinimo: double.tryParse(_prodPrecioMinCtrl.text.trim()),
         stock: int.tryParse(_prodStockCtrl.text.trim()) ?? 0,
-        activo: _activoEdit,
-        imagenesJson: _splitUrls(_prodImagenesCtrl.text),
-        videosJson: _splitUrls(_prodVideosCtrl.text),
+        activo: activo,
+        imagenesJson: images,
+        videosJson: videos,
       );
       if (_editingProductId != null) {
         await widget.apiService.updateProduct(_editingProductId!, dto);
@@ -221,8 +213,6 @@ class _ToolsPageState extends State<ToolsPage> implements ToolsPageStateAccess {
     } catch (error) {
       if (!mounted) return;
       _showMessage(error.toString().replaceFirst('Exception: ', ''), isError: true);
-    } finally {
-      if (mounted) setState(() { _isSavingProduct = false; });
     }
   }
 
@@ -929,133 +919,237 @@ class _ToolsPageState extends State<ToolsPage> implements ToolsPageStateAccess {
   }
 
   Widget _buildProductsSection() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+    return Stack(
       children: <Widget>[
-        Row(
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
-            Expanded(
-              child: Text(
-                _isLoadingProducts
-                    ? 'Cargando...'
-                    : '${_products.length} registrados',
-                style: const TextStyle(
-                    color: Color(0xFF64748B), fontSize: 13, fontWeight: FontWeight.w600),
-              ),
-            ),
-            FilledButton.icon(
-              onPressed: _isLoadingProducts ? null : () => _openProductSheet(),
-              icon: const Icon(Icons.add_rounded, size: 18),
-              label: const Text('Agregar'),
-              style: FilledButton.styleFrom(backgroundColor: const Color(0xFF111827)),
-            ),
-          ],
-        ),
-        if (_productsError != null) ...<Widget>[
-          const SizedBox(height: 12),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              color: const Color(0xFFFFF1F2),
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: const Color(0xFFFDA4AF)),
-            ),
-            child: Text(_productsError!, style: const TextStyle(color: Color(0xFF9F1239))),
-          ),
-        ],
-        const SizedBox(height: 14),
-        if (_isLoadingProducts)
-          const Center(child: Padding(padding: EdgeInsets.all(24), child: CircularProgressIndicator()))
-        else if (_products.isEmpty)
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: const Color(0xFFE2E8F0)),
-            ),
-            child: const Text(
-              'Todavia no hay productos. Pulsa «Agregar» para crear el primero.',
-              style: TextStyle(color: Color(0xFF64748B), height: 1.5),
-            ),
-          )
-        else
-          ..._products.map((ProductData p) => Padding(
-            padding: const EdgeInsets.only(bottom: 10),
-            child: Container(
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(18),
-                border: Border.all(color: const Color(0xFFE2E8F0)),
-              ),
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-              child: Row(
-                children: <Widget>[
-                  Container(
-                    width: 10,
-                    height: 10,
-                    margin: const EdgeInsets.only(right: 12, top: 2),
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: p.activo ? const Color(0xFF16A34A) : const Color(0xFFCBD5E1),
-                    ),
+            Row(
+              children: <Widget>[
+                Expanded(
+                  child: Text(
+                    _isLoadingProducts
+                        ? 'Cargando catalogo...'
+                        : '${_products.length} producto${_products.length == 1 ? '' : 's'}',
+                    style: const TextStyle(
+                        color: Color(0xFF64748B), fontSize: 13, fontWeight: FontWeight.w600),
                   ),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: <Widget>[
-                        Text(p.titulo,
-                            style: const TextStyle(fontWeight: FontWeight.w700, color: Color(0xFF0F172A))),
-                        if (p.descripcionCorta.isNotEmpty)
-                          Text(p.descripcionCorta,
-                              style: const TextStyle(fontSize: 12, color: Color(0xFF64748B)),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis),
-                        const SizedBox(height: 4),
-                        Wrap(
-                          spacing: 10,
-                          children: <Widget>[
-                            if (p.precio != null)
-                              Text(
-                                'RD\$${p.precio!.toStringAsFixed(0)}',
-                                style: const TextStyle(
-                                    fontSize: 12, color: Color(0xFF2563EB), fontWeight: FontWeight.w600),
-                              ),
-                            Text('Stock: ${p.stock}',
-                                style: const TextStyle(fontSize: 12, color: Color(0xFF64748B))),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.refresh_rounded, size: 20),
+                  color: const Color(0xFF64748B),
+                  tooltip: 'Recargar',
+                  onPressed: _isLoadingProducts ? null : _loadProducts,
+                ),
+              ],
+            ),
+            if (_productsError != null) ...<Widget>[
+              const SizedBox(height: 8),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFFF1F2),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: const Color(0xFFFDA4AF)),
+                ),
+                child: Row(
+                  children: <Widget>[
+                    const Icon(Icons.error_outline_rounded, color: Color(0xFF9F1239), size: 18),
+                    const SizedBox(width: 8),
+                    Expanded(child: Text(_productsError!, style: const TextStyle(color: Color(0xFF9F1239), fontSize: 13))),
+                  ],
+                ),
+              ),
+            ],
+            const SizedBox(height: 12),
+            if (_isLoadingProducts)
+              const Center(child: Padding(padding: EdgeInsets.symmetric(vertical: 40), child: CircularProgressIndicator()))
+            else if (_products.isEmpty)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 32),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: const Color(0xFFE2E8F0)),
+                ),
+                child: Column(
+                  children: <Widget>[
+                    Icon(Icons.inventory_2_outlined, size: 40, color: Colors.grey.shade300),
+                    const SizedBox(height: 12),
+                    const Text(
+                      'Sin productos aun',
+                      style: TextStyle(fontWeight: FontWeight.w700, color: Color(0xFF0F172A), fontSize: 15),
+                    ),
+                    const SizedBox(height: 4),
+                    const Text(
+                      'Toca el boton + para agregar el primero al catalogo.',
+                      style: TextStyle(color: Color(0xFF64748B), fontSize: 13, height: 1.5),
+                      textAlign: TextAlign.center,
+                    ),
+                  ],
+                ),
+              )
+            else
+              ..._products.map((ProductData p) {
+                final String? thumb = p.imagenesJson.isNotEmpty ? p.imagenesJson.first : null;
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: Material(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(20),
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(20),
+                      onTap: () => _openProductSheet(p),
+                      child: Container(
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(color: const Color(0xFFE2E8F0)),
+                          boxShadow: <BoxShadow>[
+                            BoxShadow(
+                              color: Colors.black.withValues(alpha: 0.04),
+                              blurRadius: 8,
+                              offset: const Offset(0, 2),
+                            ),
                           ],
                         ),
-                      ],
+                        child: Row(
+                          children: <Widget>[
+                            // Thumbnail / color stripe
+                            ClipRRect(
+                              borderRadius: const BorderRadius.horizontal(left: Radius.circular(20)),
+                              child: thumb != null
+                                  ? Image.network(
+                                      thumb,
+                                      width: 72,
+                                      height: 80,
+                                      fit: BoxFit.cover,
+                                      errorBuilder: (_, __, ___) => _ProductPlaceholder(active: p.activo),
+                                    )
+                                  : _ProductPlaceholder(active: p.activo),
+                            ),
+                            // Content
+                            Expanded(
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: <Widget>[
+                                    Row(
+                                      children: <Widget>[
+                                        Expanded(
+                                          child: Text(
+                                            p.titulo,
+                                            style: const TextStyle(
+                                                fontWeight: FontWeight.w700,
+                                                color: Color(0xFF0F172A),
+                                                fontSize: 14),
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                        ),
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                                          decoration: BoxDecoration(
+                                            color: p.activo
+                                                ? const Color(0xFFDCFCE7)
+                                                : const Color(0xFFF1F5F9),
+                                            borderRadius: BorderRadius.circular(20),
+                                          ),
+                                          child: Text(
+                                            p.activo ? 'Activo' : 'Inactivo',
+                                            style: TextStyle(
+                                              fontSize: 10,
+                                              fontWeight: FontWeight.w600,
+                                              color: p.activo
+                                                  ? const Color(0xFF16A34A)
+                                                  : const Color(0xFF94A3B8),
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                    if (p.descripcionCorta.isNotEmpty) ...<Widget>[
+                                      const SizedBox(height: 3),
+                                      Text(
+                                        p.descripcionCorta,
+                                        style: const TextStyle(fontSize: 12, color: Color(0xFF64748B)),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ],
+                                    const SizedBox(height: 8),
+                                    Wrap(
+                                      spacing: 8,
+                                      runSpacing: 4,
+                                      children: <Widget>[
+                                        if (p.precio != null)
+                                          _Chip(
+                                            label: 'RD\$${p.precio!.toStringAsFixed(0)}',
+                                            color: const Color(0xFF2563EB),
+                                            bg: const Color(0xFFEFF6FF),
+                                          ),
+                                        _Chip(
+                                          label: 'Stock: ${p.stock}',
+                                          color: const Color(0xFF64748B),
+                                          bg: const Color(0xFFF1F5F9),
+                                        ),
+                                        if (p.imagenesJson.isNotEmpty)
+                                          _Chip(
+                                            label: '${p.imagenesJson.length} foto${p.imagenesJson.length > 1 ? 's' : ''}',
+                                            color: const Color(0xFF7C3AED),
+                                            bg: const Color(0xFFF5F3FF),
+                                          ),
+                                      ],
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                            // Actions
+                            Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: <Widget>[
+                                IconButton(
+                                  icon: const Icon(Icons.edit_rounded, size: 17),
+                                  color: const Color(0xFF2563EB),
+                                  tooltip: 'Editar',
+                                  onPressed: () => _openProductSheet(p),
+                                ),
+                                IconButton(
+                                  icon: const Icon(Icons.delete_rounded, size: 17),
+                                  color: const Color(0xFFE11D48),
+                                  tooltip: 'Eliminar',
+                                  onPressed: () => _deleteProduct(p),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(width: 4),
+                          ],
+                        ),
+                      ),
                     ),
                   ),
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: <Widget>[
-                      IconButton(
-                        icon: const Icon(Icons.edit_rounded, size: 18),
-                        color: const Color(0xFF2563EB),
-                        tooltip: 'Editar',
-                        onPressed: () => _openProductSheet(p),
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.delete_rounded, size: 18),
-                        color: const Color(0xFF9F1239),
-                        tooltip: 'Eliminar',
-                        onPressed: () => _deleteProduct(p),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          )),
-        const SizedBox(height: 12),
-        OutlinedButton.icon(
-          onPressed: _isLoadingProducts ? null : _loadProducts,
-          icon: const Icon(Icons.refresh_rounded, size: 16),
-          label: const Text('Recargar lista'),
+                );
+              }),
+            // bottom padding so FAB doesn't overlap last card
+            const SizedBox(height: 80),
+          ],
+        ),
+        // FAB
+        Positioned(
+          bottom: 0,
+          right: 0,
+          child: FloatingActionButton.extended(
+            heroTag: 'fab_products',
+            onPressed: _isLoadingProducts ? null : () => _openProductSheet(),
+            icon: const Icon(Icons.add_rounded),
+            label: const Text('Agregar producto'),
+            backgroundColor: const Color(0xFF111827),
+            foregroundColor: Colors.white,
+            elevation: 4,
+          ),
         ),
       ],
     );
@@ -1202,12 +1296,11 @@ class _ProductFormSheet extends StatefulWidget {
     required this.precioCtrl,
     required this.precioMinCtrl,
     required this.stockCtrl,
-    required this.imagenesCtrl,
-    required this.videosCtrl,
-    required this.activo,
-    required this.onActivoChanged,
+    required this.initialImages,
+    required this.initialVideos,
+    required this.initialActivo,
     required this.isEditing,
-    required this.isSaving,
+    required this.apiService,
     required this.onSave,
   });
 
@@ -1217,13 +1310,12 @@ class _ProductFormSheet extends StatefulWidget {
   final TextEditingController precioCtrl;
   final TextEditingController precioMinCtrl;
   final TextEditingController stockCtrl;
-  final TextEditingController imagenesCtrl;
-  final TextEditingController videosCtrl;
-  final bool activo;
-  final ValueChanged<bool> onActivoChanged;
+  final List<String> initialImages;
+  final List<String> initialVideos;
+  final bool initialActivo;
   final bool isEditing;
-  final bool isSaving;
-  final VoidCallback onSave;
+  final ApiService apiService;
+  final Future<void> Function(List<String> images, List<String> videos, bool activo) onSave;
 
   @override
   State<_ProductFormSheet> createState() => _ProductFormSheetState();
@@ -1231,11 +1323,110 @@ class _ProductFormSheet extends StatefulWidget {
 
 class _ProductFormSheetState extends State<_ProductFormSheet> {
   late bool _activo;
+  late List<String> _images;
+  late List<String> _videos;
+  List<PlatformFile> _pendingImages = <PlatformFile>[];
+  List<PlatformFile> _pendingVideos = <PlatformFile>[];
+  bool _isSaving = false;
+  String? _uploadError;
 
   @override
   void initState() {
     super.initState();
-    _activo = widget.activo;
+    _activo = widget.initialActivo;
+    _images = List<String>.from(widget.initialImages);
+    _videos = List<String>.from(widget.initialVideos);
+  }
+
+  Future<void> _pickImages() async {
+    final FilePickerResult? result = await FilePicker.platform.pickFiles(
+      type: FileType.image,
+      allowMultiple: true,
+      withData: true,
+    );
+    if (result == null) return;
+    setState(() {
+      _pendingImages = <PlatformFile>[..._pendingImages, ...result.files];
+    });
+  }
+
+  Future<void> _pickVideos() async {
+    final FilePickerResult? result = await FilePicker.platform.pickFiles(
+      type: FileType.video,
+      allowMultiple: true,
+      withData: true,
+    );
+    if (result == null) return;
+    setState(() {
+      _pendingVideos = <PlatformFile>[..._pendingVideos, ...result.files];
+    });
+  }
+
+  Future<void> _handleSave() async {
+    setState(() { _isSaving = true; _uploadError = null; });
+    try {
+      // Upload pending images
+      List<String> finalImages = List<String>.from(_images);
+      if (_pendingImages.isNotEmpty) {
+        final List<({Uint8List bytes, String name, String mime})> files =
+            _pendingImages
+                .where((PlatformFile f) => f.bytes != null)
+                .map((PlatformFile f) => (
+                      bytes: f.bytes!,
+                      name: f.name,
+                      mime: _mimeFromExtension(f.extension ?? ''),
+                    ))
+                .toList();
+        if (files.isNotEmpty) {
+          final List<String> urls = await widget.apiService.uploadProductMedia(files);
+          finalImages = <String>[...finalImages, ...urls];
+        }
+      }
+      // Upload pending videos
+      List<String> finalVideos = List<String>.from(_videos);
+      if (_pendingVideos.isNotEmpty) {
+        final List<({Uint8List bytes, String name, String mime})> files =
+            _pendingVideos
+                .where((PlatformFile f) => f.bytes != null)
+                .map((PlatformFile f) => (
+                      bytes: f.bytes!,
+                      name: f.name,
+                      mime: _mimeFromExtension(f.extension ?? ''),
+                    ))
+                .toList();
+        if (files.isNotEmpty) {
+          final List<String> urls = await widget.apiService.uploadProductMedia(files);
+          finalVideos = <String>[...finalVideos, ...urls];
+        }
+      }
+      await widget.onSave(finalImages, finalVideos, _activo);
+    } catch (e) {
+      if (mounted) setState(() { _uploadError = e.toString().replaceFirst('Exception: ', ''); });
+    } finally {
+      if (mounted) setState(() { _isSaving = false; });
+    }
+  }
+
+  String _mimeFromExtension(String ext) {
+    switch (ext.toLowerCase()) {
+      case 'jpg':
+      case 'jpeg':
+        return 'image/jpeg';
+      case 'png':
+        return 'image/png';
+      case 'webp':
+        return 'image/webp';
+      case 'gif':
+        return 'image/gif';
+      case 'mp4':
+        return 'video/mp4';
+      case 'mov':
+        return 'video/quicktime';
+      case 'avi':
+        return 'video/x-msvideo';
+      default:
+        return 'application/octet-stream';
+    }
   }
 
   @override
@@ -1254,6 +1445,7 @@ class _ProductFormSheetState extends State<_ProductFormSheet> {
           controller: sc,
           padding: const EdgeInsets.fromLTRB(20, 20, 20, 32),
           children: <Widget>[
+            // Header
             Row(
               children: <Widget>[
                 Expanded(
@@ -1264,11 +1456,12 @@ class _ProductFormSheetState extends State<_ProductFormSheet> {
                 ),
                 IconButton(
                   icon: const Icon(Icons.close_rounded),
-                  onPressed: () => Navigator.of(context).pop(),
+                  onPressed: _isSaving ? null : () => Navigator.of(context).pop(),
                 ),
               ],
             ),
             const SizedBox(height: 16),
+            // Basic fields
             AppTextField(label: 'Titulo *', controller: widget.tituloCtrl, hintText: 'Nombre del producto'),
             const SizedBox(height: 12),
             AppTextField(label: 'Descripcion corta', controller: widget.descCortaCtrl, hintText: 'Breve descripcion visible al cliente'),
@@ -1298,26 +1491,71 @@ class _ProductFormSheetState extends State<_ProductFormSheet> {
             ),
             const SizedBox(height: 12),
             AppTextField(label: 'Stock', controller: widget.stockCtrl, hintText: '10', keyboardType: TextInputType.number),
-            const SizedBox(height: 12),
-            AppTextField(label: 'URLs de imagenes (una por linea)', controller: widget.imagenesCtrl, hintText: 'https://...', maxLines: 3),
-            const SizedBox(height: 12),
-            AppTextField(label: 'URLs de videos (una por linea)', controller: widget.videosCtrl, hintText: 'https://...', maxLines: 2),
-            const SizedBox(height: 16),
-            SwitchListTile(
-              value: _activo,
-              onChanged: (bool v) {
-                setState(() { _activo = v; });
-                widget.onActivoChanged(v);
-              },
-              title: const Text('Producto activo', style: TextStyle(color: Color(0xFF0F172A), fontWeight: FontWeight.w700)),
-              subtitle: const Text('Los productos inactivos no aparecen en el catalogo del bot.'),
-              contentPadding: EdgeInsets.zero,
+            const SizedBox(height: 20),
+            // Images section
+            _MediaSection(
+              label: 'Fotos del producto',
+              icon: Icons.photo_library_rounded,
+              accentColor: const Color(0xFF7C3AED),
+              existingUrls: _images,
+              pendingFiles: _pendingImages,
+              onPickFiles: _pickImages,
+              onRemoveExisting: (int i) => setState(() => _images.removeAt(i)),
+              onRemovePending: (int i) => setState(() => _pendingImages.removeAt(i)),
+              previewBuilder: (PlatformFile f) => f.bytes != null
+                  ? Image.memory(f.bytes!, fit: BoxFit.cover)
+                  : const Icon(Icons.image_outlined),
             ),
+            const SizedBox(height: 16),
+            // Videos section
+            _MediaSection(
+              label: 'Videos del producto',
+              icon: Icons.videocam_rounded,
+              accentColor: const Color(0xFF0891B2),
+              existingUrls: _videos,
+              pendingFiles: _pendingVideos,
+              onPickFiles: _pickVideos,
+              onRemoveExisting: (int i) => setState(() => _videos.removeAt(i)),
+              onRemovePending: (int i) => setState(() => _pendingVideos.removeAt(i)),
+              previewBuilder: (_) => const Icon(Icons.videocam_rounded, size: 28, color: Color(0xFF0891B2)),
+            ),
+            const SizedBox(height: 16),
+            // Active toggle
+            Container(
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: const Color(0xFFE2E8F0)),
+              ),
+              child: SwitchListTile(
+                value: _activo,
+                onChanged: _isSaving ? null : (bool v) => setState(() { _activo = v; }),
+                title: const Text('Producto activo', style: TextStyle(color: Color(0xFF0F172A), fontWeight: FontWeight.w700)),
+                subtitle: const Text('Los productos inactivos no aparecen en el catalogo del bot.'),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+              ),
+            ),
+            if (_uploadError != null) ...<Widget>[
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFFF1F2),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: const Color(0xFFFDA4AF)),
+                ),
+                child: Text(_uploadError!, style: const TextStyle(color: Color(0xFF9F1239), fontSize: 13)),
+              ),
+            ],
             const SizedBox(height: 20),
             ElevatedButton.icon(
-              onPressed: widget.isSaving ? null : widget.onSave,
-              icon: const Icon(Icons.save_rounded),
-              label: Text(widget.isSaving ? 'Guardando...' : (widget.isEditing ? 'Actualizar producto' : 'Guardar producto')),
+              onPressed: _isSaving ? null : _handleSave,
+              icon: _isSaving
+                  ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                  : const Icon(Icons.save_rounded),
+              label: Text(_isSaving
+                  ? 'Guardando...'
+                  : (widget.isEditing ? 'Actualizar producto' : 'Guardar producto')),
               style: ElevatedButton.styleFrom(
                 minimumSize: const Size(double.infinity, 52),
                 backgroundColor: const Color(0xFF111827),
@@ -1327,6 +1565,191 @@ class _ProductFormSheetState extends State<_ProductFormSheet> {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Helper widget — shows existing URL thumbnails + pending file previews + pick button.
+class _MediaSection extends StatelessWidget {
+  const _MediaSection({
+    required this.label,
+    required this.icon,
+    required this.accentColor,
+    required this.existingUrls,
+    required this.pendingFiles,
+    required this.onPickFiles,
+    required this.onRemoveExisting,
+    required this.onRemovePending,
+    required this.previewBuilder,
+  });
+
+  final String label;
+  final IconData icon;
+  final Color accentColor;
+  final List<String> existingUrls;
+  final List<PlatformFile> pendingFiles;
+  final VoidCallback onPickFiles;
+  final ValueChanged<int> onRemoveExisting;
+  final ValueChanged<int> onRemovePending;
+  final Widget Function(PlatformFile f) previewBuilder;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+      ),
+      padding: const EdgeInsets.all(14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Row(
+            children: <Widget>[
+              Icon(icon, size: 16, color: accentColor),
+              const SizedBox(width: 6),
+              Text(label, style: TextStyle(fontWeight: FontWeight.w700, color: accentColor, fontSize: 13)),
+              const Spacer(),
+              TextButton.icon(
+                onPressed: onPickFiles,
+                icon: const Icon(Icons.add_rounded, size: 16),
+                label: const Text('Agregar'),
+                style: TextButton.styleFrom(
+                  foregroundColor: accentColor,
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                ),
+              ),
+            ],
+          ),
+          if (existingUrls.isEmpty && pendingFiles.isEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              child: Text('Sin archivos. Toca «Agregar» para subir.',
+                  style: TextStyle(color: Colors.grey.shade400, fontSize: 12)),
+            )
+          else ...<Widget>[
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: <Widget>[
+                // Existing URLs
+                ...existingUrls.asMap().entries.map((MapEntry<int, String> e) => _ThumbBox(
+                  child: Image.network(
+                    e.value,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => Icon(icon, size: 22, color: accentColor),
+                  ),
+                  onRemove: () => onRemoveExisting(e.key),
+                )),
+                // Pending files
+                ...pendingFiles.asMap().entries.map((MapEntry<int, PlatformFile> e) => _ThumbBox(
+                  child: previewBuilder(e.value),
+                  onRemove: () => onRemovePending(e.key),
+                  isNew: true,
+                )),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _ThumbBox extends StatelessWidget {
+  const _ThumbBox({required this.child, required this.onRemove, this.isNew = false});
+  final Widget child;
+  final VoidCallback onRemove;
+  final bool isNew;
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      children: <Widget>[
+        Container(
+          width: 72,
+          height: 72,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(10),
+            color: const Color(0xFFF1F5F9),
+            border: isNew
+                ? Border.all(color: const Color(0xFF7C3AED), width: 1.5)
+                : Border.all(color: const Color(0xFFE2E8F0)),
+          ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(10),
+            child: child,
+          ),
+        ),
+        Positioned(
+          top: 2,
+          right: 2,
+          child: GestureDetector(
+            onTap: onRemove,
+            child: Container(
+              width: 20,
+              height: 20,
+              decoration: const BoxDecoration(
+                color: Color(0xFFE11D48),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.close_rounded, size: 12, color: Colors.white),
+            ),
+          ),
+        ),
+        if (isNew)
+          Positioned(
+            bottom: 3,
+            left: 3,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+              decoration: BoxDecoration(
+                color: const Color(0xFF7C3AED),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: const Text('nuevo', style: TextStyle(color: Colors.white, fontSize: 8, fontWeight: FontWeight.w700)),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+/// Grey/green placeholder shown when a product has no image.
+class _ProductPlaceholder extends StatelessWidget {
+  const _ProductPlaceholder({required this.active});
+  final bool active;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 72,
+      height: 80,
+      color: active ? const Color(0xFFEFF6FF) : const Color(0xFFF1F5F9),
+      child: Icon(
+        Icons.inventory_2_outlined,
+        size: 28,
+        color: active ? const Color(0xFF93C5FD) : const Color(0xFFCBD5E1),
+      ),
+    );
+  }
+}
+
+/// Small colored label chip.
+class _Chip extends StatelessWidget {
+  const _Chip({required this.label, required this.color, required this.bg});
+  final String label;
+  final Color color;
+  final Color bg;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+      decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(20)),
+      child: Text(label, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: color)),
     );
   }
 }
