@@ -1,0 +1,760 @@
+
+> phytoemagrybot@1.0.0 test:whatsapp
+> node --test -r ts-node/register test/whatsapp.service.test.ts
+
+📥 remoteJid: 18095551234@s.whatsapp.net
+📥 participant: null
+📤 JID FINAL: 18095551234@s.whatsapp.net
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_recipient_resolved","contactId":"18095551234","senderNumber":"18095551234","senderAddress":"18095551234@s.whatsapp.net","recipientNumber":null,"recipientAddress":null,"pushName":null,"resolvedRecipient":"18095551234@s.whatsapp.net","instancePhone":null,"remoteJid":"18095551234@s.whatsapp.net","remoteJidAlt":null,"senderPn":null,"participantPn":null,"participantAlt":null,"sender":null,"participant":null}[39m
+📥 remoteJid: 18095551234@s.whatsapp.net
+📥 participant: null
+📤 JID FINAL: 18095551234@s.whatsapp.net
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_recipient_resolved","contactId":"18095551234","senderNumber":"18095551234","senderAddress":"18095551234@s.whatsapp.net","recipientNumber":null,"recipientAddress":null,"pushName":null,"resolvedRecipient":"18095551234@s.whatsapp.net","instancePhone":null,"remoteJid":"18095551234@s.whatsapp.net","remoteJidAlt":null,"senderPn":null,"participantPn":null,"participantAlt":null,"sender":null,"participant":null}[39m
+📥 remoteJid: 18095551234@s.whatsapp.net
+📥 participant: null
+📤 JID FINAL: 18095551234@s.whatsapp.net
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_recipient_resolved","contactId":"18095551234","senderNumber":"18095551234","senderAddress":"18095551234@s.whatsapp.net","recipientNumber":null,"recipientAddress":null,"pushName":"Cliente Voz","resolvedRecipient":"18095551234@s.whatsapp.net","instancePhone":null,"remoteJid":"18095551234@s.whatsapp.net","remoteJidAlt":null,"senderPn":null,"participantPn":null,"participantAlt":null,"sender":null,"participant":null}[39m
+📥 remoteJid: 69132011749577@lid
+📥 participant: null
+📤 JID FINAL: 18095551234@s.whatsapp.net
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_recipient_resolved","contactId":"18095551234","senderNumber":"18095551234","senderAddress":"18095551234@s.whatsapp.net","recipientNumber":null,"recipientAddress":null,"pushName":null,"resolvedRecipient":"18095551234@s.whatsapp.net","instancePhone":null,"remoteJid":"69132011749577@lid","remoteJidAlt":"18095551234@s.whatsapp.net","senderPn":null,"participantPn":null,"participantAlt":null,"sender":null,"participant":null}[39m
+📥 remoteJid: 120363382457717265@g.us
+📥 participant: null
+📤 JID FINAL: null
+[33m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [33m   WARN[39m [38;5;3m[WhatsAppService] [39m[33m{"event":"whatsapp_recipient_resolution_failed","instancePhone":null,"remoteJid":"120363382457717265@g.us","remoteJidAlt":null,"senderPn":null,"participantPn":null,"participantAlt":null,"sender":null,"participant":null}[39m
+Webhook configurado correctamente
+[33m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [33m   WARN[39m [38;5;3m[WhatsAppService] [39m[33m{"event":"whatsapp_webhook_auto_config_failed","instanceName":"demo-new","error":"Bad Request"}[39m
+[33m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [33m   WARN[39m [38;5;3m[WhatsAppService] [39m[33m{"event":"whatsapp_webhook_auto_config_failed","instanceName":"demo","error":"Bad Request"}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_runtime_signature","signature":"wa-lid-fallback-2026-04-23b"}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_webhook_sync_applied","instanceName":"demo","webhookUrl":"https://example.com/webhook"}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_runtime_signature","signature":"wa-lid-fallback-2026-04-23b"}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_webhook_sync_applied","instanceName":"demo","webhookUrl":"https://ai-business-platform-phytoemagrybot-backend.onqyr1.easypanel.host/webhook/whatsapp"}[39m
+JID FINAL: 18095551234@s.whatsapp.net
+📤 Enviando a: 18095551234@s.whatsapp.net
+📦 Instancia: demo
+📥 remoteJid: 18295344286@s.whatsapp.net
+📥 participant: null
+📤 JID FINAL: 18295319442@s.whatsapp.net
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_recipient_resolved","contactId":"18295319442","senderNumber":"18295319442","senderAddress":"18295319442@s.whatsapp.net","recipientNumber":null,"recipientAddress":null,"pushName":null,"resolvedRecipient":"18295319442@s.whatsapp.net","instancePhone":null,"remoteJid":"18295344286@s.whatsapp.net","remoteJidAlt":null,"senderPn":"18295319442@s.whatsapp.net","participantPn":null,"participantAlt":null,"sender":null,"participant":null}[39m
+📥 remoteJid: 18295319442@s.whatsapp.net
+📥 participant: null
+📤 JID FINAL: 18295319442@s.whatsapp.net
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_recipient_resolved","contactId":"18295319442","senderNumber":"18295319442","senderAddress":"18295319442@s.whatsapp.net","recipientNumber":"18295344286","recipientAddress":null,"pushName":null,"resolvedRecipient":"18295319442@s.whatsapp.net","instancePhone":"18295344286","remoteJid":"18295319442@s.whatsapp.net","remoteJidAlt":null,"senderPn":"18295344286@s.whatsapp.net","participantPn":null,"participantAlt":null,"sender":null,"participant":null}[39m
+📥 remoteJid: 120363382457717265@g.us
+📥 participant: null
+📤 JID FINAL: 18295319442@s.whatsapp.net
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_recipient_resolved","contactId":"18295319442","senderNumber":"18295319442","senderAddress":"18295319442@s.whatsapp.net","recipientNumber":null,"recipientAddress":null,"pushName":null,"resolvedRecipient":"18295319442@s.whatsapp.net","instancePhone":null,"remoteJid":"120363382457717265@g.us","remoteJidAlt":null,"senderPn":"18295319442@s.whatsapp.net","participantPn":null,"participantAlt":null,"sender":null,"participant":null}[39m
+📥 remoteJid: 18295344286@s.whatsapp.net
+📥 participant: null
+📤 JID FINAL: 18295319442@s.whatsapp.net
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_recipient_resolved","contactId":"18295319442","senderNumber":"18295319442","senderAddress":"18295319442@s.whatsapp.net","recipientNumber":"18295344286","recipientAddress":null,"pushName":null,"resolvedRecipient":"18295319442@s.whatsapp.net","instancePhone":"18295344286","remoteJid":"18295344286@s.whatsapp.net","remoteJidAlt":null,"senderPn":null,"participantPn":null,"participantAlt":"18295319442@s.whatsapp.net","sender":null,"participant":null}[39m
+📥 remoteJid: 69132011749577@lid
+📥 participant: 18095551234@s.whatsapp.net
+📤 JID FINAL: 18095551234@s.whatsapp.net
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_recipient_resolved","contactId":"18095551234","senderNumber":"18095551234","senderAddress":"18095551234@s.whatsapp.net","recipientNumber":null,"recipientAddress":null,"pushName":null,"resolvedRecipient":"18095551234@s.whatsapp.net","instancePhone":null,"remoteJid":"69132011749577@lid","remoteJidAlt":null,"senderPn":null,"participantPn":null,"participantAlt":null,"sender":null,"participant":"18095551234@s.whatsapp.net"}[39m
+📥 remoteJid: 69132011749577@lid
+📥 participant: null
+⚠️ LID detectado, no se puede responder directamente: 69132011749577@lid
+📤 JID FINAL: null
+[33m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [33m   WARN[39m [38;5;3m[WhatsAppService] [39m[33m{"event":"whatsapp_recipient_resolution_failed","instancePhone":null,"remoteJid":"69132011749577@lid","remoteJidAlt":null,"senderPn":null,"participantPn":null,"participantAlt":null,"sender":null,"participant":null}[39m
+📥 remoteJid: 18295344286@s.whatsapp.net
+📥 participant: null
+📤 JID FINAL: 18095551234@s.whatsapp.net
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_recipient_resolved","contactId":"18095551234","senderNumber":"18095551234","senderAddress":"18095551234@s.whatsapp.net","recipientNumber":"18295344286","recipientAddress":null,"pushName":null,"resolvedRecipient":"18095551234@s.whatsapp.net","instancePhone":"18295344286","remoteJid":"18295344286@s.whatsapp.net","remoteJidAlt":null,"senderPn":"18095551234@s.whatsapp.net","participantPn":null,"participantAlt":null,"sender":null,"participant":null}[39m
+📥 remoteJid: 18295344286@s.whatsapp.net
+📥 participant: null
+📤 JID FINAL: null
+[33m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [33m   WARN[39m [38;5;3m[WhatsAppService] [39m[33m{"event":"whatsapp_recipient_resolution_failed","instancePhone":"18295344286","remoteJid":"18295344286@s.whatsapp.net","remoteJidAlt":null,"senderPn":"18295344286@s.whatsapp.net","participantPn":null,"participantAlt":null,"sender":null,"participant":null}[39m
+📥 remoteJid: 69132011749577@lid
+📥 participant: null
+📤 JID FINAL: 18295344286@s.whatsapp.net
+[33m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [33m   WARN[39m [38;5;3m[WhatsAppService] [39m[33m{"event":"whatsapp_webhook_routing_numbers_conflict","senderNumber":"18295344286","recipientNumber":"18295344286","senderAddress":"18295344286@s.whatsapp.net","recipientAddress":"18295344286@s.whatsapp.net","remoteJid":"69132011749577@lid"}[39m
+📥 remoteJid: 69132011749577@lid
+📥 participant: null
+📤 JID FINAL: 18095551234@s.whatsapp.net
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_recipient_enriched_from_evolution","messageId":"msg-lid-1","previousRecipient":"69132011749577@lid","resolvedRecipient":"18095551234@s.whatsapp.net","contactId":"18095551234"}[39m
+[33m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [33m   WARN[39m [38;5;3m[WhatsAppService] [39m[33m{"event":"whatsapp_reply_outbound_jid_fallback","traceId":null,"contactId":"18095551234","outboundAddress":"69132011749577@lid","effectiveOutboundAddress":"18095551234@s.whatsapp.net"}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_presence_sending","presence":"composing","number":"18095551234","instanceName":"demo"}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"VOICE_DECISION","contactId":"18095551234","inputType":"text","emotion":"frio","incomingAudioStreak":0,"incomingChars":4,"replyChars":20,"scoreAudio":0,"decision":"text","botIntent":"otro","botAction":"guiar","replyType":"text","reasons":["emotion_frio"]}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"EMOTION_DETECTED","contactId":"18095551234","emotion":"frio","message":"hola","decision":"text"}[39m
+SEND MODE: text
+{ replyType: 'text', sendAs: 'text', message: 'Te ayudo ahora mismo' }
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_reply_sent","traceId":null,"contactId":"18095551234","intent":"otro","hotLead":false,"usedGallery":false,"replyType":"text"}[39m
+ENVIADA: { text: 'Te ayudo ahora mismo', mediaIds: [] }
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_webhook_payload_enriched","source":"message_lookup","messageId":"msg-lid-enrich-1","remoteJid":"69132011749577@lid","remoteJidAlt":"18095551234@s.whatsapp.net","senderPn":"18095551234@s.whatsapp.net","participantPn":null,"participantAlt":"18095551234@s.whatsapp.net"}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_webhook_payload_enriched","source":"message_lookup","messageId":"msg-lid-contact-fallback-1","remoteJid":"69132011749577@lid","remoteJidAlt":null,"senderPn":null,"participantPn":null,"participantAlt":null}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_contact_lookup_started","instanceName":"demo","pushName":"Junior Lopez","remoteJid":"69132011749577@lid","participant":null,"lookupJid":"69132011749577@lid","queryCount":3}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_webhook_payload_enriched","source":"contact_lookup","messageId":"msg-lid-contact-fallback-1","remoteJid":"69132011749577@lid","contactRemoteJid":"18095551234@s.whatsapp.net","remoteJidAlt":"18095551234@s.whatsapp.net","senderPn":"18095551234@s.whatsapp.net","participantPn":"18095551234@s.whatsapp.net","participantAlt":"18095551234@s.whatsapp.net"}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_webhook_payload_enriched","source":"message_lookup","messageId":"group-participant-lid-1","remoteJid":"120363382457717265@g.us","remoteJidAlt":null,"senderPn":null,"participantPn":null,"participantAlt":null}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_contact_lookup_started","instanceName":"demo","pushName":"Mayra Torres","remoteJid":"120363382457717265@g.us","participant":"180685096620065@lid","lookupJid":"180685096620065@lid","queryCount":3}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_webhook_payload_enriched","source":"contact_lookup","messageId":"group-participant-lid-1","remoteJid":"120363382457717265@g.us","contactRemoteJid":"18095551234@s.whatsapp.net","remoteJidAlt":"18095551234@s.whatsapp.net","senderPn":"18095551234@s.whatsapp.net","participantPn":"18095551234@s.whatsapp.net","participantAlt":"18095551234@s.whatsapp.net"}[39m
+📥 remoteJid: 120363382457717265@g.us
+📥 participant: 180685096620065@lid
+📤 JID FINAL: 18095551234@s.whatsapp.net
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_recipient_resolved","contactId":"18095551234","senderNumber":"18095551234","senderAddress":"18095551234@s.whatsapp.net","recipientNumber":"18295344286","recipientAddress":"18295344286@s.whatsapp.net","pushName":"Mayra Torres","resolvedRecipient":"18095551234@s.whatsapp.net","instancePhone":"18295344286@s.whatsapp.net","remoteJid":"120363382457717265@g.us","remoteJidAlt":"18095551234@s.whatsapp.net","senderPn":"18095551234@s.whatsapp.net","participantPn":"18095551234@s.whatsapp.net","participantAlt":"18095551234@s.whatsapp.net","sender":"18295344286@s.whatsapp.net","participant":"180685096620065@lid"}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_webhook_payload_enriched","source":"message_lookup","messageId":"group-participant-lid-ambiguous-1","remoteJid":"120363382457717265@g.us","remoteJidAlt":null,"senderPn":null,"participantPn":null,"participantAlt":null}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_contact_lookup_started","instanceName":"demo","pushName":"Keyla Blanco","remoteJid":"120363382457717265@g.us","participant":"199028952297530@lid","lookupJid":"199028952297530@lid","queryCount":3}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_contact_lookup_no_match","instanceName":"demo","pushName":"Keyla Blanco","remoteJid":"120363382457717265@g.us","participant":"199028952297530@lid","lookupJid":"199028952297530@lid"}[39m
+📥 remoteJid: 120363382457717265@g.us
+📥 participant: 199028952297530@lid
+📤 JID FINAL: null
+[33m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [33m   WARN[39m [38;5;3m[WhatsAppService] [39m[33m{"event":"whatsapp_recipient_resolution_failed","instancePhone":"18295344286@s.whatsapp.net","remoteJid":"120363382457717265@g.us","remoteJidAlt":null,"senderPn":null,"participantPn":null,"participantAlt":null,"sender":"18295344286@s.whatsapp.net","participant":"199028952297530@lid"}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_webhook_payload_enriched","source":"message_lookup","messageId":"msg-lid-contact-ambiguous-1","remoteJid":"69132011749577@lid","remoteJidAlt":null,"senderPn":null,"participantPn":null,"participantAlt":null}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_contact_lookup_started","instanceName":"demo","pushName":"Junior Lopez","remoteJid":"69132011749577@lid","participant":null,"lookupJid":"69132011749577@lid","queryCount":3}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_webhook_payload_enriched","source":"contact_lookup","messageId":"msg-lid-contact-ambiguous-1","remoteJid":"69132011749577@lid","contactRemoteJid":"18095551234@s.whatsapp.net","remoteJidAlt":"18095551234@s.whatsapp.net","senderPn":"18095551234@s.whatsapp.net","participantPn":"18095551234@s.whatsapp.net","participantAlt":"18095551234@s.whatsapp.net"}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_webhook_payload_enriched","source":"message_lookup","messageId":"msg-lid-contact-name-fallback-1","remoteJid":"69132011749577@lid","remoteJidAlt":null,"senderPn":null,"participantPn":null,"participantAlt":null}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_contact_lookup_started","instanceName":"demo","pushName":"Junior Lopez","remoteJid":"69132011749577@lid","participant":null,"lookupJid":"69132011749577@lid","queryCount":3}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_webhook_payload_enriched","source":"contact_lookup","messageId":"msg-lid-contact-name-fallback-1","remoteJid":"69132011749577@lid","contactRemoteJid":"18095551234@s.whatsapp.net","remoteJidAlt":"18095551234@s.whatsapp.net","senderPn":"18095551234@s.whatsapp.net","participantPn":"18095551234@s.whatsapp.net","participantAlt":"18095551234@s.whatsapp.net"}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_webhook_payload_enriched","source":"lid_cache","messageId":"cached-lid-1","remoteJid":"69132011749577@lid","contactRemoteJid":"18095551234@s.whatsapp.net","remoteJidAlt":"18095551234@s.whatsapp.net","senderPn":"18095551234@s.whatsapp.net","participantPn":"18095551234@s.whatsapp.net","participantAlt":"18095551234@s.whatsapp.net"}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_lid_mapping_learned","instanceName":"demo","lidJid":"69132011749577@lid","realJid":"18295319442@s.whatsapp.net"}[39m
+📥 remoteJid: 69132011749577@lid
+📥 participant: null
+📤 JID FINAL: 18095551234@s.whatsapp.net
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_audio_transcribed","traceId":null,"contactId":"18095551234","seconds":5,"transcript":"quiero precio"}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_presence_sending","presence":"composing","number":"18095551234","instanceName":"demo"}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"VOICE_DECISION","contactId":"18095551234","inputType":"audio","emotion":"interesado","incomingAudioStreak":1,"incomingChars":13,"replyChars":20,"botIntent":"otro","botAction":"guiar","replyType":"text","scoreAudio":1,"decision":"text","reasons":["incoming_audio","voice_history","short_quick_message"]}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"EMOTION_DETECTED","contactId":"18095551234","emotion":"interesado","message":"quiero precio","decision":"text"}[39m
+SEND MODE: text
+{ replyType: 'text', sendAs: 'text', message: 'Te ayudo ahora mismo' }
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_reply_sent","traceId":null,"contactId":"18095551234","intent":"otro","hotLead":false,"usedGallery":false,"replyType":"text"}[39m
+ENVIADA: { text: 'Te ayudo ahora mismo', mediaIds: [] }
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_audio_transcribed","traceId":null,"contactId":"18095551234","seconds":5,"transcript":"quiero precio"}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_presence_sending","presence":"composing","number":"18095551234","instanceName":"demo"}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"VOICE_DECISION","contactId":"18095551234","inputType":"audio","emotion":"interesado","incomingAudioStreak":1,"incomingChars":13,"replyChars":20,"botIntent":"otro","botAction":"guiar","replyType":"text","scoreAudio":1,"decision":"text","reasons":["incoming_audio","voice_history","short_quick_message"]}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"EMOTION_DETECTED","contactId":"18095551234","emotion":"interesado","message":"quiero precio","decision":"text"}[39m
+SEND MODE: text
+{ replyType: 'text', sendAs: 'text', message: 'Te ayudo ahora mismo' }
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_reply_sent","traceId":null,"contactId":"18095551234","intent":"otro","hotLead":false,"usedGallery":false,"replyType":"text"}[39m
+ENVIADA: { text: 'Te ayudo ahora mismo', mediaIds: [] }
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_audio_transcribed","traceId":null,"contactId":"18095551234","seconds":6,"transcript":"quiero precio"}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_presence_sending","presence":"composing","number":"18095551234","instanceName":"demo"}[39m
+MENSAJE OMITIDO: duplicado detectado
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"VOICE_DECISION","contactId":"18095551234","inputType":"audio","emotion":"interesado","incomingAudioStreak":2,"incomingChars":13,"replyChars":27,"scoreAudio":4,"decision":"audio","botIntent":"otro","botAction":"guiar","replyType":"text","reasons":["multiple_incoming_audios_forced"]}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"EMOTION_DETECTED","contactId":"18095551234","emotion":"interesado","message":"quiero precio","decision":"audio"}[39m
+SEND MODE: audio
+{
+  replyType: 'text',
+  sendAs: 'audio',
+  message: 'Claro, te ayudo ahora mismo'
+}
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_presence_sending","presence":"recording","number":"18095551234","instanceName":"demo"}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"VOICE_DEBUG","traceId":null,"contactId":"18095551234","response_original":"Claro, te ayudo ahora mismo","response_audio":"Claro, te ayudo ahora mismo","iguales":true}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"AUDIO_DEBUG","traceId":null,"contactId":"18095551234","stage":"generate_start","attempt":1}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"AUDIO_DEBUG","traceId":null,"contactId":"18095551234","stage":"generated","attempt":1,"provider":null,"fileName":"reply.ogg","mimetype":"audio/ogg; codecs=opus","sourceMimetype":null,"bytes":25000,"durationSeconds":3,"minBytes":12000,"minDurationSeconds":2,"bytesOk":true,"durationOk":true}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"AUDIO_DEBUG","traceId":null,"contactId":"18095551234","stage":"send_start","to":"18095551234@s.whatsapp.net","fileName":"reply.ogg","mimetype":"audio/ogg; codecs=opus","bytes":25000}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"AUDIO_DEBUG","traceId":null,"contactId":"18095551234","stage":"send_success","to":"18095551234@s.whatsapp.net"}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_reply_sent","traceId":null,"contactId":"18095551234","intent":"otro","hotLead":false,"usedGallery":false,"replyType":"text"}[39m
+ENVIADA: { text: 'Claro, te ayudo ahora mismo', mediaIds: [] }
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_audio_transcribed","traceId":null,"contactId":"18095551234","seconds":28,"transcript":"quiero precio"}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_presence_sending","presence":"composing","number":"18095551234","instanceName":"demo"}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"VOICE_DECISION","contactId":"18095551234","inputType":"audio","emotion":"interesado","incomingAudioStreak":1,"incomingChars":13,"replyChars":22,"botIntent":"otro","botAction":"guiar","replyType":"audio","scoreAudio":3,"decision":"audio","reasons":["incoming_audio","voice_history","bot_replyType_audio"]}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"EMOTION_DETECTED","contactId":"18095551234","emotion":"interesado","message":"quiero precio","decision":"audio"}[39m
+SEND MODE: audio
+{
+  replyType: 'audio',
+  sendAs: 'audio',
+  message: 'Te respondo por audio.'
+}
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_presence_sending","presence":"recording","number":"18095551234","instanceName":"demo"}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"VOICE_DEBUG","traceId":null,"contactId":"18095551234","response_original":"Te respondo por audio.","response_audio":"Te respondo por audio.","iguales":true}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"AUDIO_DEBUG","traceId":null,"contactId":"18095551234","stage":"generate_start","attempt":1}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"AUDIO_DEBUG","traceId":null,"contactId":"18095551234","stage":"generated","attempt":1,"provider":null,"fileName":"reply.ogg","mimetype":"audio/ogg; codecs=opus","sourceMimetype":null,"bytes":25000,"durationSeconds":3,"minBytes":12000,"minDurationSeconds":2,"bytesOk":true,"durationOk":true}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"AUDIO_DEBUG","traceId":null,"contactId":"18095551234","stage":"send_start","to":"18095551234@s.whatsapp.net","fileName":"reply.ogg","mimetype":"audio/ogg; codecs=opus","bytes":25000}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"AUDIO_DEBUG","traceId":null,"contactId":"18095551234","stage":"send_success","to":"18095551234@s.whatsapp.net"}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_reply_sent","traceId":null,"contactId":"18095551234","intent":"otro","hotLead":false,"usedGallery":false,"replyType":"audio"}[39m
+ENVIADA: { text: 'Te respondo por audio.', mediaIds: [] }
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_presence_sending","presence":"composing","number":"18095551234","instanceName":"demo"}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"VOICE_DECISION","contactId":"18095551234","inputType":"text","emotion":"interesado","incomingAudioStreak":0,"incomingChars":24,"replyChars":20,"botIntent":"otro","botAction":"guiar","replyType":"text","scoreAudio":1,"decision":"text","reasons":["voice_history"]}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"EMOTION_DETECTED","contactId":"18095551234","emotion":"interesado","message":"Hola me interesa comprar","decision":"text"}[39m
+SEND MODE: text
+{ replyType: 'text', sendAs: 'text', message: 'Te ayudo ahora mismo' }
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_reply_sent","traceId":null,"contactId":"18095551234","intent":"otro","hotLead":false,"usedGallery":false,"replyType":"text"}[39m
+ENVIADA: { text: 'Te ayudo ahora mismo', mediaIds: [] }
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_presence_sending","presence":"composing","number":"18095551234","instanceName":"demo"}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"VOICE_DECISION","contactId":"18095551234","inputType":"text","emotion":"frio","incomingAudioStreak":0,"incomingChars":2,"replyChars":22,"scoreAudio":0,"decision":"text","botIntent":"otro","botAction":"guiar","reasons":["confirmation"]}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"EMOTION_DETECTED","contactId":"18095551234","emotion":"frio","message":"ok","decision":"text"}[39m
+SEND MODE: text
+{
+  replyType: 'audio',
+  sendAs: 'text',
+  message: 'Te respondo por audio.'
+}
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_reply_sent","traceId":null,"contactId":"18095551234","intent":"otro","hotLead":false,"usedGallery":false,"replyType":"audio"}[39m
+ENVIADA: { text: 'Te respondo por audio.', mediaIds: [] }
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_presence_sending","presence":"composing","number":"18095551234","instanceName":"demo"}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"VOICE_DECISION","contactId":"18095551234","inputType":"text","emotion":"dudoso","incomingAudioStreak":0,"incomingChars":15,"replyChars":54,"botIntent":"otro","botAction":"guiar","replyType":"text","scoreAudio":3,"decision":"audio","reasons":["emotion_dudoso"]}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"EMOTION_DETECTED","contactId":"18095551234","emotion":"dudoso","message":"de verdad sirve?","decision":"audio"}[39m
+SEND MODE: audio
+{
+  replyType: 'text',
+  sendAs: 'audio',
+  message: 'Te digo algo claro: Sí funciona, y te explico por qué.'
+}
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_presence_sending","presence":"recording","number":"18095551234","instanceName":"demo"}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"VOICE_DEBUG","traceId":null,"contactId":"18095551234","response_original":"Te digo algo claro: Sí funciona, y te explico por qué.","response_audio":"Te digo algo claro: Sí funciona, y te explico por qué.","iguales":true}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"AUDIO_DEBUG","traceId":null,"contactId":"18095551234","stage":"generate_start","attempt":1}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"AUDIO_DEBUG","traceId":null,"contactId":"18095551234","stage":"generated","attempt":1,"provider":null,"fileName":"reply.ogg","mimetype":"audio/ogg; codecs=opus","sourceMimetype":null,"bytes":25000,"durationSeconds":3,"minBytes":12000,"minDurationSeconds":2,"bytesOk":true,"durationOk":true}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"AUDIO_DEBUG","traceId":null,"contactId":"18095551234","stage":"send_start","to":"18095551234@s.whatsapp.net","fileName":"reply.ogg","mimetype":"audio/ogg; codecs=opus","bytes":25000}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"AUDIO_DEBUG","traceId":null,"contactId":"18095551234","stage":"send_success","to":"18095551234@s.whatsapp.net"}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_reply_sent","traceId":null,"contactId":"18095551234","intent":"otro","hotLead":false,"usedGallery":false,"replyType":"text"}[39m
+ENVIADA: {
+  text: 'Te digo algo claro: Sí funciona, y te explico por qué.',
+  mediaIds: []
+}
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_presence_sending","presence":"composing","number":"18095551234","instanceName":"demo"}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"VOICE_DECISION","contactId":"18095551234","inputType":"text","emotion":"confundido","incomingAudioStreak":0,"incomingChars":31,"replyChars":127,"botIntent":"interes","botAction":"guiar","replyType":"text","scoreAudio":4,"decision":"audio","reasons":["asks_for_explanation","emotion_confundido","long_reply","voice_history"]}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"EMOTION_DETECTED","contactId":"18095551234","emotion":"confundido","message":"quiero saber bien como funciona","decision":"audio"}[39m
+SEND MODE: audio
+{
+  replyType: 'text',
+  sendAs: 'audio',
+  message: 'Mira, te explico rapido como funciona, como se usa bien y que detalle cuidar para que le saques mejor provecho sin complicarte.'
+}
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_presence_sending","presence":"recording","number":"18095551234","instanceName":"demo"}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"VOICE_DEBUG","traceId":null,"contactId":"18095551234","response_original":"Mira, te explico rapido como funciona, como se usa bien y que detalle cuidar para que le saques mejor provecho sin complicarte.","response_audio":"Mira, te explico rapido como funciona, como se usa bien y que detalle cuidar para que le saques mejor provecho sin complicarte.","iguales":true}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"AUDIO_DEBUG","traceId":null,"contactId":"18095551234","stage":"generate_start","attempt":1}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"AUDIO_DEBUG","traceId":null,"contactId":"18095551234","stage":"generated","attempt":1,"provider":null,"fileName":"reply.ogg","mimetype":"audio/ogg; codecs=opus","sourceMimetype":null,"bytes":25000,"durationSeconds":3,"minBytes":12000,"minDurationSeconds":2,"bytesOk":true,"durationOk":true}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"AUDIO_DEBUG","traceId":null,"contactId":"18095551234","stage":"send_start","to":"18095551234@s.whatsapp.net","fileName":"reply.ogg","mimetype":"audio/ogg; codecs=opus","bytes":25000}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"AUDIO_DEBUG","traceId":null,"contactId":"18095551234","stage":"send_success","to":"18095551234@s.whatsapp.net"}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_reply_sent","traceId":null,"contactId":"18095551234","intent":"interes","hotLead":false,"usedGallery":false,"replyType":"text"}[39m
+ENVIADA: {
+  text: 'Mira, te explico rapido como funciona, como se usa bien y que detalle cuidar para que le saques mejor provecho sin complicarte.',
+  mediaIds: []
+}
+SEND MODE: audio
+{
+  replyType: 'text',
+  sendAs: 'audio',
+  message: 'Mira, te explico bien: Claro, te explico bien como funciona.'
+}
+ENVIADA: {
+  text: 'Mira, te explico bien: Claro, te explico bien como funciona.',
+  mediaIds: []
+}
+SEND MODE: audio
+{
+  replyType: 'text',
+  sendAs: 'audio',
+  message: 'Te digo algo claro: Sí funciona, y te explico por qué.'
+}
+ENVIADA: {
+  text: 'Te digo algo claro: Sí funciona, y te explico por qué.',
+  mediaIds: []
+}
+SEND MODE: text
+{
+  replyType: 'text',
+  sendAs: 'text',
+  message: 'Cuesta 29,90€. ¿Te digo cómo pedirlo?'
+}
+ENVIADA: { text: 'Cuesta 29,90€. ¿Te digo cómo pedirlo?', mediaIds: [] }
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_presence_sending","presence":"composing","number":"18095551234","instanceName":"demo"}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"VOICE_DECISION","contactId":"18095551234","inputType":"text","emotion":"curioso","incomingAudioStreak":0,"incomingChars":483,"replyChars":35,"botIntent":"otro","botAction":"guiar","replyType":"text","scoreAudio":3,"decision":"audio","reasons":["long_incoming_message"]}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"EMOTION_DETECTED","contactId":"18095551234","emotion":"curioso","message":"Hola, te cuento mi caso con detalle porque tengo dudas. Hola, te cuento mi caso con detalle porque tengo dudas. Hola, te cuento mi caso con detalle porque teng…","decision":"audio"}[39m
+SEND MODE: audio
+{
+  replyType: 'text',
+  sendAs: 'audio',
+  message: 'Claro, te explico los puntos clave.'
+}
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_presence_sending","presence":"recording","number":"18095551234","instanceName":"demo"}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"VOICE_DEBUG","traceId":null,"contactId":"18095551234","response_original":"Claro, te explico los puntos clave.","response_audio":"Claro, te explico los puntos clave.","iguales":true}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"AUDIO_DEBUG","traceId":null,"contactId":"18095551234","stage":"generate_start","attempt":1}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"AUDIO_DEBUG","traceId":null,"contactId":"18095551234","stage":"generated","attempt":1,"provider":null,"fileName":"reply.ogg","mimetype":"audio/ogg; codecs=opus","sourceMimetype":null,"bytes":25000,"durationSeconds":3,"minBytes":12000,"minDurationSeconds":2,"bytesOk":true,"durationOk":true}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"AUDIO_DEBUG","traceId":null,"contactId":"18095551234","stage":"send_start","to":"18095551234@s.whatsapp.net","fileName":"reply.ogg","mimetype":"audio/ogg; codecs=opus","bytes":25000}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"AUDIO_DEBUG","traceId":null,"contactId":"18095551234","stage":"send_success","to":"18095551234@s.whatsapp.net"}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_reply_sent","traceId":null,"contactId":"18095551234","intent":"otro","hotLead":false,"usedGallery":false,"replyType":"text"}[39m
+ENVIADA: { text: 'Claro, te explico los puntos clave.', mediaIds: [] }
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_presence_sending","presence":"composing","number":"18095551234","instanceName":"demo"}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"VOICE_DECISION","contactId":"18095551234","inputType":"text","emotion":"confundido","incomingAudioStreak":0,"incomingChars":28,"replyChars":43,"botIntent":"otro","botAction":"guiar","replyType":"text","scoreAudio":3,"decision":"audio","reasons":["asks_for_explanation","emotion_confundido"]}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"EMOTION_DETECTED","contactId":"18095551234","emotion":"confundido","message":"explicame bien como funciona","decision":"audio"}[39m
+SEND MODE: audio
+{
+  replyType: 'text',
+  sendAs: 'audio',
+  message: 'Mira, te explico bien: Te ayudo ahora mismo'
+}
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_presence_sending","presence":"recording","number":"18095551234","instanceName":"demo"}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"VOICE_DEBUG","traceId":null,"contactId":"18095551234","response_original":"Mira, te explico bien: Te ayudo ahora mismo","response_audio":"Mira, te explico bien: Te ayudo ahora mismo","iguales":true}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"AUDIO_DEBUG","traceId":null,"contactId":"18095551234","stage":"generate_start","attempt":1}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"AUDIO_DEBUG","traceId":null,"contactId":"18095551234","stage":"generated","attempt":1,"provider":null,"fileName":"reply.ogg","mimetype":"audio/ogg; codecs=opus","sourceMimetype":null,"bytes":25000,"durationSeconds":3,"minBytes":12000,"minDurationSeconds":2,"bytesOk":true,"durationOk":true}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"AUDIO_DEBUG","traceId":null,"contactId":"18095551234","stage":"send_start","to":"18095551234@s.whatsapp.net","fileName":"reply.ogg","mimetype":"audio/ogg; codecs=opus","bytes":25000}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"AUDIO_DEBUG","traceId":null,"contactId":"18095551234","stage":"send_success","to":"18095551234@s.whatsapp.net"}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_reply_sent","traceId":null,"contactId":"18095551234","intent":"otro","hotLead":false,"usedGallery":false,"replyType":"text"}[39m
+ENVIADA: { text: 'Mira, te explico bien: Te ayudo ahora mismo', mediaIds: [] }
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_presence_sending","presence":"composing","number":"18095551234","instanceName":"demo"}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"VOICE_DECISION","contactId":"18095551234","inputType":"text","emotion":"curioso","incomingAudioStreak":0,"incomingChars":22,"replyChars":50,"botIntent":"interes","botAction":"guiar","replyType":"text","scoreAudio":0,"decision":"text","reasons":[]}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"EMOTION_DETECTED","contactId":"18095551234","emotion":"curioso","message":"quiero ver la pastilla","decision":"text"}[39m
+SEND MODE: text
+{
+  replyType: 'text',
+  sendAs: 'text',
+  message: 'Claro, mira esta referencia y dime si te la envio.'
+}
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_reply_sent","traceId":null,"contactId":"18095551234","intent":"interes","hotLead":false,"usedGallery":true,"replyType":"text"}[39m
+ENVIADA: {
+  text: 'Claro, mira esta referencia y dime si te la envio.',
+  mediaIds: [ 'https://example.com/producto-1.jpg' ]
+}
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_presence_sending","presence":"composing","number":"18095551234","instanceName":"demo"}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"VOICE_DECISION","contactId":"18095551234","inputType":"audio","emotion":"confundido","incomingAudioStreak":1,"incomingChars":37,"replyChars":65,"botIntent":"catalogo","botAction":"guiar","replyType":"audio","scoreAudio":4,"decision":"audio","reasons":["incoming_audio","asks_for_explanation","emotion_confundido","voice_history","explicit_voice_request","bot_replyType_audio"]}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"EMOTION_DETECTED","contactId":"18095551234","emotion":"confundido","message":"mandame fotos y explicamelo por audio","decision":"audio"}[39m
+SEND MODE: audio
+{
+  replyType: 'audio',
+  sendAs: 'audio',
+  message: 'Mira, te explico bien: Te mando las fotos y te explico por audio.'
+}
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_presence_sending","presence":"recording","number":"18095551234","instanceName":"demo"}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"VOICE_DEBUG","traceId":null,"contactId":"18095551234","response_original":"Mira, te explico bien: Te mando las fotos y te explico por audio.","response_audio":"Mira, te explico bien: Te mando las fotos y te explico por audio.","iguales":true}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"AUDIO_DEBUG","traceId":null,"contactId":"18095551234","stage":"generate_start","attempt":1}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"AUDIO_DEBUG","traceId":null,"contactId":"18095551234","stage":"generated","attempt":1,"provider":null,"fileName":"reply.ogg","mimetype":"audio/ogg; codecs=opus","sourceMimetype":null,"bytes":25000,"durationSeconds":3,"minBytes":12000,"minDurationSeconds":2,"bytesOk":true,"durationOk":true}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"AUDIO_DEBUG","traceId":null,"contactId":"18095551234","stage":"send_start","to":"18095551234@s.whatsapp.net","fileName":"reply.ogg","mimetype":"audio/ogg; codecs=opus","bytes":25000}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"AUDIO_DEBUG","traceId":null,"contactId":"18095551234","stage":"send_success","to":"18095551234@s.whatsapp.net"}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_reply_sent","traceId":null,"contactId":"18095551234","intent":"catalogo","hotLead":false,"usedGallery":true,"replyType":"audio"}[39m
+ENVIADA: {
+  text: 'Mira, te explico bien: Te mando las fotos y te explico por audio.',
+  mediaIds: [ 'https://example.com/producto-1.jpg' ]
+}
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_presence_sending","presence":"composing","number":"18095551234","instanceName":"demo"}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"VOICE_DECISION","contactId":"18095551234","inputType":"audio","emotion":"confundido","incomingAudioStreak":1,"incomingChars":37,"replyChars":70,"botIntent":"catalogo","botAction":"guiar","replyType":"audio","scoreAudio":4,"decision":"audio","reasons":["incoming_audio","asks_for_explanation","emotion_confundido","voice_history","explicit_voice_request","bot_replyType_audio"]}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"EMOTION_DETECTED","contactId":"18095551234","emotion":"confundido","message":"mandame fotos y explicamelo por audio","decision":"audio"}[39m
+SEND MODE: audio
+{
+  replyType: 'audio',
+  sendAs: 'audio',
+  message: 'Mira, te explico bien: Te mando la foto y te explico bien como usarla.'
+}
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_presence_sending","presence":"recording","number":"18095551234","instanceName":"demo"}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"VOICE_DEBUG","traceId":null,"contactId":"18095551234","response_original":"Mira, te explico bien: Te mando la foto y te explico bien como usarla.","response_audio":"Mira, te explico bien: Te mando la foto y te explico bien como usarla.","iguales":true}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"AUDIO_DEBUG","traceId":null,"contactId":"18095551234","stage":"generate_start","attempt":1}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"AUDIO_DEBUG","traceId":null,"contactId":"18095551234","stage":"generate_error","attempt":1,"error":"tts failed"}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"AUDIO_DEBUG","traceId":null,"contactId":"18095551234","stage":"generate_retry","attempt":1,"reason":"audio_generation_failed"}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"AUDIO_DEBUG","traceId":null,"contactId":"18095551234","stage":"generate_start","attempt":2}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"AUDIO_DEBUG","traceId":null,"contactId":"18095551234","stage":"generate_error","attempt":2,"error":"tts failed"}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"AUDIO_DEBUG","traceId":null,"contactId":"18095551234","stage":"fallback_to_text","to":"18095551234@s.whatsapp.net","error":"tts failed"}[39m
+[33m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [33m   WARN[39m [38;5;3m[WhatsAppService] [39m[33m{"event":"whatsapp_audio_reply_fallback_to_text","traceId":null,"contactId":"18095551234","error":"tts failed"}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_reply_sent","traceId":null,"contactId":"18095551234","intent":"catalogo","hotLead":false,"usedGallery":true,"replyType":"audio"}[39m
+ENVIADA: {
+  text: 'Mira, te explico bien: Te mando la foto y te explico bien como usarla.',
+  mediaIds: [ 'https://example.com/producto-1.jpg' ]
+}
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_presence_sending","presence":"composing","number":"18095551234","instanceName":"demo"}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"VOICE_DECISION","contactId":"18095551234","inputType":"text","emotion":"curioso","incomingAudioStreak":0,"incomingChars":25,"replyChars":49,"botIntent":"catalogo","botAction":"guiar","replyType":"text","scoreAudio":0,"decision":"text","reasons":["short_quick_message"]}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"EMOTION_DETECTED","contactId":"18095551234","emotion":"curioso","message":"tienes video del producto?","decision":"text"}[39m
+SEND MODE: text
+{
+  replyType: 'text',
+  sendAs: 'text',
+  message: 'Te comparto un video para que veas como funciona.'
+}
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_reply_sent","traceId":null,"contactId":"18095551234","intent":"catalogo","hotLead":false,"usedGallery":true,"replyType":"text"}[39m
+ENVIADA: {
+  text: 'Te comparto un video para que veas como funciona.',
+  mediaIds: [ 'https://example.com/producto-demo.mp4' ]
+}
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_presence_sending","presence":"composing","number":"18095551234","instanceName":"demo"}[39m
+MENSAJE OMITIDO: duplicado detectado
+VIDEO OMITIDO: ya enviado anteriormente https://example.com/producto-demo.mp4
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"VOICE_DECISION","contactId":"18095551234","inputType":"text","emotion":"frio","incomingAudioStreak":0,"incomingChars":2,"replyChars":56,"scoreAudio":0,"decision":"text","botIntent":"catalogo","botAction":"guiar","reasons":["confirmation"]}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"EMOTION_DETECTED","contactId":"18095551234","emotion":"frio","message":"ok","decision":"text"}[39m
+SEND MODE: text
+{
+  replyType: 'text',
+  sendAs: 'text',
+  message: 'Claro, te comparto un video para que veas como funciona.'
+}
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_reply_sent","traceId":null,"contactId":"18095551234","intent":"catalogo","hotLead":false,"usedGallery":false,"replyType":"text"}[39m
+ENVIADA: {
+  text: 'Claro, te comparto un video para que veas como funciona.',
+  mediaIds: []
+}
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_presence_sending","presence":"composing","number":"18095551234","instanceName":"demo"}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"VOICE_DECISION","contactId":"18095551234","inputType":"text","emotion":"curioso","incomingAudioStreak":0,"incomingChars":25,"replyChars":49,"botIntent":"catalogo","botAction":"guiar","replyType":"text","scoreAudio":0,"decision":"text","reasons":["short_quick_message"]}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"EMOTION_DETECTED","contactId":"18095551234","emotion":"curioso","message":"tienes video del producto?","decision":"text"}[39m
+SEND MODE: text
+{
+  replyType: 'text',
+  sendAs: 'text',
+  message: 'Te comparto un video para que veas como funciona.'
+}
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_reply_sent","traceId":null,"contactId":"18095551234","intent":"catalogo","hotLead":false,"usedGallery":true,"replyType":"text"}[39m
+ENVIADA: {
+  text: 'Te comparto un video para que veas como funciona.',
+  mediaIds: [ 'https://example.com/producto-demo.mp4' ]
+}
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_presence_sending","presence":"composing","number":"18095551234","instanceName":"demo"}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"VOICE_DECISION","contactId":"18095551234","inputType":"text","emotion":"interesado","incomingAudioStreak":0,"incomingChars":20,"replyChars":43,"botIntent":"ubicacion","botAction":"guiar","replyType":"text","scoreAudio":0,"decision":"text","reasons":[]}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"EMOTION_DETECTED","contactId":"18095551234","emotion":"interesado","message":"donde estan ubicados?","decision":"text"}[39m
+SEND MODE: text
+{
+  replyType: 'text',
+  sendAs: 'text',
+  message: 'Estamos ubicados en el centro de la ciudad.'
+}
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_reply_sent","traceId":null,"contactId":"18095551234","intent":"ubicacion","hotLead":false,"usedGallery":false,"replyType":"text"}[39m
+ENVIADA: { text: 'Estamos ubicados en el centro de la ciudad.', mediaIds: [] }
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_presence_sending","presence":"composing","number":"18095551234","instanceName":"demo"}[39m
+MENSAJE OMITIDO: duplicado detectado
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"VOICE_DECISION","contactId":"18095551234","inputType":"text","emotion":"curioso","incomingAudioStreak":0,"incomingChars":25,"replyChars":56,"botIntent":"catalogo","botAction":"guiar","replyType":"text","scoreAudio":0,"decision":"text","reasons":[]}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"EMOTION_DETECTED","contactId":"18095551234","emotion":"curioso","message":"mandame el video otra vez","decision":"text"}[39m
+SEND MODE: text
+{
+  replyType: 'text',
+  sendAs: 'text',
+  message: 'Claro, te comparto un video para que veas como funciona.'
+}
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_reply_sent","traceId":null,"contactId":"18095551234","intent":"catalogo","hotLead":false,"usedGallery":true,"replyType":"text"}[39m
+ENVIADA: {
+  text: 'Claro, te comparto un video para que veas como funciona.',
+  mediaIds: [ 'https://example.com/producto-demo.mp4' ]
+}
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_presence_sending","presence":"composing","number":"18095551234","instanceName":"demo"}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"VOICE_DECISION","contactId":"18095551234","inputType":"text","emotion":"curioso","incomingAudioStreak":0,"incomingChars":25,"replyChars":49,"botIntent":"catalogo","botAction":"guiar","replyType":"text","scoreAudio":0,"decision":"text","reasons":["short_quick_message"]}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"EMOTION_DETECTED","contactId":"18095551234","emotion":"curioso","message":"tienes video del producto?","decision":"text"}[39m
+SEND MODE: text
+{
+  replyType: 'text',
+  sendAs: 'text',
+  message: 'Te comparto un video para que veas como funciona.'
+}
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_reply_sent","traceId":null,"contactId":"18095551234","intent":"catalogo","hotLead":false,"usedGallery":true,"replyType":"text"}[39m
+ENVIADA: {
+  text: 'Te comparto un video para que veas como funciona.',
+  mediaIds: [ 'https://example.com/producto-demo.mp4' ]
+}
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_presence_sending","presence":"composing","number":"18095551234","instanceName":"demo"}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"VOICE_DECISION","contactId":"18095551234","inputType":"text","emotion":"interesado","incomingAudioStreak":0,"incomingChars":20,"replyChars":43,"botIntent":"ubicacion","botAction":"guiar","replyType":"text","scoreAudio":0,"decision":"text","reasons":[]}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"EMOTION_DETECTED","contactId":"18095551234","emotion":"interesado","message":"donde estan ubicados?","decision":"text"}[39m
+SEND MODE: text
+{
+  replyType: 'text',
+  sendAs: 'text',
+  message: 'Estamos ubicados en el centro de la ciudad.'
+}
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_reply_sent","traceId":null,"contactId":"18095551234","intent":"ubicacion","hotLead":false,"usedGallery":false,"replyType":"text"}[39m
+ENVIADA: { text: 'Estamos ubicados en el centro de la ciudad.', mediaIds: [] }
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_presence_sending","presence":"composing","number":"18095551234","instanceName":"demo"}[39m
+MENSAJE OMITIDO: duplicado detectado
+VIDEO OMITIDO: ya enviado anteriormente https://example.com/producto-demo.mp4
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"VOICE_DECISION","contactId":"18095551234","inputType":"text","emotion":"curioso","incomingAudioStreak":0,"incomingChars":25,"replyChars":56,"botIntent":"catalogo","botAction":"guiar","replyType":"text","scoreAudio":0,"decision":"text","reasons":["short_quick_message"]}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"EMOTION_DETECTED","contactId":"18095551234","emotion":"curioso","message":"tienes video del producto?","decision":"text"}[39m
+SEND MODE: text
+{
+  replyType: 'text',
+  sendAs: 'text',
+  message: 'Claro, te comparto un video para que veas como funciona.'
+}
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_reply_sent","traceId":null,"contactId":"18095551234","intent":"catalogo","hotLead":false,"usedGallery":false,"replyType":"text"}[39m
+ENVIADA: {
+  text: 'Claro, te comparto un video para que veas como funciona.',
+  mediaIds: []
+}
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_presence_sending","presence":"composing","number":"18095551234","instanceName":"demo"}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"VOICE_DECISION","contactId":"18095551234","inputType":"text","emotion":"frio","incomingAudioStreak":0,"incomingChars":13,"replyChars":53,"scoreAudio":0,"decision":"text","botIntent":"catalogo","botAction":"guiar","replyType":"text","reasons":["emotion_frio"]}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"EMOTION_DETECTED","contactId":"18095551234","emotion":"frio","message":"mandame fotos","decision":"text"}[39m
+SEND MODE: text
+{
+  replyType: 'text',
+  sendAs: 'text',
+  message: 'Te explico por aqui mientras te consigo las imagenes.'
+}
+[31m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [31m  ERROR[39m [38;5;3m[WhatsAppService] [39m[31m{"event":"whatsapp_delivery_failure","traceId":null,"stage":"evolution_send","instanceName":null,"messageId":null,"contactId":"18095551234","messageType":"text","remoteJid":null,"recipientAddress":"18095551234@s.whatsapp.net","recipientNumber":"18095551234","errorType":"error","errorMessage":"media send failed","errorCode":null,"sendAs":"media"}[39m
+[33m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [33m   WARN[39m [38;5;3m[WhatsAppService] [39m[33m{"event":"whatsapp_media_delivery_fallback_to_text","traceId":null,"contactId":"18095551234","mediaCount":1,"error":"media send failed"}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_reply_sent","traceId":null,"contactId":"18095551234","intent":"catalogo","hotLead":false,"usedGallery":false,"replyType":"text"}[39m
+ENVIADA: {
+  text: 'Te explico por aqui mientras te consigo las imagenes.',
+  mediaIds: [ 'https://example.com/producto-1.jpg' ]
+}
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_presence_sending","presence":"composing","number":"18095551234","instanceName":"demo"}[39m
+Error: media send failed
+    at WhatsAppService.service.deliverMatchedMedia (C:\Users\pc\DEV\PROYECTOS\CLIENTES\PHYTOEMAGRYBOT\backend\test\whatsapp.service.test.ts:2835:11)
+    at WhatsAppService.processAndDeliverMessage (C:\Users\pc\DEV\PROYECTOS\CLIENTES\PHYTOEMAGRYBOT\backend\src\whatsapp\whatsapp.service.ts:1278:20)
+    at async TestContext.<anonymous> (C:\Users\pc\DEV\PROYECTOS\CLIENTES\PHYTOEMAGRYBOT\backend\test\whatsapp.service.test.ts:2838:3)
+    at async Test.run (node:internal/test_runner/test:1125:7)
+    at async Test.processPendingSubtests (node:internal/test_runner/test:787:7)
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"VOICE_DECISION","contactId":"18095551234","inputType":"audio","emotion":"confundido","incomingAudioStreak":1,"incomingChars":28,"replyChars":60,"botIntent":"otro","botAction":"guiar","replyType":"audio","scoreAudio":4,"decision":"audio","reasons":["incoming_audio","asks_for_explanation","emotion_confundido","voice_history","bot_replyType_audio"]}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"EMOTION_DETECTED","contactId":"18095551234","emotion":"confundido","message":"explicame bien como funciona","decision":"audio"}[39m
+SEND MODE: audio
+{
+  replyType: 'audio',
+  sendAs: 'audio',
+  message: 'Mira, te explico bien: Claro, te explico bien como funciona.'
+}
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_presence_sending","presence":"recording","number":"18095551234","instanceName":"demo"}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"VOICE_DEBUG","traceId":null,"contactId":"18095551234","response_original":"Mira, te explico bien: Claro, te explico bien como funciona.","response_audio":"Mira, te explico bien: Claro, te explico bien como funciona.","iguales":true}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"AUDIO_DEBUG","traceId":null,"contactId":"18095551234","stage":"generate_start","attempt":1}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"AUDIO_DEBUG","traceId":null,"contactId":"18095551234","stage":"generated","attempt":1,"provider":null,"fileName":"reply.ogg","mimetype":"audio/ogg; codecs=opus","sourceMimetype":null,"bytes":25000,"durationSeconds":3,"minBytes":12000,"minDurationSeconds":2,"bytesOk":true,"durationOk":true}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"AUDIO_DEBUG","traceId":null,"contactId":"18095551234","stage":"send_start","to":"18095551234@s.whatsapp.net","fileName":"reply.ogg","mimetype":"audio/ogg; codecs=opus","bytes":25000}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"AUDIO_DEBUG","traceId":null,"contactId":"18095551234","stage":"send_success","to":"18095551234@s.whatsapp.net"}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_reply_sent","traceId":null,"contactId":"18095551234","intent":"otro","hotLead":false,"usedGallery":false,"replyType":"audio"}[39m
+ENVIADA: {
+  text: 'Mira, te explico bien: Claro, te explico bien como funciona.',
+  mediaIds: []
+}
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_presence_sending","presence":"composing","number":"18095551234","instanceName":"demo"}[39m
+MENSAJE OMITIDO: duplicado detectado
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"VOICE_DECISION","contactId":"18095551234","inputType":"audio","emotion":"confundido","incomingAudioStreak":2,"incomingChars":32,"replyChars":67,"scoreAudio":4,"decision":"text","botIntent":"otro","botAction":"guiar","replyType":"audio","reasons":["multiple_incoming_audios_forced","avoid_consecutive_audio"]}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"EMOTION_DETECTED","contactId":"18095551234","emotion":"confundido","message":"explicame otra vez como funciona","decision":"text"}[39m
+SEND MODE: text
+{
+  replyType: 'audio',
+  sendAs: 'text',
+  message: 'Claro, mira, te explico bien: Claro, te explico bien como funciona.'
+}
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_reply_sent","traceId":null,"contactId":"18095551234","intent":"otro","hotLead":false,"usedGallery":false,"replyType":"audio"}[39m
+ENVIADA: {
+  text: 'Claro, mira, te explico bien: Claro, te explico bien como funciona.',
+  mediaIds: []
+}
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_presence_sending","presence":"composing","number":"18095551234","instanceName":"demo"}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"VOICE_DECISION","contactId":"18095551234","inputType":"audio","emotion":"confundido","incomingAudioStreak":1,"incomingChars":17,"replyChars":43,"botIntent":"otro","botAction":"guiar","replyType":"audio","scoreAudio":4,"decision":"audio","reasons":["incoming_audio","asks_for_explanation","emotion_confundido","voice_history","explicit_voice_request","bot_replyType_audio"]}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"EMOTION_DETECTED","contactId":"18095551234","emotion":"confundido","message":"explicame por voz","decision":"audio"}[39m
+SEND MODE: audio
+{
+  replyType: 'audio',
+  sendAs: 'audio',
+  message: 'Mira, te explico bien: Te ayudo ahora mismo'
+}
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_presence_sending","presence":"recording","number":"18095551234","instanceName":"demo"}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"VOICE_DEBUG","traceId":null,"contactId":"18095551234","response_original":"Mira, te explico bien: Te ayudo ahora mismo","response_audio":"Mira, te explico bien: Te ayudo ahora mismo","iguales":true}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"AUDIO_DEBUG","traceId":null,"contactId":"18095551234","stage":"generate_start","attempt":1}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"AUDIO_DEBUG","traceId":null,"contactId":"18095551234","stage":"generated","attempt":1,"provider":null,"fileName":"reply.ogg","mimetype":"audio/ogg; codecs=opus","sourceMimetype":null,"bytes":25000,"durationSeconds":3,"minBytes":12000,"minDurationSeconds":2,"bytesOk":true,"durationOk":true}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"AUDIO_DEBUG","traceId":null,"contactId":"18095551234","stage":"send_start","to":"18095551234@s.whatsapp.net","fileName":"reply.ogg","mimetype":"audio/ogg; codecs=opus","bytes":25000}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"AUDIO_DEBUG","traceId":null,"contactId":"18095551234","stage":"send_success","to":"18095551234@s.whatsapp.net"}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_reply_sent","traceId":null,"contactId":"18095551234","intent":"otro","hotLead":false,"usedGallery":false,"replyType":"audio"}[39m
+ENVIADA: { text: 'Mira, te explico bien: Te ayudo ahora mismo', mediaIds: [] }
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_presence_sending","presence":"composing","number":"18095559999","instanceName":"demo"}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"VOICE_DECISION","contactId":"18095559999","inputType":"text","emotion":"curioso","incomingAudioStreak":0,"incomingChars":33,"replyChars":20,"botIntent":"otro","botAction":"guiar","replyType":"text","scoreAudio":3,"decision":"audio","reasons":["explicit_voice_request"]}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"EMOTION_DETECTED","contactId":"18095559999","emotion":"curioso","message":"mandame una nota de voz por favor","decision":"audio"}[39m
+SEND MODE: audio
+{ replyType: 'text', sendAs: 'audio', message: 'Te ayudo ahora mismo' }
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_presence_sending","presence":"recording","number":"18095559999","instanceName":"demo"}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"VOICE_DEBUG","traceId":null,"contactId":"18095559999","response_original":"Te ayudo ahora mismo","response_audio":"Te ayudo ahora mismo","iguales":true}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"AUDIO_DEBUG","traceId":null,"contactId":"18095559999","stage":"generate_start","attempt":1}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"AUDIO_DEBUG","traceId":null,"contactId":"18095559999","stage":"generated","attempt":1,"provider":null,"fileName":"reply.ogg","mimetype":"audio/ogg; codecs=opus","sourceMimetype":null,"bytes":25000,"durationSeconds":3,"minBytes":12000,"minDurationSeconds":2,"bytesOk":true,"durationOk":true}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"AUDIO_DEBUG","traceId":null,"contactId":"18095559999","stage":"send_start","to":"18095559999@s.whatsapp.net","fileName":"reply.ogg","mimetype":"audio/ogg; codecs=opus","bytes":25000}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"AUDIO_DEBUG","traceId":null,"contactId":"18095559999","stage":"send_success","to":"18095559999@s.whatsapp.net"}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_reply_sent","traceId":null,"contactId":"18095559999","intent":"otro","hotLead":false,"usedGallery":false,"replyType":"text"}[39m
+ENVIADA: { text: 'Te ayudo ahora mismo', mediaIds: [] }
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_audio_transcribed","traceId":null,"contactId":"18095551234","seconds":20,"transcript":"quiero precio"}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_presence_sending","presence":"composing","number":"18095551234","instanceName":"demo"}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"VOICE_DECISION","contactId":"18095551234","inputType":"audio","emotion":"interesado","incomingAudioStreak":1,"incomingChars":13,"replyChars":20,"botIntent":"otro","botAction":"guiar","replyType":"text","scoreAudio":1,"decision":"text","reasons":["incoming_audio","voice_history","short_quick_message"]}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"EMOTION_DETECTED","contactId":"18095551234","emotion":"interesado","message":"quiero precio","decision":"text"}[39m
+SEND MODE: text
+{ replyType: 'text', sendAs: 'text', message: 'Te ayudo ahora mismo' }
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_reply_sent","traceId":null,"contactId":"18095551234","intent":"otro","hotLead":false,"usedGallery":false,"replyType":"text"}[39m
+ENVIADA: { text: 'Te ayudo ahora mismo', mediaIds: [] }
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_presence_sending","presence":"composing","number":"18095551234","instanceName":"demo"}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"VOICE_DECISION","contactId":"18095551234","inputType":"audio","emotion":"confundido","incomingAudioStreak":1,"incomingChars":28,"replyChars":60,"botIntent":"otro","botAction":"guiar","replyType":"audio","scoreAudio":4,"decision":"audio","reasons":["incoming_audio","asks_for_explanation","emotion_confundido","voice_history","bot_replyType_audio"]}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"EMOTION_DETECTED","contactId":"18095551234","emotion":"confundido","message":"explicame bien como funciona","decision":"audio"}[39m
+SEND MODE: audio
+{
+  replyType: 'audio',
+  sendAs: 'audio',
+  message: 'Mira, te explico bien: Claro, te explico bien como funciona.'
+}
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_presence_sending","presence":"recording","number":"18095551234","instanceName":"demo"}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"VOICE_DEBUG","traceId":null,"contactId":"18095551234","response_original":"Mira, te explico bien: Claro, te explico bien como funciona.","response_audio":"Mira, te explico bien: Claro, te explico bien como funciona.","iguales":true}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"AUDIO_DEBUG","traceId":null,"contactId":"18095551234","stage":"generate_start","attempt":1}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"AUDIO_DEBUG","traceId":null,"contactId":"18095551234","stage":"generated","attempt":1,"provider":null,"fileName":"reply.ogg","mimetype":"audio/ogg; codecs=opus","sourceMimetype":null,"bytes":2000,"durationSeconds":1.2,"minBytes":12000,"minDurationSeconds":2,"bytesOk":false,"durationOk":false}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"AUDIO_DEBUG","traceId":null,"contactId":"18095551234","stage":"generate_retry","attempt":1,"reason":"audio_validation_failed"}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"AUDIO_DEBUG","traceId":null,"contactId":"18095551234","stage":"generate_start","attempt":2}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"AUDIO_DEBUG","traceId":null,"contactId":"18095551234","stage":"generated","attempt":2,"provider":null,"fileName":"reply.ogg","mimetype":"audio/ogg; codecs=opus","sourceMimetype":null,"bytes":2000,"durationSeconds":1.2,"minBytes":12000,"minDurationSeconds":2,"bytesOk":false,"durationOk":false}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"AUDIO_DEBUG","traceId":null,"contactId":"18095551234","stage":"generate_error","attempt":2,"error":"Audio validation failed (bytesOk=false, durationOk=false, bytes=2000, durationSeconds=1.2)"}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"AUDIO_DEBUG","traceId":null,"contactId":"18095551234","stage":"fallback_to_text","to":"18095551234@s.whatsapp.net","error":"Audio validation failed (bytesOk=false, durationOk=false, bytes=2000, durationSeconds=1.2)"}[39m
+[33m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [33m   WARN[39m [38;5;3m[WhatsAppService] [39m[33m{"event":"whatsapp_audio_reply_fallback_to_text","traceId":null,"contactId":"18095551234","error":"Audio validation failed (bytesOk=false, durationOk=false, bytes=2000, durationSeconds=1.2)"}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_reply_sent","traceId":null,"contactId":"18095551234","intent":"otro","hotLead":false,"usedGallery":false,"replyType":"audio"}[39m
+ENVIADA: {
+  text: 'Mira, te explico bien: Claro, te explico bien como funciona.',
+  mediaIds: []
+}
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_presence_sending","presence":"composing","number":"18095551234","instanceName":"demo"}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"VOICE_DECISION","contactId":"18095551234","inputType":"text","emotion":"frio","incomingAudioStreak":0,"incomingChars":4,"replyChars":20,"scoreAudio":0,"decision":"text","botIntent":"otro","botAction":"guiar","replyType":"text","reasons":["emotion_frio"]}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"EMOTION_DETECTED","contactId":"18095551234","emotion":"frio","message":"hola","decision":"text"}[39m
+SEND MODE: text
+{ replyType: 'text', sendAs: 'text', message: 'Te ayudo ahora mismo' }
+[33m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [33m   WARN[39m [38;5;3m[WhatsAppService] [39m[33m{"event":"whatsapp_text_retry","traceId":null,"contactId":"18095551234","reason":"primary_text_reply","error":"temporary failure"}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_reply_sent","traceId":null,"contactId":"18095551234","intent":"otro","hotLead":false,"usedGallery":false,"replyType":"text"}[39m
+ENVIADA: { text: 'Te ayudo ahora mismo', mediaIds: [] }
+🔥 RAW: {}
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_pipeline_stage","traceId":"1bd5d4d0-c11e-41cb-9d72-3be9904a28d5","stage":"received","eventName":null,"instanceName":null,"messageId":null,"remoteJid":null,"pushName":null,"topLevelSender":null}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_pipeline_stage","traceId":"1bd5d4d0-c11e-41cb-9d72-3be9904a28d5","stage":"validated","eventName":null,"instanceName":"demo","messageId":null,"remoteJid":null,"pushName":null,"topLevelSender":null,"webhookSecretConfigured":true}[39m
+📥 remoteJid: null
+📥 participant: null
+📤 JID FINAL: null
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_pipeline_stage","traceId":"1bd5d4d0-c11e-41cb-9d72-3be9904a28d5","stage":"enriched","eventName":null,"instanceName":"demo","messageId":null,"remoteJid":null,"pushName":null,"topLevelSender":null,"instancePhone":null,"recipientAddress":null,"recipientNumber":null}[39m
+[33m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [33m   WARN[39m [38;5;3m[WhatsAppService] [39m[33m{"event":"whatsapp_pipeline_diagnostic","traceId":"1bd5d4d0-c11e-41cb-9d72-3be9904a28d5","reason":"recipient_routing_incomplete","eventName":null,"instanceName":"demo","messageId":null,"remoteJid":null,"pushName":null,"topLevelSender":null,"instancePhone":null,"recipientAddress":null,"recipientNumber":null,"reasons":["instance_phone_missing","missing_sender_metadata","top_level_sender_missing","recipient_address_unresolved","recipient_number_unresolved"]}[39m
+📥 remoteJid: null
+📥 participant: null
+📤 JID FINAL: null
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_webhook_payload_ready","traceId":"1bd5d4d0-c11e-41cb-9d72-3be9904a28d5","messageId":null,"pushName":null,"resolvedSenderAddress":null,"resolvedSenderNumber":null,"recipientAddress":null,"recipientNumber":null,"senderAndRecipientMatch":false,"instancePhone":null,"remoteJid":null,"remoteJidAlt":null,"senderPn":null,"participantPn":null,"participantAlt":null}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_pipeline_stage","traceId":"1bd5d4d0-c11e-41cb-9d72-3be9904a28d5","stage":"normalized","eventName":null,"instanceName":"demo","messageId":null,"remoteJid":null,"pushName":null,"topLevelSender":null,"contactId":"18095551234","messageType":"audio","outboundAddress":"69132011749577@lid"}[39m
+[33m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [33m   WARN[39m [38;5;3m[WhatsAppService] [39m[33m{"event":"whatsapp_pipeline_diagnostic","traceId":"1bd5d4d0-c11e-41cb-9d72-3be9904a28d5","reason":"outbound_address_unresolved","eventName":null,"instanceName":"demo","messageId":null,"remoteJid":null,"pushName":null,"topLevelSender":null,"contactId":"18095551234","messageType":"audio","outboundAddress":"69132011749577@lid","reasons":["instance_phone_missing","missing_sender_metadata","top_level_sender_missing","recipient_address_unresolved","recipient_number_unresolved","outbound_address_not_real_jid"]}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_message_received","traceId":"1bd5d4d0-c11e-41cb-9d72-3be9904a28d5","contactId":"18095551234","senderNumber":"18095551234","senderAddress":"69132011749577@lid","recipientNumber":null,"recipientAddress":null,"pushName":null,"type":"audio","message":"[audio]"}[39m
+🔥 RAW: {}
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_pipeline_stage","traceId":"10bad1c6-1aff-4cef-8438-3d0717881f00","stage":"received","eventName":null,"instanceName":null,"messageId":null,"remoteJid":null,"pushName":null,"topLevelSender":null}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_pipeline_stage","traceId":"10bad1c6-1aff-4cef-8438-3d0717881f00","stage":"validated","eventName":null,"instanceName":"demo","messageId":null,"remoteJid":null,"pushName":null,"topLevelSender":null,"webhookSecretConfigured":true}[39m
+📥 remoteJid: null
+📥 participant: null
+📤 JID FINAL: null
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_pipeline_stage","traceId":"10bad1c6-1aff-4cef-8438-3d0717881f00","stage":"enriched","eventName":null,"instanceName":"demo","messageId":null,"remoteJid":null,"pushName":null,"topLevelSender":null,"instancePhone":null,"recipientAddress":null,"recipientNumber":null}[39m
+[33m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [33m   WARN[39m [38;5;3m[WhatsAppService] [39m[33m{"event":"whatsapp_pipeline_diagnostic","traceId":"10bad1c6-1aff-4cef-8438-3d0717881f00","reason":"recipient_routing_incomplete","eventName":null,"instanceName":"demo","messageId":null,"remoteJid":null,"pushName":null,"topLevelSender":null,"instancePhone":null,"recipientAddress":null,"recipientNumber":null,"reasons":["instance_phone_missing","missing_sender_metadata","top_level_sender_missing","recipient_address_unresolved","recipient_number_unresolved"]}[39m
+📥 remoteJid: null
+📥 participant: null
+📤 JID FINAL: null
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_webhook_payload_ready","traceId":"10bad1c6-1aff-4cef-8438-3d0717881f00","messageId":null,"pushName":null,"resolvedSenderAddress":null,"resolvedSenderNumber":null,"recipientAddress":null,"recipientNumber":null,"senderAndRecipientMatch":false,"instancePhone":null,"remoteJid":null,"remoteJidAlt":null,"senderPn":null,"participantPn":null,"participantAlt":null}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_pipeline_stage","traceId":"10bad1c6-1aff-4cef-8438-3d0717881f00","stage":"normalized","eventName":null,"instanceName":"demo","messageId":null,"remoteJid":null,"pushName":null,"topLevelSender":null,"contactId":"18095551234","messageType":"audio","outboundAddress":"69132011749577@lid"}[39m
+[33m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [33m   WARN[39m [38;5;3m[WhatsAppService] [39m[33m{"event":"whatsapp_pipeline_diagnostic","traceId":"10bad1c6-1aff-4cef-8438-3d0717881f00","reason":"outbound_address_unresolved","eventName":null,"instanceName":"demo","messageId":null,"remoteJid":null,"pushName":null,"topLevelSender":null,"contactId":"18095551234","messageType":"audio","outboundAddress":"69132011749577@lid","reasons":["instance_phone_missing","missing_sender_metadata","top_level_sender_missing","recipient_address_unresolved","recipient_number_unresolved","outbound_address_not_real_jid"]}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_message_received","traceId":"10bad1c6-1aff-4cef-8438-3d0717881f00","contactId":"18095551234","senderNumber":"18095551234","senderAddress":"69132011749577@lid","recipientNumber":null,"recipientAddress":null,"pushName":null,"type":"audio","message":"[audio]"}[39m
+[33m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [33m   WARN[39m [38;5;3m[WhatsAppService] [39m[33m{"event":"whatsapp_message_duplicate_ignored","traceId":"10bad1c6-1aff-4cef-8438-3d0717881f00","contactId":"18095551234","messageId":"duplicate-audio","type":"audio"}[39m
+🔥 RAW: {
+  "event": "messages.upsert",
+  "data": {
+    "key": {
+      "remoteJid": "18295319442@s.whatsapp.net",
+      "fromMe": true,
+      "id": "fromme-123"
+    },
+    "message": {
+      "conversation": "hola saliente"
+    }
+  }
+}
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_pipeline_stage","traceId":"f31368d2-eb7f-4ee0-a17d-f95cb6846b0a","stage":"received","eventName":"messages.upsert","instanceName":null,"messageId":"fromme-123","remoteJid":"18295319442@s.whatsapp.net","pushName":null,"topLevelSender":null}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_pipeline_stage","traceId":"f31368d2-eb7f-4ee0-a17d-f95cb6846b0a","stage":"validated","eventName":"messages.upsert","instanceName":"demo","messageId":"fromme-123","remoteJid":"18295319442@s.whatsapp.net","pushName":null,"topLevelSender":null,"webhookSecretConfigured":true}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_pipeline_stage","traceId":"f31368d2-eb7f-4ee0-a17d-f95cb6846b0a","stage":"ignored","eventName":"messages.upsert","instanceName":"demo","messageId":"fromme-123","remoteJid":"18295319442@s.whatsapp.net","pushName":null,"topLevelSender":null,"reason":"from_me"}[39m
+[32m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [32m    LOG[39m [38;5;3m[WhatsAppService] [39m[32m{"event":"whatsapp_webhook_ignored","traceId":"f31368d2-eb7f-4ee0-a17d-f95cb6846b0a","reason":"from_me","messageId":"fromme-123","remoteJid":"18295319442@s.whatsapp.net"}[39m
+🔥 RAW: {
+  "event": "messages.upsert",
+  "data": {
+    "key": {
+      "remoteJid": "69132011749577@lid",
+      "fromMe": false,
+      "id": "missing-routing-1"
+    },
+    "message": {
+      "conversation": "hola sin ruta"
+    },
+    "messageType": "conversation"
+  }
+}
+📥 remoteJid: 69132011749577@lid
+📥 participant: null
+⚠️ LID detectado, no se puede responder directamente: 69132011749577@lid
+📤 JID FINAL: null
+📥 remoteJid: 69132011749577@lid
+📥 participant: null
+⚠️ LID detectado, no se puede responder directamente: 69132011749577@lid
+📤 JID FINAL: null
+📥 remoteJid: 69132011749577@lid
+📥 participant: null
+⚠️ LID detectado, no se puede responder directamente: 69132011749577@lid
+📤 JID FINAL: null
+SEND MODE: text
+{ replyType: 'text', sendAs: 'text', message: 'Te ayudo ahora mismo' }
+ENVIADA: { text: 'Te ayudo ahora mismo', mediaIds: [] }
+[31m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [31m  ERROR[39m [38;5;3m[WhatsAppService] [39m[31m{"event":"whatsapp_delivery_failure","traceId":null,"stage":"audio_processing","instanceName":null,"messageId":"failed-audio","contactId":"18095551234","messageType":"audio","remoteJid":null,"recipientAddress":"18095551234@s.whatsapp.net","recipientNumber":"18095551234","errorType":"error","errorMessage":"stt failed","errorCode":null}[39m
+Error: stt failed
+    at Object.voiceService.transcribeAudio (C:\Users\pc\DEV\PROYECTOS\CLIENTES\PHYTOEMAGRYBOT\backend\test\whatsapp.service.test.ts:3461:11)
+    at WhatsAppService.getOrCreateAudioTranscript (C:\Users\pc\DEV\PROYECTOS\CLIENTES\PHYTOEMAGRYBOT\backend\src\whatsapp\whatsapp.service.ts:1772:48)
+    at async WhatsAppService.processIncomingAudioMessage (C:\Users\pc\DEV\PROYECTOS\CLIENTES\PHYTOEMAGRYBOT\backend\src\whatsapp\whatsapp.service.ts:1678:26)
+    at async TestContext.<anonymous> (C:\Users\pc\DEV\PROYECTOS\CLIENTES\PHYTOEMAGRYBOT\backend\test\whatsapp.service.test.ts:3464:3)
+    at async Test.run (node:internal/test_runner/test:1125:7)
+    at async Test.processPendingSubtests (node:internal/test_runner/test:787:7)
+[31m[Nest] 190888  - [39m27/04/2026, 11:21:41 p. m. [31m  ERROR[39m [38;5;3m[WhatsAppService] [39m[31m{"event":"audio_processing_failed","traceId":null,"contactId":"18095551234","messageId":"failed-audio"}[39m
+Error: stt failed
+    at Object.voiceService.transcribeAudio (C:\Users\pc\DEV\PROYECTOS\CLIENTES\PHYTOEMAGRYBOT\backend\test\whatsapp.service.test.ts:3461:11)
+    at WhatsAppService.getOrCreateAudioTranscript (C:\Users\pc\DEV\PROYECTOS\CLIENTES\PHYTOEMAGRYBOT\backend\src\whatsapp\whatsapp.service.ts:1772:48)
+    at async WhatsAppService.processIncomingAudioMessage (C:\Users\pc\DEV\PROYECTOS\CLIENTES\PHYTOEMAGRYBOT\backend\src\whatsapp\whatsapp.service.ts:1678:26)
+    at async TestContext.<anonymous> (C:\Users\pc\DEV\PROYECTOS\CLIENTES\PHYTOEMAGRYBOT\backend\test\whatsapp.service.test.ts:3464:3)
+    at async Test.run (node:internal/test_runner/test:1125:7)
+    at async Test.processPendingSubtests (node:internal/test_runner/test:787:7)
+✔ looksLikeMessageWebhook only accepts messages.upsert payloads (1.1482ms)
+✔ normalizeWebhookPayload extracts contactId and text from messages.upsert (1.1026ms)
+✔ normalizeWebhookPayload accepts direct webhook payload shape (0.305ms)
+✔ normalizeWebhookPayload ignores outbound and unsupported events (0.1546ms)
+✔ validateWebhook requires the configured secret when present (0.3012ms)
+✔ normalizeWebhookPayload extracts audio metadata from inbound voice notes (0.3273ms)
+✔ normalizeWebhookPayload prefers remoteJidAlt for lid conversations (0.2216ms)
+✔ normalizeWebhookPayload ignores group-like identifiers without a real sender jid (0.2166ms)
+✔ normalizeNumber removes lid and non digits (0.1508ms)
+✔ executeEvolutionRequest requires a configured instance name (0.4526ms)
+✔ setWebhook posts the backend webhook for messages.upsert and validates the instance (0.8191ms)
+✔ createInstance configures the webhook after creating the instance (0.3893ms)
+✔ createInstance continues when automatic webhook setup fails (0.2529ms)
+✔ connectInstance configures the webhook after requesting the QR (0.2434ms)
+✔ connectInstance continues when automatic webhook setup fails (0.2175ms)
+✔ getQr returns a textual QR when Evolution does not send image base64 (0.1272ms)
+✔ onModuleInit reapplies the configured webhook when instance and url are present (0.3347ms)
+✔ onModuleInit replaces the legacy n8n webhook with the backend webhook (0.2903ms)
+✔ sendText uses instance endpoint with jid number payload (0.2508ms)
+✔ sendText rejects lid jid payloads for outbound sends (0.1065ms)
+✔ normalizeWebhookPayload prefers senderPn over remoteJid for direct chats when both differ (0.1933ms)
+✔ normalizeWebhookPayload falls back to remoteJid when senderPn is the instance phone (0.1768ms)
+✔ normalizeWebhookPayload uses senderPn when remoteJid is a group identifier (0.2027ms)
+✔ normalizeWebhookPayload uses participantAlt when senderPn is missing and remoteJid is the instance phone (0.2196ms)
+✔ normalizeWebhookPayload prioritizes participant when it contains a real jid (0.2419ms)
+✔ normalizeWebhookPayload ignores lid payloads when no real sender jid is present (0.2092ms)
+✔ normalizeWebhookPayload ignores the instance phone when resolving sender (0.1533ms)
+✔ normalizeWebhookPayload ignores payloads that only point to the instance phone (0.1169ms)
+✔ attachWebhookRoutingMetadata derives recipient number from webhook sender when instance phone is unavailable (0.2133ms)
+✔ enrichIncomingRecipientFromEvolution upgrades lid recipients with remoteJidAlt from Evolution messages (0.3302ms)
+✔ processAndDeliverMessage falls back to contactId when outbound jid is a lid (13.2922ms)
+✔ enrichWebhookPayloadFromEvolution merges missing lid fields into the inbound webhook payload (0.4069ms)
+✔ enrichWebhookPayloadFromEvolution falls back to contact lookup when message lookup lacks sender fields (0.6254ms)
+✔ enrichWebhookPayloadFromEvolution resolves group participant lid through contact lookup (0.4267ms)
+✔ enrichWebhookPayloadFromEvolution refuses ambiguous group participant matches without the queried lid (0.3659ms)
+✔ enrichWebhookPayloadFromEvolution prefers the only real jid when contact lookup returns duplicate exact-name matches (0.2763ms)
+✔ enrichWebhookPayloadFromEvolution falls back to unfiltered contacts and alternative name fields when filtered lookup misses (0.3183ms)
+✔ enrichWebhookPayloadFromKnownLid reuses cached lid mappings before contact lookup (0.2087ms)
+✔ rememberSenderJidMapping learns lid to real jid correlations from paired outbound webhooks (0.2434ms)
+✔ attachWebhookRoutingMetadata exposes distinct sender and recipient numbers in the webhook payload (0.1529ms)
+✔ getInstancePhoneNumber refreshes from evolution when local phone is missing (0.1052ms)
+✔ createInstance syncs Evolution state before validating local connected instances (0.1956ms)
+✔ normalizeWebhookEvents converts legacy aliases to Evolution supported enums (0.0489ms)
+✔ deleteInstance clears configured instance when removing the active one (0.1635ms)
+✔ extractPhone accepts Evolution wuid and ownerJid variants (0.0985ms)
+✔ processIncomingAudioMessage sends text when bot replyType is text (1.8133ms)
+✔ processIncomingAudioMessage forces audio after two consecutive incoming audios (3.6562ms)
+✔ processIncomingAudioMessage answers long audios with audio replies (2.5456ms)
+✔ processAndDeliverMessage keeps text delivery even when preferAudioReply is true (1.3886ms)
+✔ processAndDeliverMessage forces text when emotion is frio even if bot replyType is audio (1.3752ms)
+✔ processAndDeliverMessage recommends audio when emotion is dudoso (2.1841ms)
+✔ processAndDeliverMessage promotes a detailed text reply to audio when the contact prefers voice (1.881ms)
+✔ emotion+voice: "no entiendo" => confundido + audio + explains tone (1.6526ms)
+✔ emotion+voice: "eso funciona?" => dudoso + audio + convincing tone (1.5432ms)
+✔ emotion+voice: "cuanto cuesta" => interesado + text (1.3044ms)
+✔ voice rule: long incoming message triggers audio (2.2963ms)
+✔ processAndDeliverMessage sends audio when user asks for an explanation (no prior preference) (2.0567ms)
+✔ processAndDeliverMessage sends text before media when reply type is text (1.2855ms)
+✔ processAndDeliverMessage can send media and then one audio reply (1.5877ms)
+✔ processAndDeliverMessage does not duplicate full reply in media caption when sending audio (fallback safe) (1.8441ms)
+✔ processAndDeliverMessage omits an already sent video and rewrites duplicate text (1.7882ms)
+✔ processAndDeliverMessage allows sending a video again when explicitly requested (2.5365ms)
+✔ processAndDeliverMessage does not reset sent videos when intent changes (2.3043ms)
+✔ processAndDeliverMessage falls back to text when media delivery fails (8.5853ms)
+✔ processAndDeliverMessage blocks consecutive audio replies and sends text instead (2.5692ms)
+✔ prepareReplyForVoice removes emojis and leaves spoken punctuation (0.0716ms)
+✔ processAndDeliverMessage sends voice using the exact same text (no rewrite) (1.2378ms)
+✔ processAndDeliverMessage sends audio when user explicitly asks for a voice note (no prior preference) (1.3901ms)
+✔ processIncomingAudioMessage remembers voice preference after a successful audio flow (0.6868ms)
+✔ processAndDeliverMessage falls back to text when generated audio is too short (1.2667ms)
+✔ processAndDeliverMessage retries text delivery after a transient send failure (0.9792ms)
+✔ processIncomingAudioMessage rejects audios longer than 60 seconds (0.0974ms)
+✔ processMessageWebhook ignores duplicate inbound message ids (1.2099ms)
+✔ processMessageWebhook ignores outbound fromMe payloads before enrichment (0.1947ms)
+✔ acceptWebhook returns a trace id for inbound message processing (0.1495ms)
+✔ acceptWebhook ignores group reaction payloads without triggering bot replies (0.3387ms)
+✔ processMessageWebhook emits precise routing diagnostics when recipient data is missing (0.6476ms)
+✔ processAndDeliverMessage logs ordered delivery stages before sending to Evolution (1.0587ms)
+✔ scheduleGroupedTextFlush delegates scheduling to Redis (0.1402ms)
+✔ processIncomingAudioMessage only remembers voice preference after success (0.4505ms)
+ℹ tests 80
+ℹ suites 0
+ℹ pass 80
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 2105.21

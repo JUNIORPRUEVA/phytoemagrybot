@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { ProductsService } from '../products/products.service';
+import { CompanyContextService } from '../company-context/company-context.service';
 import { ToolConfig, ToolExecutionResult } from './tools.types';
 
 @Injectable()
@@ -10,6 +11,7 @@ export class ToolsExecutor {
   constructor(
     private readonly prisma: PrismaService,
     private readonly productsService: ProductsService,
+    private readonly companyContextService: CompanyContextService,
   ) {}
 
   async execute(
@@ -26,6 +28,8 @@ export class ToolsExecutor {
           return { toolName, result: await this.consultarStock(args) };
         case 'consultar_catalogo':
           return { toolName, result: await this.consultarCatalogo() };
+        case 'consultar_info_empresa':
+          return { toolName, result: await this.consultarInfoEmpresa(args) };
         case 'generar_cotizacion':
           return { toolName, result: await this.generarCotizacion(args, toolConfig) };
         case 'aplicar_descuento':
@@ -78,6 +82,79 @@ export class ToolsExecutor {
       stock: p.stock,
       disponible: p.stock > 0,
     }));
+  }
+
+  private async consultarInfoEmpresa(args: Record<string, unknown>) {
+    const rawCampo = typeof args.campo === 'string' ? args.campo.trim().toLowerCase() : '';
+    const campo =
+      rawCampo === 'ubicacion' ||
+      rawCampo === 'horario' ||
+      rawCampo === 'cuentas' ||
+      rawCampo === 'telefonos' ||
+      rawCampo === 'fotos'
+        ? rawCampo
+        : 'todo';
+
+    const ctx = await this.companyContextService.getContext();
+
+    const base = {
+      companyName: ctx.companyName,
+      description: ctx.description,
+    };
+
+    if (campo === 'ubicacion') {
+      return {
+        ...base,
+        address: ctx.address,
+        latitude: ctx.latitude,
+        longitude: ctx.longitude,
+        googleMapsLink: ctx.googleMapsLink,
+      };
+    }
+
+    if (campo === 'horario') {
+      return {
+        ...base,
+        workingHours: ctx.workingHoursJson,
+      };
+    }
+
+    if (campo === 'cuentas') {
+      return {
+        ...base,
+        bankAccounts: ctx.bankAccountsJson,
+      };
+    }
+
+    if (campo === 'telefonos') {
+      return {
+        ...base,
+        phone: ctx.phone,
+        whatsapp: ctx.whatsapp,
+      };
+    }
+
+    if (campo === 'fotos') {
+      return {
+        ...base,
+        images: ctx.imagesJson,
+      };
+    }
+
+    return {
+      ...base,
+      phone: ctx.phone,
+      whatsapp: ctx.whatsapp,
+      address: ctx.address,
+      latitude: ctx.latitude,
+      longitude: ctx.longitude,
+      googleMapsLink: ctx.googleMapsLink,
+      workingHours: ctx.workingHoursJson,
+      bankAccounts: ctx.bankAccountsJson,
+      images: ctx.imagesJson,
+      usageRules: ctx.usageRulesJson,
+      updatedAt: ctx.updatedAt,
+    };
   }
 
   private async generarCotizacion(args: Record<string, unknown>, toolConfig: ToolConfig) {

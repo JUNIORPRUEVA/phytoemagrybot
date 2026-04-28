@@ -50,11 +50,6 @@ function createService(options?: {
     } as any,
     botConfigService,
     {
-      async buildAgentContext() {
-        return 'EMPRESA:\nNombre: Phyto Emagry\nTelefono: 809-555-1234\nDireccion: Santo Domingo';
-      },
-    } as any,
-    {
       async getConfig() {
         return {
           openaiKey: 'test-key',

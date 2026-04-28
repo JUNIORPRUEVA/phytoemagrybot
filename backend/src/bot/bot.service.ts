@@ -1,7 +1,6 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { AiService } from '../ai/ai.service';
 import { BotConfigService } from '../bot-config/bot-config.service';
-import { CompanyContextService } from '../company-context/company-context.service';
 import { ClientConfigService } from '../config/config.service';
 import { MemoryService } from '../memory/memory.service';
 import { StoredMessage } from '../memory/memory.types';
@@ -30,7 +29,6 @@ export class BotService {
   constructor(
     private readonly aiService: AiService,
     private readonly botConfigService: BotConfigService,
-    private readonly companyContextService: CompanyContextService,
     private readonly clientConfigService: ClientConfigService,
     private readonly memoryService: MemoryService,
     private readonly toolsService: ToolsService,
@@ -236,17 +234,29 @@ export class BotService {
     conversationSummary?: import('../memory/memory.types').ConversationSummarySnapshot,
   ): Promise<string> {
     const instructions = this.promptComposerService.buildInstructionsBlock(config, botConfig);
-    const products = this.buildProductsBlock(config);
-    const company = (await this.companyContextService.buildAgentContext()).trim();
+    const products = [
+      'El catálogo de productos vive en la base de datos y se consulta por tools.',
+      'Para responder con datos exactos:',
+      '- Usa consultar_catalogo cuando el cliente pregunte qué vendes o pida lista de productos.',
+      '- Usa consultar_stock cuando el cliente pregunte por disponibilidad/stock.',
+      '- Usa generar_cotizacion cuando el cliente quiera el total (incluye envío).',
+      'No inventes productos, precios o stock si no consultaste las tools.',
+    ].join('\n');
+    const company = [
+      'La información real de la empresa vive en la base de datos y se consulta por tools.',
+      'Para responder con datos exactos:',
+      '- Usa consultar_info_empresa cuando el cliente pregunte por ubicación, horario, cuentas de pago, teléfonos o fotos.',
+      'No inventes dirección, GPS, horarios, cuentas ni teléfonos si no consultaste la tool.',
+    ].join('\n');
     const memory = this.buildMemoryBlock(clientMemory, conversationSummary);
 
     const blocks: string[] = [
       '[INSTRUCCIONES]',
       instructions || 'Sin instrucciones configuradas.',
       '[PRODUCTOS]',
-      products || 'Usa la herramienta consultar_catalogo para ver los productos disponibles. No inventes productos si no tienes la información.',
+      products,
       '[EMPRESA]',
-      company || 'Información de empresa no configurada.',
+      company,
     ];
 
     if (memory) {

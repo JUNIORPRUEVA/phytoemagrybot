@@ -9,6 +9,9 @@ export class ToolsService {
     return {
       consultarStock: { enabled: r.consultarStock?.enabled ?? DEFAULT_TOOLS_CONFIG.consultarStock.enabled },
       consultarCatalogo: { enabled: r.consultarCatalogo?.enabled ?? DEFAULT_TOOLS_CONFIG.consultarCatalogo.enabled },
+      consultarInfoEmpresa: {
+        enabled: r.consultarInfoEmpresa?.enabled ?? DEFAULT_TOOLS_CONFIG.consultarInfoEmpresa.enabled,
+      },
       generarCotizacion: {
         enabled: r.generarCotizacion?.enabled ?? DEFAULT_TOOLS_CONFIG.generarCotizacion.enabled,
         costoEnvio: r.generarCotizacion?.costoEnvio ?? DEFAULT_TOOLS_CONFIG.generarCotizacion.costoEnvio,
@@ -58,6 +61,29 @@ export class ToolsService {
           parameters: {
             type: 'object',
             properties: {},
+            required: [],
+          },
+        },
+      });
+    }
+
+    if (config.consultarInfoEmpresa.enabled) {
+      tools.push({
+        type: 'function',
+        function: {
+          name: 'consultar_info_empresa',
+          description:
+            'Obtiene información real de la empresa (ubicación, GPS/Maps, horarios, cuentas de pago, teléfonos y fotos). Úsala cuando el cliente pregunte por ubicación, horario, métodos de pago, cuentas bancarias o datos de contacto.',
+          parameters: {
+            type: 'object',
+            properties: {
+              campo: {
+                type: 'string',
+                description:
+                  'Qué información necesitas. Si no estás seguro, usa "todo".',
+                enum: ['todo', 'ubicacion', 'horario', 'cuentas', 'telefonos', 'fotos'],
+              },
+            },
             required: [],
           },
         },
