@@ -31,6 +31,7 @@ class _ProductsPageState extends State<ProductsPage>
   final TextEditingController _precioController = TextEditingController();
   final TextEditingController _precioMinimoController = TextEditingController();
   final TextEditingController _stockController = TextEditingController();
+  final TextEditingController _variantesController = TextEditingController();
   final TextEditingController _imagenesController = TextEditingController();
   final TextEditingController _videosController = TextEditingController();
 
@@ -55,6 +56,7 @@ class _ProductsPageState extends State<ProductsPage>
     _precioController.dispose();
     _precioMinimoController.dispose();
     _stockController.dispose();
+    _variantesController.dispose();
     _imagenesController.dispose();
     _videosController.dispose();
     super.dispose();
@@ -80,6 +82,60 @@ class _ProductsPageState extends State<ProductsPage>
       .where((String s) => s.isNotEmpty)
       .toList();
 
+  String _variantsToText(List<ProductVariantData> variants) {
+    return variants
+        .map((ProductVariantData variant) {
+          final List<String> parts = <String>[
+            variant.nombre,
+            if (variant.precio != null) 'precio=${variant.precio!.toStringAsFixed(0)}',
+            if (variant.stock != null) 'stock=${variant.stock}',
+            if (variant.descripcion.isNotEmpty) 'desc=${variant.descripcion}',
+          ];
+          return parts.join(' | ');
+        })
+        .join('\n');
+  }
+
+  List<ProductVariantData> _parseVariants(String text) {
+    double? parseMoney(String value) {
+      final String normalized = value.trim().replaceAll(',', '.');
+      if (normalized.isEmpty) return null;
+      return double.tryParse(normalized);
+    }
+
+    return text
+        .split('\n')
+        .map((String line) => line.trim())
+        .where((String line) => line.isNotEmpty)
+        .map((String line) {
+          final List<String> parts = line.split('|').map((String part) => part.trim()).toList();
+          final String nombre = parts.first;
+          String descripcion = '';
+          double? precio;
+          double? precioMinimo;
+          int? stock;
+          for (final String part in parts.skip(1)) {
+            final int idx = part.indexOf('=');
+            if (idx <= 0) continue;
+            final String key = part.substring(0, idx).trim().toLowerCase();
+            final String value = part.substring(idx + 1).trim();
+            if (key == 'precio') precio = parseMoney(value);
+            if (key == 'preciominimo' || key == 'minimo') precioMinimo = parseMoney(value);
+            if (key == 'stock') stock = int.tryParse(value);
+            if (key == 'desc' || key == 'descripcion') descripcion = value;
+          }
+          return ProductVariantData(
+            nombre: nombre,
+            descripcion: descripcion,
+            precio: precio,
+            precioMinimo: precioMinimo,
+            stock: stock,
+          );
+        })
+        .where((ProductVariantData variant) => variant.nombre.isNotEmpty)
+        .toList();
+  }
+
   void _prepareEditor([ProductData? product]) {
     _activoEdit = product?.activo ?? true;
     _editingProductId = product?.id;
@@ -89,6 +145,7 @@ class _ProductsPageState extends State<ProductsPage>
     _precioController.text = product?.precio != null ? product!.precio!.toStringAsFixed(2) : '';
     _precioMinimoController.text = product?.precioMinimo != null ? product!.precioMinimo!.toStringAsFixed(2) : '';
     _stockController.text = product?.stock.toString() ?? '0';
+    _variantesController.text = _variantsToText(product?.variantesJson ?? const <ProductVariantData>[]);
     _imagenesController.text = product?.imagenesJson.join('\n') ?? '';
     _videosController.text = product?.videosJson.join('\n') ?? '';
   }
@@ -108,6 +165,7 @@ class _ProductsPageState extends State<ProductsPage>
       precioMinimo: precioMinimo,
       stock: stock,
       activo: _activoEdit,
+      variantesJson: _parseVariants(_variantesController.text),
       imagenesJson: _splitUrls(_imagenesController.text),
       videosJson: _splitUrls(_videosController.text),
     );
@@ -169,6 +227,7 @@ class _ProductsPageState extends State<ProductsPage>
               precioController: _precioController,
               precioMinimoController: _precioMinimoController,
               stockController: _stockController,
+              variantesController: _variantesController,
               imagenesController: _imagenesController,
               videosController: _videosController,
               activo: _activoEdit,
@@ -255,6 +314,7 @@ class _ProductTile extends StatelessWidget {
             if (product.descripcionCorta.isNotEmpty) _DetailLine(label: 'Descripcion corta', value: product.descripcionCorta),
             if (product.descripcionCompleta.isNotEmpty) _DetailLine(label: 'Descripcion completa', value: product.descripcionCompleta),
             if (product.precioMinimo != null) _DetailLine(label: 'Precio minimo', value: 'RD\${product.precioMinimo!.toStringAsFixed(0)}'),
+            if (product.variantesJson.isNotEmpty) _DetailLine(label: 'Variantes', value: product.variantesJson.map((ProductVariantData v) => v.nombre).join(', ')),
             if (product.imagenesJson.isNotEmpty) _DetailLine(label: 'Imagenes', value: '${product.imagenesJson.length} url(s)'),
             if (product.videosJson.isNotEmpty) _DetailLine(label: 'Videos', value: '${product.videosJson.length} url(s)'),
             const SizedBox(height: 14),
@@ -293,6 +353,7 @@ class _ProductEditorSheet extends StatelessWidget {
     required this.tituloController, required this.descripcionCortaController,
     required this.descripcionCompletaController, required this.precioController,
     required this.precioMinimoController, required this.stockController,
+    required this.variantesController,
     required this.imagenesController, required this.videosController,
     required this.activo, required this.onActivoChanged, required this.onSave,
   });
@@ -304,6 +365,7 @@ class _ProductEditorSheet extends StatelessWidget {
   final TextEditingController precioController;
   final TextEditingController precioMinimoController;
   final TextEditingController stockController;
+  final TextEditingController variantesController;
   final TextEditingController imagenesController;
   final TextEditingController videosController;
   final bool activo;
@@ -344,6 +406,13 @@ class _ProductEditorSheet extends StatelessWidget {
                   ]),
                   const SizedBox(height: 12),
                   AppTextField(label: 'Stock', controller: stockController, hintText: '10', keyboardType: TextInputType.number),
+                  const SizedBox(height: 12),
+                  AppTextField(
+                    label: 'Variantes',
+                    controller: variantesController,
+                    hintText: 'Una por linea: Pantalón jean azul | precio=1500 | stock=4',
+                    maxLines: 4,
+                  ),
                   const SizedBox(height: 12),
                   SwitchListTile.adaptive(value: activo, onChanged: onActivoChanged, contentPadding: EdgeInsets.zero,
                     title: const Text('Producto activo', style: TextStyle(color: Color(0xFF0F172A), fontWeight: FontWeight.w700)),

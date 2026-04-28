@@ -266,6 +266,7 @@ model Product {
   precioMinimo         Decimal? @map("precio_minimo") @db.Decimal(10, 2)
   stock                Int      @default(0)
   activo               Boolean  @default(true)
+  variantesJson        Json     @default("[]") @map("variantes_json")
   imagenesJson         Json     @default("[]") @map("imagenes_json")
   videosJson           Json     @default("[]") @map("videos_json")
   createdAt            DateTime @default(now()) @map("created_at")

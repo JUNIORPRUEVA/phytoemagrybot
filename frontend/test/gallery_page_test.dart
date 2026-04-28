@@ -81,6 +81,23 @@ class _FakeProductsApiService extends ApiService {
   }
 
   @override
+  Future<List<ProductData>> getProducts() async {
+    return const <ProductData>[
+      ProductData(
+        id: '1',
+        titulo: 'Te Detox Premium',
+        descripcionCorta: 'Ayuda a digestion y bienestar.',
+        precio: 1500,
+        stock: 10,
+        variantesJson: <ProductVariantData>[
+          ProductVariantData(nombre: 'Caja grande', precio: 1500, stock: 10),
+        ],
+        imagenesJson: <String>['https://example.com/a.jpg'],
+      ),
+    ];
+  }
+
+  @override
   Future<ClientConfigData> savePrompts({
     required String promptBase,
     required String greetingPrompt,
@@ -169,7 +186,12 @@ void main() {
     await tester.tap(find.text('Te Detox Premium'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Ayuda a digestion y bienestar.'), findsOneWidget);
+    expect(
+      find.byWidgetPredicate(
+        (Widget widget) => widget is RichText && widget.text.toPlainText().contains('Ayuda a digestion y bienestar.'),
+      ),
+      findsOneWidget,
+    );
     expect(find.text('Editar'), findsOneWidget);
 
     await binding.setSurfaceSize(null);

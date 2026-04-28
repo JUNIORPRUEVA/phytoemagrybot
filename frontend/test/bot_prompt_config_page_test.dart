@@ -254,7 +254,7 @@ void main() {
       );
       expect(apiService.lastBotPromptBase, apiService.lastPromptBase);
 
-      expect(apiService.lastGreetingPrompt, 'NO_BORRAR_GREETING');
+      expect(apiService.lastGreetingPrompt, 'Saludo demo');
       expect(apiService.lastCompanyInfoPrompt, 'NO_BORRAR_COMPANY');
       expect(apiService.lastProductInfoPrompt, 'NO_BORRAR_PRODUCT');
       expect(apiService.lastSalesGuidelinesPrompt, 'NO_BORRAR_GUIDELINES');

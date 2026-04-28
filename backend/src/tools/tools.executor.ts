@@ -66,6 +66,14 @@ export class ToolsExecutor {
       stock: p.stock,
       disponible: p.stock > 0,
       precio: p.precio ? Number(p.precio) : null,
+      variantes: this.productsService.getActiveVariants(p.variantesJson).map((variant) => ({
+        nombre: variant.nombre,
+        descripcion: variant.descripcion || null,
+        stock: variant.stock ?? null,
+        disponible: variant.stock == null ? p.stock > 0 : variant.stock > 0,
+        precio: variant.precio ?? (p.precio ? Number(p.precio) : null),
+        precioMinimo: variant.precioMinimo ?? (p.precioMinimo ? Number(p.precioMinimo) : null),
+      })),
     }));
   }
 
@@ -81,6 +89,14 @@ export class ToolsExecutor {
       precioMinimo: p.precioMinimo ? Number(p.precioMinimo) : null,
       stock: p.stock,
       disponible: p.stock > 0,
+      variantes: this.productsService.getActiveVariants(p.variantesJson).map((variant) => ({
+        nombre: variant.nombre,
+        descripcion: variant.descripcion || null,
+        precio: variant.precio ?? (p.precio ? Number(p.precio) : null),
+        precioMinimo: variant.precioMinimo ?? (p.precioMinimo ? Number(p.precioMinimo) : null),
+        stock: variant.stock ?? null,
+        disponible: variant.stock == null ? p.stock > 0 : variant.stock > 0,
+      })),
     }));
   }
 
@@ -158,20 +174,49 @@ export class ToolsExecutor {
   }
 
   private async generarCotizacion(args: Record<string, unknown>, toolConfig: ToolConfig) {
-    const productos = Array.isArray(args.productos) ? args.productos as Array<{ id: number; cantidad: number }> : [];
+    const productos = Array.isArray(args.productos)
+      ? args.productos as Array<{ id: number; cantidad: number; variante?: string }>
+      : [];
     if (productos.length === 0) return { error: 'Se requiere al menos un producto' };
 
     let subtotal = 0;
-    const items: Array<{ titulo: string; cantidad: number; precioUnitario: number; subtotal: number }> = [];
+    const items: Array<{
+      titulo: string;
+      variante?: string;
+      cantidad: number;
+      precioUnitario: number;
+      subtotal: number;
+      requiereVariante?: boolean;
+      variantesDisponibles?: string[];
+    }> = [];
 
     for (const item of productos) {
       try {
         const p = await this.productsService.findOne(item.id);
-        const precio = p.precio ? Number(p.precio) : 0;
+        const variants = this.productsService.getActiveVariants(p.variantesJson);
+        const selectedVariant = this.findVariant(variants, item.variante);
+        if (variants.length > 0 && !selectedVariant) {
+          items.push({
+            titulo: p.titulo,
+            cantidad: item.cantidad ?? 1,
+            precioUnitario: 0,
+            subtotal: 0,
+            requiereVariante: true,
+            variantesDisponibles: variants.map((variant) => variant.nombre),
+          });
+          continue;
+        }
+        const precio = selectedVariant?.precio ?? (p.precio ? Number(p.precio) : 0);
         const cantidad = item.cantidad ?? 1;
         const sub = precio * cantidad;
         subtotal += sub;
-        items.push({ titulo: p.titulo, cantidad, precioUnitario: precio, subtotal: sub });
+        items.push({
+          titulo: p.titulo,
+          variante: selectedVariant?.nombre,
+          cantidad,
+          precioUnitario: precio,
+          subtotal: sub,
+        });
       } catch {
         // producto no encontrado, se omite
       }
@@ -187,7 +232,30 @@ export class ToolsExecutor {
       total,
       moneda: 'RD$',
       nota: `Precio incluye envío de RD$${costoEnvio}`,
+      requiereDatos: items.some((item) => item.requiereVariante)
+        ? 'Hay productos con variantes. Pide al cliente que elija una variante antes de cerrar la cotización.'
+        : null,
     };
+  }
+
+  private findVariant(
+    variants: ReturnType<ProductsService['getActiveVariants']>,
+    requested?: string,
+  ) {
+    const normalized = this.normalizeText(requested ?? '');
+    if (!normalized) return undefined;
+    return variants.find((variant) => {
+      const variantName = this.normalizeText(variant.nombre);
+      return variantName.includes(normalized) || normalized.includes(variantName);
+    });
+  }
+
+  private normalizeText(value: string): string {
+    return value
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .trim();
   }
 
   private aplicarDescuento(args: Record<string, unknown>, toolConfig: ToolConfig) {

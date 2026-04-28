@@ -167,11 +167,12 @@ class _ToolsPageState extends State<ToolsPage> implements ToolsPageStateAccess {
         stockCtrl: _prodStockCtrl,
         initialImages: existing?.imagenesJson ?? <String>[],
         initialVideos: existing?.videosJson ?? <String>[],
+        initialVariants: existing?.variantesJson ?? <ProductVariantData>[],
         initialActivo: existing?.activo ?? true,
         isEditing: _editingProductId != null,
         apiService: widget.apiService,
-        onSave: (List<String> images, List<String> videos, bool activo) =>
-            _saveProduct(sheetCtx, images, videos, activo),
+        onSave: (List<String> images, List<String> videos, List<ProductVariantData> variants, bool activo) =>
+            _saveProduct(sheetCtx, images, videos, variants, activo),
       ),
     );
   }
@@ -180,6 +181,7 @@ class _ToolsPageState extends State<ToolsPage> implements ToolsPageStateAccess {
     BuildContext sheetCtx,
     List<String> images,
     List<String> videos,
+    List<ProductVariantData> variants,
     bool activo,
   ) async {
     final String titulo = _prodTituloCtrl.text.trim();
@@ -193,10 +195,11 @@ class _ToolsPageState extends State<ToolsPage> implements ToolsPageStateAccess {
         titulo: titulo,
         descripcionCorta: _prodDescCortaCtrl.text.trim(),
         descripcionCompleta: _prodDescCompletaCtrl.text.trim(),
-        precio: double.tryParse(_prodPrecioCtrl.text.trim()),
-        precioMinimo: double.tryParse(_prodPrecioMinCtrl.text.trim()),
+        precio: _parseMoney(_prodPrecioCtrl.text),
+        precioMinimo: _parseMoney(_prodPrecioMinCtrl.text),
         stock: int.tryParse(_prodStockCtrl.text.trim()) ?? 0,
         activo: activo,
+        variantesJson: variants,
         imagenesJson: images,
         videosJson: videos,
       );
@@ -214,6 +217,12 @@ class _ToolsPageState extends State<ToolsPage> implements ToolsPageStateAccess {
       if (!mounted) return;
       _showMessage(error.toString().replaceFirst('Exception: ', ''), isError: true);
     }
+  }
+
+  double? _parseMoney(String value) {
+    final String normalized = value.trim().replaceAll(',', '.');
+    if (normalized.isEmpty) return null;
+    return double.tryParse(normalized);
   }
 
   Future<void> _deleteProduct(ProductData product) async {
@@ -1108,6 +1117,12 @@ class _ToolsPageState extends State<ToolsPage> implements ToolsPageStateAccess {
                                             color: const Color(0xFF7C3AED),
                                             bg: const Color(0xFFF5F3FF),
                                           ),
+                                        if (p.variantesJson.isNotEmpty)
+                                          _Chip(
+                                            label: '${p.variantesJson.length} variante${p.variantesJson.length > 1 ? 's' : ''}',
+                                            color: const Color(0xFF0F766E),
+                                            bg: const Color(0xFFCCFBF1),
+                                          ),
                                       ],
                                     ),
                                   ],
@@ -1305,6 +1320,7 @@ class _ProductFormSheet extends StatefulWidget {
     required this.stockCtrl,
     required this.initialImages,
     required this.initialVideos,
+    required this.initialVariants,
     required this.initialActivo,
     required this.isEditing,
     required this.apiService,
@@ -1319,10 +1335,16 @@ class _ProductFormSheet extends StatefulWidget {
   final TextEditingController stockCtrl;
   final List<String> initialImages;
   final List<String> initialVideos;
+  final List<ProductVariantData> initialVariants;
   final bool initialActivo;
   final bool isEditing;
   final ApiService apiService;
-  final Future<void> Function(List<String> images, List<String> videos, bool activo) onSave;
+  final Future<void> Function(
+    List<String> images,
+    List<String> videos,
+    List<ProductVariantData> variants,
+    bool activo,
+  ) onSave;
 
   @override
   State<_ProductFormSheet> createState() => _ProductFormSheetState();
@@ -1332,6 +1354,7 @@ class _ProductFormSheetState extends State<_ProductFormSheet> {
   late bool _activo;
   late List<String> _images;
   late List<String> _videos;
+  late List<_VariantDraft> _variants;
   List<PlatformFile> _pendingImages = <PlatformFile>[];
   List<PlatformFile> _pendingVideos = <PlatformFile>[];
   bool _isSaving = false;
@@ -1343,6 +1366,39 @@ class _ProductFormSheetState extends State<_ProductFormSheet> {
     _activo = widget.initialActivo;
     _images = List<String>.from(widget.initialImages);
     _videos = List<String>.from(widget.initialVideos);
+    _variants = widget.initialVariants.map(_VariantDraft.fromData).toList();
+  }
+
+  @override
+  void dispose() {
+    for (final _VariantDraft variant in _variants) {
+      variant.dispose();
+    }
+    super.dispose();
+  }
+
+  void _addVariant() {
+    setState(() {
+      _variants = <_VariantDraft>[..._variants, _VariantDraft()];
+    });
+  }
+
+  void _removeVariant(int index) {
+    setState(() {
+      final _VariantDraft removed = _variants[index];
+      _variants = <_VariantDraft>[
+        for (int i = 0; i < _variants.length; i++)
+          if (i != index) _variants[i],
+      ];
+      removed.dispose();
+    });
+  }
+
+  List<ProductVariantData> _collectVariants() {
+    return _variants
+        .map((variant) => variant.toData())
+        .where((ProductVariantData variant) => variant.nombre.trim().isNotEmpty)
+        .toList();
   }
 
   Future<void> _pickImages() async {
@@ -1406,7 +1462,7 @@ class _ProductFormSheetState extends State<_ProductFormSheet> {
           finalVideos = <String>[...finalVideos, ...urls];
         }
       }
-      await widget.onSave(finalImages, finalVideos, _activo);
+      await widget.onSave(finalImages, finalVideos, _collectVariants(), _activo);
     } catch (e) {
       if (mounted) setState(() { _uploadError = e.toString().replaceFirst('Exception: ', ''); });
     } finally {
@@ -1499,6 +1555,8 @@ class _ProductFormSheetState extends State<_ProductFormSheet> {
             const SizedBox(height: 12),
             AppTextField(label: 'Stock', controller: widget.stockCtrl, hintText: '10', keyboardType: TextInputType.number),
             const SizedBox(height: 20),
+            _buildVariantsSection(),
+            const SizedBox(height: 20),
             // Images section
             _MediaSection(
               label: 'Fotos del producto',
@@ -1571,6 +1629,236 @@ class _ProductFormSheetState extends State<_ProductFormSheet> {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildVariantsSection() {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+      ),
+      padding: const EdgeInsets.all(14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Row(
+            children: <Widget>[
+              const Icon(Icons.tune_rounded, size: 17, color: Color(0xFF0F766E)),
+              const SizedBox(width: 6),
+              const Expanded(
+                child: Text(
+                  'Variables / variantes del producto',
+                  style: TextStyle(fontWeight: FontWeight.w800, color: Color(0xFF0F766E), fontSize: 13),
+                ),
+              ),
+              TextButton.icon(
+                onPressed: _isSaving ? null : _addVariant,
+                icon: const Icon(Icons.add_rounded, size: 16),
+                label: const Text('Agregar variante'),
+                style: TextButton.styleFrom(foregroundColor: const Color(0xFF0F766E)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          const Text(
+            'Úsalo cuando un mismo producto se vende por tipo, talla, color, modelo o presentación. El bot verá estas variantes y pedirá cuál desea el cliente si hace falta.',
+            style: TextStyle(color: Color(0xFF64748B), fontSize: 12, height: 1.45),
+          ),
+          if (_variants.isEmpty) ...<Widget>[
+            const SizedBox(height: 12),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF8FAFC),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: const Color(0xFFE2E8F0)),
+              ),
+              child: const Text(
+                'Sin variantes. Ejemplo: Pantalón jean azul, Pantalón cargo negro, talla 32, talla 34.',
+                style: TextStyle(color: Color(0xFF64748B), fontSize: 12),
+              ),
+            ),
+          ] else ...<Widget>[
+            const SizedBox(height: 12),
+            for (int i = 0; i < _variants.length; i++)
+              _VariantEditorCard(
+                key: ValueKey<_VariantDraft>(_variants[i]),
+                index: i,
+                draft: _variants[i],
+                enabled: !_isSaving,
+                onRemove: () => _removeVariant(i),
+              ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _VariantDraft {
+  _VariantDraft({
+    String nombre = '',
+    String descripcion = '',
+    double? precio,
+    double? precioMinimo,
+    int? stock,
+    bool activo = true,
+  })  : nombreCtrl = TextEditingController(text: nombre),
+        descripcionCtrl = TextEditingController(text: descripcion),
+        precioCtrl = TextEditingController(text: precio == null ? '' : precio.toStringAsFixed(0)),
+        precioMinCtrl = TextEditingController(text: precioMinimo == null ? '' : precioMinimo.toStringAsFixed(0)),
+        stockCtrl = TextEditingController(text: stock == null ? '' : stock.toString()),
+        activo = activo;
+
+  factory _VariantDraft.fromData(ProductVariantData data) {
+    return _VariantDraft(
+      nombre: data.nombre,
+      descripcion: data.descripcion,
+      precio: data.precio,
+      precioMinimo: data.precioMinimo,
+      stock: data.stock,
+      activo: data.activo,
+    );
+  }
+
+  final TextEditingController nombreCtrl;
+  final TextEditingController descripcionCtrl;
+  final TextEditingController precioCtrl;
+  final TextEditingController precioMinCtrl;
+  final TextEditingController stockCtrl;
+  bool activo;
+
+  ProductVariantData toData() {
+    return ProductVariantData(
+      nombre: nombreCtrl.text.trim(),
+      descripcion: descripcionCtrl.text.trim(),
+      precio: _parseMoney(precioCtrl.text),
+      precioMinimo: _parseMoney(precioMinCtrl.text),
+      stock: int.tryParse(stockCtrl.text.trim()),
+      activo: activo,
+    );
+  }
+
+  double? _parseMoney(String value) {
+    final String normalized = value.trim().replaceAll(',', '.');
+    if (normalized.isEmpty) return null;
+    return double.tryParse(normalized);
+  }
+
+  void dispose() {
+    nombreCtrl.dispose();
+    descripcionCtrl.dispose();
+    precioCtrl.dispose();
+    precioMinCtrl.dispose();
+    stockCtrl.dispose();
+  }
+}
+
+class _VariantEditorCard extends StatefulWidget {
+  const _VariantEditorCard({
+    super.key,
+    required this.index,
+    required this.draft,
+    required this.enabled,
+    required this.onRemove,
+  });
+
+  final int index;
+  final _VariantDraft draft;
+  final bool enabled;
+  final VoidCallback onRemove;
+
+  @override
+  State<_VariantEditorCard> createState() => _VariantEditorCardState();
+}
+
+class _VariantEditorCardState extends State<_VariantEditorCard> {
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+      ),
+      child: Column(
+        children: <Widget>[
+          Row(
+            children: <Widget>[
+              Expanded(
+                child: Text(
+                  'Variante ${widget.index + 1}',
+                  style: const TextStyle(fontWeight: FontWeight.w800, color: Color(0xFF0F172A), fontSize: 13),
+                ),
+              ),
+              Switch(
+                value: widget.draft.activo,
+                onChanged: widget.enabled
+                    ? (bool value) => setState(() {
+                          widget.draft.activo = value;
+                        })
+                    : null,
+              ),
+              IconButton(
+                icon: const Icon(Icons.delete_outline_rounded, size: 18),
+                color: const Color(0xFFE11D48),
+                tooltip: 'Eliminar variante',
+                onPressed: widget.enabled ? widget.onRemove : null,
+              ),
+            ],
+          ),
+          AppTextField(
+            label: 'Nombre de la variante *',
+            controller: widget.draft.nombreCtrl,
+            hintText: 'Pantalón jean azul / Talla 32 / Cargo negro',
+            enabled: widget.enabled,
+          ),
+          const SizedBox(height: 10),
+          AppTextField(
+            label: 'Descripción de variante',
+            controller: widget.draft.descripcionCtrl,
+            hintText: 'Detalles específicos de esta opción',
+            enabled: widget.enabled,
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: <Widget>[
+              Expanded(
+                child: AppTextField(
+                  label: 'Precio variante',
+                  controller: widget.draft.precioCtrl,
+                  hintText: '1500',
+                  keyboardType: TextInputType.number,
+                  enabled: widget.enabled,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: AppTextField(
+                  label: 'Stock variante',
+                  controller: widget.draft.stockCtrl,
+                  hintText: '5',
+                  keyboardType: TextInputType.number,
+                  enabled: widget.enabled,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          AppTextField(
+            label: 'Precio mínimo variante',
+            controller: widget.draft.precioMinCtrl,
+            hintText: 'Opcional',
+            keyboardType: TextInputType.number,
+            enabled: widget.enabled,
+          ),
+        ],
       ),
     );
   }

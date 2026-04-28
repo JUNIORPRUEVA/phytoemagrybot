@@ -252,6 +252,7 @@ export class BotService {
       '- Usa consultar_catalogo cuando el cliente pregunte qué vendes o pida lista de productos.',
       '- Usa consultar_stock cuando el cliente pregunte por disponibilidad/stock.',
       '- Usa generar_cotizacion cuando el cliente quiera el total (incluye envío).',
+      '- Si un producto tiene variantes/opciones (tipo, talla, color, modelo, presentación), pregunta cuál variante desea antes de cerrar precio total o pedido.',
       'No inventes productos, precios o stock si no consultaste las tools.',
     ].join('\n');
     const company = [

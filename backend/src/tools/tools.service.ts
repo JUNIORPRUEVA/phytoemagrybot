@@ -43,7 +43,7 @@ export class ToolsService {
             properties: {
               nombre_producto: {
                 type: 'string',
-                description: 'Nombre o parte del nombre del producto a consultar',
+                description: 'Nombre o parte del nombre del producto o variante a consultar',
               },
             },
             required: ['nombre_producto'],
@@ -57,7 +57,7 @@ export class ToolsService {
         type: 'function',
         function: {
           name: 'consultar_catalogo',
-          description: 'Obtiene el catálogo completo de productos disponibles con precios y stock. Úsala cuando el cliente pregunte qué productos hay, qué vendes, o pida una lista de productos.',
+          description: 'Obtiene el catálogo completo de productos disponibles con precios, stock y variantes/opciones. Úsala cuando el cliente pregunte qué productos hay, qué vendes, o pida una lista de productos.',
           parameters: {
             type: 'object',
             properties: {},
@@ -106,6 +106,7 @@ export class ToolsService {
                   type: 'object',
                   properties: {
                     id: { type: 'number', description: 'ID del producto' },
+                    variante: { type: 'string', description: 'Nombre de la variante/opción elegida, si aplica' },
                     cantidad: { type: 'number', description: 'Cantidad a comprar', default: 1 },
                   },
                   required: ['id'],
@@ -153,6 +154,7 @@ export class ToolsService {
                   properties: {
                     id: { type: 'number' },
                     titulo: { type: 'string' },
+                    variante: { type: 'string', description: 'Variante/opción elegida, si aplica' },
                     cantidad: { type: 'number' },
                     precio: { type: 'number' },
                   },

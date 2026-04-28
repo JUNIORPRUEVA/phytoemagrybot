@@ -8,6 +8,8 @@ class _FakeToolsApiService extends ApiService {
 
   ClientConfigData _config = ClientConfigData.empty();
   BotToolsConfigData? savedToolsConfig;
+  final List<ProductData> products = <ProductData>[];
+  ProductData? createdProduct;
 
   @override
   Future<ClientConfigData> getConfig() async {
@@ -75,6 +77,30 @@ class _FakeToolsApiService extends ApiService {
   @override
   Future<void> saveToolsConfig(BotToolsConfigData toolsConfig) async {
     savedToolsConfig = toolsConfig;
+  }
+
+  @override
+  Future<List<ProductData>> getProducts() async {
+    return List<ProductData>.from(products);
+  }
+
+  @override
+  Future<ProductData> createProduct(ProductData product) async {
+    createdProduct = ProductData(
+      id: '1',
+      titulo: product.titulo,
+      descripcionCorta: product.descripcionCorta,
+      descripcionCompleta: product.descripcionCompleta,
+      precio: product.precio,
+      precioMinimo: product.precioMinimo,
+      stock: product.stock,
+      activo: product.activo,
+      variantesJson: product.variantesJson,
+      imagenesJson: product.imagenesJson,
+      videosJson: product.videosJson,
+    );
+    products.add(createdProduct!);
+    return createdProduct!;
   }
 }
 
@@ -155,6 +181,68 @@ void main() {
     expect(apiService.savedToolsConfig?.consultarInfoEmpresaEnabled, isFalse);
     expect(apiService.savedToolsConfig?.consultarCatalogoEnabled, isTrue);
     expect(apiService.savedToolsConfig?.generarCotizacionCostoEnvio, 350);
+
+    await binding.setSurfaceSize(null);
+  });
+
+  testWidgets('catalog product form creates product with variants', (
+    WidgetTester tester,
+  ) async {
+    final apiService = _FakeToolsApiService();
+    final binding = TestWidgetsFlutterBinding.ensureInitialized();
+    await binding.setSurfaceSize(const Size(1400, 1200));
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: ToolsPage(
+              apiService: apiService,
+              onConfigUpdated: () {},
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Catalogo de productos'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(FloatingActionButton, 'Agregar producto'));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.widgetWithText(TextField, 'Nombre del producto'), 'Pantalón');
+    await tester.enterText(find.widgetWithText(TextField, 'Breve descripcion visible al cliente'), 'Pantalón de vestir');
+    await tester.enterText(find.widgetWithText(TextField, '1500'), '1800');
+    await tester.enterText(find.widgetWithText(TextField, '10'), '20');
+
+    await tester.scrollUntilVisible(
+      find.text('Variables / variantes del producto').last,
+      250,
+      scrollable: find.byType(Scrollable).last,
+    );
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.widgetWithText(TextButton, 'Agregar variante'));
+    await tester.tap(find.widgetWithText(TextButton, 'Agregar variante'));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.widgetWithText(TextField, 'Pantalón jean azul / Talla 32 / Cargo negro'), 'Pantalón jean azul');
+    await tester.enterText(find.widgetWithText(TextField, 'Detalles específicos de esta opción'), 'Tela jean azul');
+    await tester.enterText(find.widgetWithText(TextField, '5'), '4');
+
+    await tester.drag(find.byType(Scrollable).last, const Offset(0, -1200));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(ElevatedButton, 'Guardar producto'));
+    await tester.pumpAndSettle();
+
+    expect(apiService.createdProduct, isNotNull);
+    expect(apiService.createdProduct?.id, '1');
+    expect(apiService.createdProduct?.titulo, 'Pantalón');
+    expect(apiService.createdProduct?.precio, 1800);
+    expect(apiService.createdProduct?.variantesJson, hasLength(1));
+    expect(apiService.createdProduct?.variantesJson.first.nombre, 'Pantalón jean azul');
+    expect(apiService.createdProduct?.variantesJson.first.stock, 4);
 
     await binding.setSurfaceSize(null);
   });

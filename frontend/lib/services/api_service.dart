@@ -510,6 +510,60 @@ class ProductCatalogItemData {
   }
 }
 
+/// Represents one product variant/option stored inside a product.
+class ProductVariantData {
+  const ProductVariantData({
+    this.nombre = '',
+    this.descripcion = '',
+    this.precio,
+    this.precioMinimo,
+    this.stock,
+    this.activo = true,
+  });
+
+  final String nombre;
+  final String descripcion;
+  final double? precio;
+  final double? precioMinimo;
+  final int? stock;
+  final bool activo;
+
+  factory ProductVariantData.fromJson(Map<String, dynamic> json) {
+    double? parseDouble(dynamic value) {
+      if (value == null) return null;
+      if (value is num) return value.toDouble();
+      return double.tryParse(value.toString().replaceAll(',', '.'));
+    }
+
+    int? parseInt(dynamic value) {
+      if (value == null) return null;
+      if (value is int) return value;
+      if (value is num) return value.toInt();
+      return int.tryParse(value.toString());
+    }
+
+    return ProductVariantData(
+      nombre: (json['nombre'] as String?) ?? '',
+      descripcion: (json['descripcion'] as String?) ?? '',
+      precio: parseDouble(json['precio']),
+      precioMinimo: parseDouble(json['precioMinimo']),
+      stock: parseInt(json['stock']),
+      activo: (json['activo'] as bool?) ?? true,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return <String, dynamic>{
+      'nombre': nombre,
+      'descripcion': descripcion,
+      if (precio != null) 'precio': precio,
+      if (precioMinimo != null) 'precioMinimo': precioMinimo,
+      if (stock != null) 'stock': stock,
+      'activo': activo,
+    };
+  }
+}
+
 /// Represents a product stored in the `products` database table.
 class ProductData {
   const ProductData({
@@ -521,6 +575,7 @@ class ProductData {
     this.precioMinimo,
     this.stock = 0,
     this.activo = true,
+    this.variantesJson = const <ProductVariantData>[],
     this.imagenesJson = const <String>[],
     this.videosJson = const <String>[],
   });
@@ -533,6 +588,7 @@ class ProductData {
   final double? precioMinimo;
   final int stock;
   final bool activo;
+  final List<ProductVariantData> variantesJson;
   final List<String> imagenesJson;
   final List<String> videosJson;
 
@@ -550,8 +606,17 @@ class ProductData {
       return const <String>[];
     }
 
+    List<ProductVariantData> parseVariants(dynamic value) {
+      if (value is! List) return const <ProductVariantData>[];
+      return value
+          .whereType<Map<String, dynamic>>()
+          .map(ProductVariantData.fromJson)
+          .where((ProductVariantData variant) => variant.nombre.trim().isNotEmpty)
+          .toList();
+    }
+
     return ProductData(
-      id: (json['id'] as String?) ?? '',
+      id: json['id']?.toString() ?? '',
       titulo: (json['titulo'] as String?) ?? '',
       descripcionCorta: (json['descripcionCorta'] as String?) ?? '',
       descripcionCompleta: (json['descripcionCompleta'] as String?) ?? '',
@@ -559,6 +624,7 @@ class ProductData {
       precioMinimo: parseDouble(json['precioMinimo']),
       stock: (json['stock'] as int?) ?? 0,
       activo: (json['activo'] as bool?) ?? true,
+      variantesJson: parseVariants(json['variantesJson']),
       imagenesJson: parseStringList(json['imagenesJson']),
       videosJson: parseStringList(json['videosJson']),
     );
@@ -574,6 +640,7 @@ class ProductData {
       if (precioMinimo != null) 'precioMinimo': precioMinimo,
       'stock': stock,
       'activo': activo,
+      'variantesJson': variantesJson.map((ProductVariantData variant) => variant.toJson()).toList(),
       'imagenesJson': imagenesJson,
       'videosJson': videosJson,
     };

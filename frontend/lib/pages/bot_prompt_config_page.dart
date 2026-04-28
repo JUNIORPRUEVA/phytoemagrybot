@@ -141,7 +141,6 @@ class _BotPromptConfigPageState extends State<BotPromptConfigPage>
     ]);
     _objectiveController.text = _joinBlocks(<String?>[
       config.botIdentity.objective,
-      config.greetingPrompt,
       config.salesPrompts.opening,
       config.salesPrompts.qualification,
     ]);
@@ -309,7 +308,7 @@ ${greeting}'''
     try {
       final updatedConfig = await widget.apiService.savePrompts(
         promptBase: finalPrompt,
-        greetingPrompt: current.greetingPrompt,
+        greetingPrompt: _greetingController.text.trim(),
         companyInfoPrompt: current.companyInfoPrompt,
         productInfoPrompt: current.productInfoPrompt,
         salesGuidelinesPrompt: current.salesGuidelinesPrompt,
