@@ -21,12 +21,13 @@ class PromptPage extends StatefulWidget {
 class _PromptPageState extends State<PromptPage> {
   final TextEditingController _promptBaseController = TextEditingController();
   final TextEditingController _greetingController = TextEditingController();
-  final TextEditingController _companyInfoController = TextEditingController();
-  final TextEditingController _productInfoController = TextEditingController();
   final TextEditingController _salesGuidelinesController = TextEditingController();
   final TextEditingController _objectionHandlingController = TextEditingController();
   final TextEditingController _closingController = TextEditingController();
   final TextEditingController _supportController = TextEditingController();
+
+  String _existingCompanyInfoPrompt = '';
+  String _existingProductInfoPrompt = '';
 
   bool _isLoading = true;
   bool _isSaving = false;
@@ -50,8 +51,6 @@ class _PromptPageState extends State<PromptPage> {
   void dispose() {
     _promptBaseController.dispose();
     _greetingController.dispose();
-    _companyInfoController.dispose();
-    _productInfoController.dispose();
     _salesGuidelinesController.dispose();
     _objectionHandlingController.dispose();
     _closingController.dispose();
@@ -69,8 +68,8 @@ class _PromptPageState extends State<PromptPage> {
       final config = await widget.apiService.getConfig();
       _promptBaseController.text = config.promptBase;
       _greetingController.text = config.greetingPrompt;
-      _companyInfoController.text = config.companyInfoPrompt;
-      _productInfoController.text = config.productInfoPrompt;
+      _existingCompanyInfoPrompt = config.companyInfoPrompt;
+      _existingProductInfoPrompt = config.productInfoPrompt;
       _salesGuidelinesController.text = config.salesGuidelinesPrompt;
       _objectionHandlingController.text = config.objectionHandlingPrompt;
       _closingController.text = config.closingPrompt;
@@ -101,8 +100,8 @@ class _PromptPageState extends State<PromptPage> {
       await widget.apiService.savePrompts(
         promptBase: _promptBaseController.text.trim(),
         greetingPrompt: _greetingController.text.trim(),
-        companyInfoPrompt: _companyInfoController.text.trim(),
-        productInfoPrompt: _productInfoController.text.trim(),
+        companyInfoPrompt: _existingCompanyInfoPrompt,
+        productInfoPrompt: _existingProductInfoPrompt,
         salesGuidelinesPrompt: _salesGuidelinesController.text.trim(),
         objectionHandlingPrompt: _objectionHandlingController.text.trim(),
         closingPrompt: _closingController.text.trim(),
@@ -156,6 +155,11 @@ class _PromptPageState extends State<PromptPage> {
         const Text(
           'Edita la forma en que responde el bot con una estructura limpia y directa.',
           style: TextStyle(color: Color(0xFF475569), fontSize: 14),
+        ),
+        const SizedBox(height: 10),
+        const Text(
+          'Empresa se configura en Configuracion > Empresa. Productos se configuran en Herramientas > Catalogo.',
+          style: TextStyle(color: Color(0xFF64748B), fontSize: 13),
         ),
         const SizedBox(height: 28),
         SectionCard(
@@ -213,20 +217,6 @@ class _PromptPageState extends State<PromptPage> {
                 label: 'Saludo',
                 controller: _greetingController,
                 hint: 'Como debe iniciar una conversacion y generar confianza en los primeros segundos.',
-                enabled: !isBusy,
-              ),
-              _PromptField(
-                width: halfWidth,
-                label: 'Informacion de la empresa',
-                controller: _companyInfoController,
-                hint: 'Historia, diferenciales, ubicacion, horarios, politicas y voz institucional.',
-                enabled: !isBusy,
-              ),
-              _PromptField(
-                width: halfWidth,
-                label: 'Productos y catalogo',
-                controller: _productInfoController,
-                hint: 'Beneficios, ingredientes, usos, precios, bundles o categorias del negocio.',
                 enabled: !isBusy,
               ),
               _PromptField(

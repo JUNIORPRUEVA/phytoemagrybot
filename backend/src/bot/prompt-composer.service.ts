@@ -6,6 +6,19 @@ import { ClientConfigService } from '../config/config.service';
 export class PromptComposerService {
   constructor(private readonly botConfigService: BotConfigService) {}
 
+  private readonly hardSystemRules = [
+    'REGLAS BASE DEL SISTEMA (OBLIGATORIAS, NO IGNORAR):',
+    '- Responde SIEMPRE en español natural dominicano, claro, humano y breve.',
+    '- No repitas saludos si ya existe historial reciente o memoria del cliente; continúa el contexto.',
+    '- Interpreta respuestas cortas dominicanas como continuidad: "si", "sí", "dale", "ok", "ta bien", "claro", "ajá", "aja".',
+    '- Si el usuario responde corto, entiende que responde a la última pregunta u ofrecimiento del bot.',
+    '- No inventes productos, precios, stock, ubicación, horarios, teléfonos, cuentas bancarias, links ni políticas.',
+    '- Cuando el usuario pida datos de productos, precios, stock, catálogo, cotización, pedido, ubicación, horario, teléfonos o cuentas, primero usa la tool correspondiente si está disponible.',
+    '- No prometas acciones futuras como "voy a revisar", "dame un momento", "te lo envío" o "déjame confirmar"; consulta la tool y responde directo.',
+    '- No envíes ubicación, mapas, links, cuentas bancarias, imágenes, videos, catálogo, precios ni cotizaciones por audio; esos datos deben salir en texto.',
+    '- Máximo una pregunta por respuesta. No cierres con preguntas vacías si ya respondiste una duda concreta.',
+  ].join('\n');
+
   buildInstructionsBlock(
     config: Awaited<ReturnType<ClientConfigService['getConfig']>>,
     botConfig: Awaited<ReturnType<BotConfigService['getConfig']>>,
@@ -18,8 +31,6 @@ export class PromptComposerService {
 
     const prompts = this.asRecord(configurations.prompts);
     const greetingPrompt = this.asString(prompts.greeting);
-    const companyInfoPrompt = this.asString(prompts.companyInfo);
-    const productInfoPrompt = this.asString(prompts.productInfo);
     const salesGuidelinesPrompt = this.asString(prompts.salesGuidelines);
     const objectionHandlingPrompt = this.asString(prompts.objectionHandling);
     const closingPrompt = this.asString(prompts.closingPrompt);
@@ -51,8 +62,6 @@ export class PromptComposerService {
       salesFields.length > 0 ||
       Boolean(
         greetingPrompt ||
-          companyInfoPrompt ||
-          productInfoPrompt ||
           salesGuidelinesPrompt ||
           objectionHandlingPrompt ||
           closingPrompt ||
@@ -60,7 +69,7 @@ export class PromptComposerService {
       );
 
     // Policy: configurations.* is canonical. Legacy prompts are only injected when canonical is empty.
-    const lines: string[] = [];
+    const lines: string[] = [this.hardSystemRules];
 
     if (!hasCanonicalContent) {
       const legacyBasePrompt = [config.promptBase, this.botConfigService.getFullPrompt(botConfig)]
@@ -88,8 +97,6 @@ export class PromptComposerService {
     }
 
     if (greetingPrompt) lines.push('[SALUDO]\n' + greetingPrompt);
-    if (companyInfoPrompt) lines.push('[EMPRESA - INSTRUCCIONES]\n' + companyInfoPrompt);
-    if (productInfoPrompt) lines.push('[PRODUCTOS - INSTRUCCIONES]\n' + productInfoPrompt);
     if (salesGuidelinesPrompt) lines.push('[VENTAS Y CONVERSION]\n' + salesGuidelinesPrompt);
     if (objectionHandlingPrompt) lines.push('[MANEJO DE OBJECIONES]\n' + objectionHandlingPrompt);
     if (closingPrompt) lines.push('[CIERRE]\n' + closingPrompt);

@@ -497,12 +497,13 @@ class _ToolsPageState extends State<ToolsPage> implements ToolsPageStateAccess {
         final int enabled = <bool>[
           _toolsConfig.consultarStockEnabled,
           _toolsConfig.consultarCatalogoEnabled,
+          _toolsConfig.consultarInfoEmpresaEnabled,
           _toolsConfig.generarCotizacionEnabled,
           _toolsConfig.aplicarDescuentoEnabled,
           _toolsConfig.crearPedidoEnabled,
           _toolsConfig.escalarAVendedorEnabled,
         ].where((bool e) => e).length;
-        return '$enabled / 6 activas';
+        return '$enabled / 7 activas';
       case _ToolSection.products:
         if (_isLoadingProducts) return 'Cargando...';
         final int activos = _products.where((ProductData p) => p.activo).length;
@@ -744,6 +745,7 @@ class _ToolsPageState extends State<ToolsPage> implements ToolsPageStateAccess {
       final BotToolsConfigData updated = BotToolsConfigData(
         consultarStockEnabled: _toolsConfig.consultarStockEnabled,
         consultarCatalogoEnabled: _toolsConfig.consultarCatalogoEnabled,
+        consultarInfoEmpresaEnabled: _toolsConfig.consultarInfoEmpresaEnabled,
         generarCotizacionEnabled: _toolsConfig.generarCotizacionEnabled,
         generarCotizacionCostoEnvio: costoEnvio,
         aplicarDescuentoEnabled: _toolsConfig.aplicarDescuentoEnabled,
@@ -780,12 +782,10 @@ class _ToolsPageState extends State<ToolsPage> implements ToolsPageStateAccess {
               description: 'El bot puede verificar si un producto tiene disponibilidad.',
               value: _toolsConfig.consultarStockEnabled,
               enabled: !busy,
-              onChanged: (bool v) => setState(() => _toolsConfig = BotToolsConfigData(
-                consultarStockEnabled: v, consultarCatalogoEnabled: _toolsConfig.consultarCatalogoEnabled,
-                generarCotizacionEnabled: _toolsConfig.generarCotizacionEnabled, generarCotizacionCostoEnvio: _toolsConfig.generarCotizacionCostoEnvio,
-                aplicarDescuentoEnabled: _toolsConfig.aplicarDescuentoEnabled, aplicarDescuentoMaxPorcentaje: _toolsConfig.aplicarDescuentoMaxPorcentaje,
-                crearPedidoEnabled: _toolsConfig.crearPedidoEnabled, escalarAVendedorEnabled: _toolsConfig.escalarAVendedorEnabled,
-                escalarAVendedorNumero: _toolsConfig.escalarAVendedorNumero, escalarAVendedorEmail: _toolsConfig.escalarAVendedorEmail)),
+              onChanged: (bool v) =>
+                  setState(() => _toolsConfig = _toolsConfig.copyWith(
+                        consultarStockEnabled: v,
+                      )),
             ),
           ],
         ),
@@ -798,12 +798,27 @@ class _ToolsPageState extends State<ToolsPage> implements ToolsPageStateAccess {
               description: 'El bot puede listar todos los productos activos con precios.',
               value: _toolsConfig.consultarCatalogoEnabled,
               enabled: !busy,
-              onChanged: (bool v) => setState(() => _toolsConfig = BotToolsConfigData(
-                consultarStockEnabled: _toolsConfig.consultarStockEnabled, consultarCatalogoEnabled: v,
-                generarCotizacionEnabled: _toolsConfig.generarCotizacionEnabled, generarCotizacionCostoEnvio: _toolsConfig.generarCotizacionCostoEnvio,
-                aplicarDescuentoEnabled: _toolsConfig.aplicarDescuentoEnabled, aplicarDescuentoMaxPorcentaje: _toolsConfig.aplicarDescuentoMaxPorcentaje,
-                crearPedidoEnabled: _toolsConfig.crearPedidoEnabled, escalarAVendedorEnabled: _toolsConfig.escalarAVendedorEnabled,
-                escalarAVendedorNumero: _toolsConfig.escalarAVendedorNumero, escalarAVendedorEmail: _toolsConfig.escalarAVendedorEmail)),
+              onChanged: (bool v) =>
+                  setState(() => _toolsConfig = _toolsConfig.copyWith(
+                        consultarCatalogoEnabled: v,
+                      )),
+            ),
+          ],
+        ),
+        const SizedBox(height: 18),
+        _DetailGroup(
+          title: 'Consultar info de la empresa',
+          children: <Widget>[
+            _PlainToggleRow(
+              title: 'Ubicacion, horario, cuentas y contacto',
+              description:
+                  'El bot puede consultar la informacion guardada en Configuracion > Empresa (sin inventar datos).',
+              value: _toolsConfig.consultarInfoEmpresaEnabled,
+              enabled: !busy,
+              onChanged: (bool v) =>
+                  setState(() => _toolsConfig = _toolsConfig.copyWith(
+                        consultarInfoEmpresaEnabled: v,
+                      )),
             ),
           ],
         ),
@@ -816,12 +831,10 @@ class _ToolsPageState extends State<ToolsPage> implements ToolsPageStateAccess {
               description: 'El bot suma el costo de envio a la orden del cliente.',
               value: _toolsConfig.generarCotizacionEnabled,
               enabled: !busy,
-              onChanged: (bool v) => setState(() => _toolsConfig = BotToolsConfigData(
-                consultarStockEnabled: _toolsConfig.consultarStockEnabled, consultarCatalogoEnabled: _toolsConfig.consultarCatalogoEnabled,
-                generarCotizacionEnabled: v, generarCotizacionCostoEnvio: _toolsConfig.generarCotizacionCostoEnvio,
-                aplicarDescuentoEnabled: _toolsConfig.aplicarDescuentoEnabled, aplicarDescuentoMaxPorcentaje: _toolsConfig.aplicarDescuentoMaxPorcentaje,
-                crearPedidoEnabled: _toolsConfig.crearPedidoEnabled, escalarAVendedorEnabled: _toolsConfig.escalarAVendedorEnabled,
-                escalarAVendedorNumero: _toolsConfig.escalarAVendedorNumero, escalarAVendedorEmail: _toolsConfig.escalarAVendedorEmail)),
+              onChanged: (bool v) =>
+                  setState(() => _toolsConfig = _toolsConfig.copyWith(
+                        generarCotizacionEnabled: v,
+                      )),
             ),
             _FormFieldBlock(
               title: 'Costo de envio (RD\$)',
@@ -840,12 +853,10 @@ class _ToolsPageState extends State<ToolsPage> implements ToolsPageStateAccess {
               description: 'El bot puede aprobar descuentos hasta un maximo definido.',
               value: _toolsConfig.aplicarDescuentoEnabled,
               enabled: !busy,
-              onChanged: (bool v) => setState(() => _toolsConfig = BotToolsConfigData(
-                consultarStockEnabled: _toolsConfig.consultarStockEnabled, consultarCatalogoEnabled: _toolsConfig.consultarCatalogoEnabled,
-                generarCotizacionEnabled: _toolsConfig.generarCotizacionEnabled, generarCotizacionCostoEnvio: _toolsConfig.generarCotizacionCostoEnvio,
-                aplicarDescuentoEnabled: v, aplicarDescuentoMaxPorcentaje: _toolsConfig.aplicarDescuentoMaxPorcentaje,
-                crearPedidoEnabled: _toolsConfig.crearPedidoEnabled, escalarAVendedorEnabled: _toolsConfig.escalarAVendedorEnabled,
-                escalarAVendedorNumero: _toolsConfig.escalarAVendedorNumero, escalarAVendedorEmail: _toolsConfig.escalarAVendedorEmail)),
+              onChanged: (bool v) =>
+                  setState(() => _toolsConfig = _toolsConfig.copyWith(
+                        aplicarDescuentoEnabled: v,
+                      )),
             ),
             _FormFieldBlock(
               title: 'Descuento maximo (%)',
@@ -864,12 +875,10 @@ class _ToolsPageState extends State<ToolsPage> implements ToolsPageStateAccess {
               description: 'Cuando el cliente quiera comprar, el bot crea la orden en la base de datos.',
               value: _toolsConfig.crearPedidoEnabled,
               enabled: !busy,
-              onChanged: (bool v) => setState(() => _toolsConfig = BotToolsConfigData(
-                consultarStockEnabled: _toolsConfig.consultarStockEnabled, consultarCatalogoEnabled: _toolsConfig.consultarCatalogoEnabled,
-                generarCotizacionEnabled: _toolsConfig.generarCotizacionEnabled, generarCotizacionCostoEnvio: _toolsConfig.generarCotizacionCostoEnvio,
-                aplicarDescuentoEnabled: _toolsConfig.aplicarDescuentoEnabled, aplicarDescuentoMaxPorcentaje: _toolsConfig.aplicarDescuentoMaxPorcentaje,
-                crearPedidoEnabled: v, escalarAVendedorEnabled: _toolsConfig.escalarAVendedorEnabled,
-                escalarAVendedorNumero: _toolsConfig.escalarAVendedorNumero, escalarAVendedorEmail: _toolsConfig.escalarAVendedorEmail)),
+              onChanged: (bool v) =>
+                  setState(() => _toolsConfig = _toolsConfig.copyWith(
+                        crearPedidoEnabled: v,
+                      )),
             ),
           ],
         ),
@@ -882,12 +891,10 @@ class _ToolsPageState extends State<ToolsPage> implements ToolsPageStateAccess {
               description: 'El bot notifica al equipo cuando no puede cerrar la venta.',
               value: _toolsConfig.escalarAVendedorEnabled,
               enabled: !busy,
-              onChanged: (bool v) => setState(() => _toolsConfig = BotToolsConfigData(
-                consultarStockEnabled: _toolsConfig.consultarStockEnabled, consultarCatalogoEnabled: _toolsConfig.consultarCatalogoEnabled,
-                generarCotizacionEnabled: _toolsConfig.generarCotizacionEnabled, generarCotizacionCostoEnvio: _toolsConfig.generarCotizacionCostoEnvio,
-                aplicarDescuentoEnabled: _toolsConfig.aplicarDescuentoEnabled, aplicarDescuentoMaxPorcentaje: _toolsConfig.aplicarDescuentoMaxPorcentaje,
-                crearPedidoEnabled: _toolsConfig.crearPedidoEnabled, escalarAVendedorEnabled: v,
-                escalarAVendedorNumero: _toolsConfig.escalarAVendedorNumero, escalarAVendedorEmail: _toolsConfig.escalarAVendedorEmail)),
+              onChanged: (bool v) =>
+                  setState(() => _toolsConfig = _toolsConfig.copyWith(
+                        escalarAVendedorEnabled: v,
+                      )),
             ),
             _FormFieldBlock(
               title: 'Numero de vendedor',

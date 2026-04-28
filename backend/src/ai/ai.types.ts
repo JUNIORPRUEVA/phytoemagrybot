@@ -16,6 +16,7 @@ export interface AssistantReply {
   type: AssistantReplyType;
   content: string;
   toolsUsed?: string[];
+  toolResults?: ToolExecutionResult[];
 }
 
 export interface AssistantResponseCandidate {

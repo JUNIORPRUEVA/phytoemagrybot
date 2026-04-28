@@ -8,7 +8,11 @@ const DEFAULT_AI_REPLY = 'Hola, claro. Te ayudo ahora mismo.';
 
 function createService(options?: {
   aiReply?: string;
+  toolReply?: string;
+  toolResults?: Array<{ toolName: string; result: Record<string, unknown> }>;
+  openAiTools?: unknown[];
   onGenerateSimpleReply?: (params: Record<string, unknown>) => void;
+  onGenerateToolReply?: (params: Record<string, unknown>) => void;
   configPromptBase?: string;
   botFullPrompt?: string;
   configConfigurations?: Record<string, unknown>;
@@ -41,10 +45,12 @@ function createService(options?: {
         };
       },
       async generateReplyWithTools(params: Record<string, unknown>) {
-        options?.onGenerateSimpleReply?.(params);
+        options?.onGenerateToolReply?.(params);
         return {
           type: 'text' as const,
-          content: options?.aiReply ?? DEFAULT_AI_REPLY,
+          content: options?.toolReply ?? options?.aiReply ?? DEFAULT_AI_REPLY,
+          toolsUsed: options?.toolResults?.map((result) => result.toolName) ?? [],
+          toolResults: options?.toolResults ?? [],
         };
       },
     } as any,
@@ -100,7 +106,7 @@ function createService(options?: {
         return {};
       },
       buildOpenAITools() {
-        return [];
+        return options?.openAiTools ?? [];
       },
     } as any,
     {
@@ -163,6 +169,52 @@ test('system prompt includes knowledge blocks in the expected order', async () =
   assert.ok(systemPrompt.includes('[EMPRESA]'));
   assert.ok(systemPrompt.indexOf('[INSTRUCCIONES]') < systemPrompt.indexOf('[PRODUCTOS]'));
   assert.ok(systemPrompt.indexOf('[PRODUCTOS]') < systemPrompt.indexOf('[EMPRESA]'));
+  assert.match(systemPrompt, /REGLAS BASE DEL SISTEMA/);
+  assert.match(systemPrompt, /Interpreta respuestas cortas dominicanas/);
+  assert.match(systemPrompt, /primero usa la tool correspondiente/);
+});
+
+test('short affirmative replies are enriched with the last assistant message for continuity', async () => {
+  let capturedSecondCall: Record<string, unknown> | null = null;
+  let callCount = 0;
+  const service = createService({
+    aiReply: '¿Te gustaría saber más sobre nuestros productos?',
+    onGenerateSimpleReply: (params) => {
+      callCount += 1;
+      if (callCount === 2) capturedSecondCall = params;
+    },
+  });
+
+  await service.processIncomingMessage('18095550100', 'ubicacion de la tienda');
+  await service.processIncomingMessage('18095550100', 'Si');
+
+  const message = String((capturedSecondCall as { message?: string } | null)?.message ?? '');
+  assert.match(message, /\[CONTEXTO DE CONTINUIDAD\]/);
+  assert.match(message, /Último mensaje del bot: ¿Te gustaría saber más sobre nuestros productos\?/);
+  assert.match(message, /no saludes de nuevo/i);
+});
+
+test('location requests are classified as interest and repaired when company tool data is ignored', async () => {
+  const service = createService({
+    openAiTools: [{ type: 'function', function: { name: 'consultar_info_empresa' } }],
+    toolReply: '¡Hola! ¿Hay algo más en lo que pueda ayudarte?',
+    toolResults: [
+      {
+        toolName: 'consultar_info_empresa',
+        result: {
+          companyName: 'Phytoemagry',
+          address: 'Higuey, centro, calle Beller N° 9',
+          googleMapsLink: 'https://maps.example/demo',
+        },
+      },
+    ],
+  });
+
+  const result = await service.processIncomingMessage('18095550101', 'ubicacion de la tienda');
+
+  assert.equal(result.intent, 'interes');
+  assert.match(result.reply, /Higuey, centro, calle Beller/);
+  assert.match(result.reply, /https:\/\/maps\.example\/demo/);
 });
 
 test('canonical configurations suppress legacy promptBase + botConfig prompts', async () => {

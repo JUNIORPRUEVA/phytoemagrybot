@@ -212,11 +212,8 @@ void main() {
       expect(find.text('REGLAS Y LIMITES'), findsOneWidget);
       expect(find.text('INSTRUCCION DE VENTAS'), findsOneWidget);
       expect(find.text('PROMPT ESPECIAL: SALUDO'), findsOneWidget);
-      expect(find.text('PROMPT ESPECIAL: DESPEDIDA'), findsOneWidget);
-      expect(find.text('PROMPT ESPECIAL: RESPUESTA CORTA'), findsOneWidget);
-      expect(find.text('PROMPT ESPECIAL: RESPUESTA LARGA'), findsOneWidget);
-      expect(find.text('MEDIA RULES'), findsOneWidget);
-      expect(find.text('AUDIO RULES'), findsOneWidget);
+      expect(find.text('MEDIA RULES'), findsNothing);
+      expect(find.text('AUDIO RULES'), findsNothing);
 
       expect(find.byType(TextField), findsNothing);
 
@@ -226,11 +223,6 @@ void main() {
         'REGLAS Y LIMITES',
         'INSTRUCCION DE VENTAS',
         'PROMPT ESPECIAL: SALUDO',
-        'PROMPT ESPECIAL: DESPEDIDA',
-        'PROMPT ESPECIAL: RESPUESTA CORTA',
-        'PROMPT ESPECIAL: RESPUESTA LARGA',
-        'MEDIA RULES',
-        'AUDIO RULES',
       ];
 
       for (final title in titles) {
@@ -240,18 +232,13 @@ void main() {
       }
 
       final fields = find.byType(TextField);
-      expect(fields, findsNWidgets(10));
+      expect(fields, findsNWidgets(5));
 
       await tester.enterText(fields.at(0), 'Identidad demo');
       await tester.enterText(fields.at(1), 'Objetivo demo');
       await tester.enterText(fields.at(2), 'Regla uno\nRegla dos');
       await tester.enterText(fields.at(3), 'Venta demo');
       await tester.enterText(fields.at(4), 'Saludo demo');
-      await tester.enterText(fields.at(5), 'Despedida demo');
-      await tester.enterText(fields.at(6), 'Corta demo');
-      await tester.enterText(fields.at(7), 'Larga demo');
-      await tester.enterText(fields.at(8), 'Media demo');
-      await tester.enterText(fields.at(9), 'Audio demo');
 
       final pageState =
           tester.state(find.byType(BotPromptConfigPage))
@@ -263,7 +250,7 @@ void main() {
       expect(apiService.saveBotPromptConfigCalls, 1);
       expect(
         apiService.lastPromptBase,
-        '[IDENTIDAD]\nIdentidad demo\n\n[OBJETIVO]\nObjetivo demo\n\n[REGLAS]\nRegla uno\nRegla dos\n\n[VENTAS]\nVenta demo\n\n[PROMPTS_ESPECIALES]\nSALUDO:\nSaludo demo\n\nDESPEDIDA:\nDespedida demo\n\nRESPUESTA_CORTA:\nCorta demo\n\nRESPUESTA_LARGA:\nLarga demo\n\n[MEDIA_RULES]\nMedia demo\n\n[AUDIO_RULES]\nAudio demo',
+        '[IDENTIDAD]\nIdentidad demo\n\n[OBJETIVO]\nObjetivo demo\n\n[REGLAS]\nRegla uno\nRegla dos\n\n[VENTAS]\nVenta demo\n\n[PROMPTS_ESPECIALES]\nSALUDO:\nSaludo demo',
       );
       expect(apiService.lastBotPromptBase, apiService.lastPromptBase);
 

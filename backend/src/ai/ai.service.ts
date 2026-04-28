@@ -90,6 +90,7 @@ export class AiService {
     ];
 
     const toolsUsed: string[] = [];
+    const toolResults: import('../tools/tools.types').ToolExecutionResult[] = [];
     const MAX_ROUNDS = 3;
 
     try {
@@ -113,7 +114,7 @@ export class AiService {
         if (!assistantMessage.tool_calls || assistantMessage.tool_calls.length === 0) {
           const content = assistantMessage.content?.trim();
           if (!content) throw new InternalServerErrorException('OpenAI returned an empty response');
-          return { type: 'text', content, toolsUsed };
+          return { type: 'text', content, toolsUsed, toolResults };
         }
 
         // Execute each tool call
@@ -128,6 +129,7 @@ export class AiService {
 
           toolsUsed.push(fnName);
           const result = await params.executeToolCall(fnName, args);
+          toolResults.push(result);
 
           messages.push({
             role: 'tool',
@@ -135,6 +137,12 @@ export class AiService {
             content: JSON.stringify(result),
           });
         }
+
+        messages.push({
+          role: 'system',
+          content:
+            'Ya recibiste resultados de tools. Responde ahora usando esos datos concretos. Si la tool trae dirección, horario, teléfono, catálogo, precio, stock o total, incluye el dato real en la respuesta. No respondas genérico ni preguntes si puedes ayudar sin contestar lo pedido.',
+        });
       }
 
       // Fallback: ask for a final answer without tools
@@ -146,7 +154,7 @@ export class AiService {
       });
       const content = fallback.choices[0]?.message?.content?.trim();
       if (!content) throw new InternalServerErrorException('OpenAI returned an empty response');
-      return { type: 'text', content, toolsUsed };
+      return { type: 'text', content, toolsUsed, toolResults };
     } catch (error) {
       if (
         error instanceof InternalServerErrorException ||

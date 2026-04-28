@@ -7,6 +7,7 @@ class _FakeToolsApiService extends ApiService {
   _FakeToolsApiService() : super(baseUrl: 'https://example.com');
 
   ClientConfigData _config = ClientConfigData.empty();
+  BotToolsConfigData? savedToolsConfig;
 
   @override
   Future<ClientConfigData> getConfig() async {
@@ -70,6 +71,11 @@ class _FakeToolsApiService extends ApiService {
 
     return _config;
   }
+
+  @override
+  Future<void> saveToolsConfig(BotToolsConfigData toolsConfig) async {
+    savedToolsConfig = toolsConfig;
+  }
 }
 
 void main() {
@@ -99,13 +105,57 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Permitir respuestas de audio'), findsOneWidget);
-    expect(find.text('Atras'), findsWidgets);
 
-    await tester.tap(find.widgetWithText(TextButton, 'Atras').first);
+    final state = tester.state(find.byType(ToolsPage)) as ToolsPageStateAccess;
+    expect(state.handleBackNavigation(), isTrue);
     await tester.pumpAndSettle();
 
     expect(find.text('Acceso y llaves'), findsOneWidget);
     expect(find.text('Voz del bot'), findsOneWidget);
     expect(find.text('Seguimiento automatico'), findsOneWidget);
+  });
+
+  testWidgets('bot tools section persists changed tool configuration', (
+    WidgetTester tester,
+  ) async {
+    final apiService = _FakeToolsApiService();
+    final binding = TestWidgetsFlutterBinding.ensureInitialized();
+    await binding.setSurfaceSize(const Size(1400, 1200));
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: ToolsPage(
+              apiService: apiService,
+              onConfigUpdated: () {},
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Acciones del bot'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Consultar info de la empresa'), findsOneWidget);
+
+    final empresaSwitch = find.byType(Switch).at(2);
+    await tester.tap(empresaSwitch);
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byType(TextField).first, '350');
+    await tester.ensureVisible(find.widgetWithText(ElevatedButton, 'Guardar herramientas'));
+    await tester.tap(find.widgetWithText(ElevatedButton, 'Guardar herramientas'));
+    await tester.pumpAndSettle();
+
+    expect(apiService.savedToolsConfig, isNotNull);
+    expect(apiService.savedToolsConfig?.consultarInfoEmpresaEnabled, isFalse);
+    expect(apiService.savedToolsConfig?.consultarCatalogoEnabled, isTrue);
+    expect(apiService.savedToolsConfig?.generarCotizacionCostoEnvio, 350);
+
+    await binding.setSurfaceSize(null);
   });
 }

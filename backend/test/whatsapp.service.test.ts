@@ -1962,7 +1962,12 @@ test('processIncomingAudioMessage sends text when bot replyType is text', async 
 });
 
 test('processIncomingAudioMessage forces audio after two consecutive incoming audios', async () => {
-  const { service, sentTexts, sentAudios } = createAudioFlowService();
+  const { service, sentTexts, sentAudios, voiceService } = createAudioFlowService();
+  let transcriptCount = 0;
+  voiceService.transcribeAudio = async () => {
+    transcriptCount += 1;
+    return transcriptCount === 1 ? 'hola' : 'explicame bien';
+  };
 
   await service.processIncomingAudioMessage(createResolvedConfig(), {
     number: '18095551234',
@@ -2001,7 +2006,8 @@ test('processIncomingAudioMessage forces audio after two consecutive incoming au
 });
 
 test('processIncomingAudioMessage answers long audios with audio replies', async () => {
-  const { service, sentTexts, sentAudios, botService } = createAudioFlowService();
+  const { service, sentTexts, sentAudios, botService, voiceService } = createAudioFlowService();
+  voiceService.transcribeAudio = async () => 'explicame bien';
 
   botService.processIncomingMessage = async () => ({
     reply: 'Te respondo por audio.',
@@ -2439,7 +2445,7 @@ test('processAndDeliverMessage sends text before media when reply type is text',
   ]);
 });
 
-test('processAndDeliverMessage can send media and then one audio reply', async () => {
+test('processAndDeliverMessage sends media with text instead of audio', async () => {
   const { service, sentTexts, sentAudios, botService } = createAudioFlowService();
   const deliveredMedia: string[] = [];
 
@@ -2489,9 +2495,9 @@ test('processAndDeliverMessage can send media and then one audio reply', async (
   );
 
   assert.equal(deliveredMedia.length, 1);
-  assert.equal(sentTexts.length, 0);
-  assert.equal(sentAudios.length, 1);
-  assert.equal(sentAudios[0]?.to, '18095551234@s.whatsapp.net');
+  assert.equal(sentTexts.length, 1);
+  assert.equal(sentTexts[0]?.to, '18095551234@s.whatsapp.net');
+  assert.equal(sentAudios.length, 0);
 });
 
 test('processAndDeliverMessage does not duplicate full reply in media caption when sending audio (fallback safe)', async () => {
@@ -3476,4 +3482,71 @@ test('processIncomingAudioMessage only remembers voice preference after success'
   });
 
   assert.equal(getRememberedVoicePreferences(), 0);
+});
+
+test('processAndDeliverMessage can skip duplicate composing presence for grouped text', async () => {
+  const { service } = createAudioFlowService();
+  const resolved = createResolvedConfig();
+  const presenceCalls: Array<{ to: string; presence: string }> = [];
+
+  service.sendPresence = async (_resolved: unknown, to: string, presence: string) => {
+    presenceCalls.push({ to, presence });
+  };
+
+  await service.processAndDeliverMessage(resolved, '18095551234', 'hola', 'text', {
+    outboundAddress: '18095551234@s.whatsapp.net',
+    skipComposingPresence: true,
+  });
+
+  assert.equal(presenceCalls.filter((call) => call.presence === 'composing').length, 0);
+});
+
+test('processAndDeliverMessage sends one composing presence when not already sent', async () => {
+  const { service } = createAudioFlowService();
+  const resolved = createResolvedConfig();
+  const presenceCalls: Array<{ to: string; presence: string }> = [];
+
+  service.sendPresence = async (_resolved: unknown, to: string, presence: string) => {
+    presenceCalls.push({ to, presence });
+  };
+
+  await service.processAndDeliverMessage(resolved, '18095551235', 'hola', 'text', {
+    outboundAddress: '18095551235@s.whatsapp.net',
+  });
+
+  assert.equal(presenceCalls.filter((call) => call.presence === 'composing').length, 1);
+});
+
+test('determineSendMode forces text for location and map/link replies', () => {
+  const service = createService();
+
+  const decision = service.determineSendMode({
+    contactId: '18095551236',
+    emotion: 'curioso',
+    inputType: 'text',
+    incomingMessage: 'Me gustaria saber la ubicacion de la tienda',
+    incomingAudioStreak: 0,
+    botReply: {
+      reply: 'Phytoemagry está ubicada en Higuey, centro. Mapa: https://maps.example/demo',
+      replyType: 'text',
+      mediaFiles: [],
+      intent: 'interes',
+      decisionIntent: 'interesado',
+      stage: 'curioso',
+      action: 'guiar',
+      purchaseIntentScore: 0,
+      hotLead: false,
+      cached: false,
+      usedGallery: false,
+      usedMemory: true,
+      source: 'ai',
+    },
+    reply: 'Phytoemagry está ubicada en Higuey, centro. Mapa: https://maps.example/demo',
+    explicitVoiceRequest: false,
+    hasVoicePreference: true,
+    wasLastBotAudio: false,
+    allowAudioReplies: true,
+  });
+
+  assert.equal(decision, 'text');
 });

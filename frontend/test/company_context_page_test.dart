@@ -186,7 +186,10 @@ void main() {
     await tester.pumpAndSettle();
 
     await tester.enterText(find.byType(TextField).first, 'Phyto Emagry RD');
-    await tester.tap(find.widgetWithText(TextButton, 'Atras'));
+
+    final state = tester.state(find.byType(CompanyContextPage))
+      as CompanyContextPageStateAccess;
+    expect(state.handleBackNavigation(), isTrue);
     await tester.pumpAndSettle();
 
     await tester.tap(find.text('Ubicacion'));

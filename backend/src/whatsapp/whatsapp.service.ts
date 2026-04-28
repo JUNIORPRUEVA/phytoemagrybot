@@ -882,6 +882,7 @@ export class WhatsAppService implements OnModuleInit {
 
     await this.processAndDeliverMessage(resolved, contactId, groupedMessage.message, 'text', {
       outboundAddress: groupedMessage.outboundAddress || undefined,
+      skipComposingPresence: true,
     });
   }
 
@@ -1065,6 +1066,7 @@ export class WhatsAppService implements OnModuleInit {
       preferAudioReply?: boolean;
       outboundAddress?: string;
       diagnostic?: DeliveryDiagnosticContext;
+      skipComposingPresence?: boolean;
     },
   ): Promise<void> {
     const fallbackMessage = this.buildSalesActiveDeliveryFallbackMessage(resolved, message);
@@ -1119,8 +1121,10 @@ export class WhatsAppService implements OnModuleInit {
     const incomingAudioStreak = await this.updateIncomingAudioStreak(contactId, messageType);
     const incomingColdStreak = await this.updateIncomingColdStreak(contactId, message);
 
-    // Show "typing..." presence while the bot processes and writes the response
-    this.sendPresence(resolved, effectiveOutboundAddress, 'composing').catch(() => undefined);
+    // Show "typing..." once. Text messages already send an early presence before grouping.
+    if (!options?.skipComposingPresence) {
+      this.sendPresence(resolved, effectiveOutboundAddress, 'composing').catch(() => undefined);
+    }
 
     let botReply: Awaited<ReturnType<BotService['processIncomingMessage']>>;
     try {
@@ -2179,6 +2183,11 @@ export class WhatsAppService implements OnModuleInit {
     const normalizedIncoming = this.normalizeTextForVoiceDecision(context.incomingMessage);
     const incomingChars = normalizedIncoming.length;
     const replyChars = context.reply.trim().length;
+    const textOnlyReason = this.operationalTextOnlyReason(
+      context.incomingMessage,
+      context.reply,
+      context.botReply.mediaFiles?.length ?? 0,
+    );
 
     const isClosing = context.botReply.action === 'cerrar' || context.botReply.intent === 'cierre';
     const isConfirmation = ['ok', 'dale', 'perfecto', 'listo', 'confirmado'].includes(normalizedIncoming);
@@ -2220,6 +2229,27 @@ export class WhatsAppService implements OnModuleInit {
           scoreAudio: 0,
           decision: 'text',
           reasons: ['audio_disabled'],
+        }),
+      );
+      return 'text';
+    }
+
+    if (textOnlyReason) {
+      this.logger.log(
+        JSON.stringify({
+          event: 'VOICE_DECISION',
+          contactId: context.contactId,
+          inputType: context.inputType,
+          emotion: context.emotion,
+          incomingAudioStreak: context.incomingAudioStreak,
+          incomingChars,
+          replyChars,
+          scoreAudio: 0,
+          decision: 'text',
+          botIntent: context.botReply.intent,
+          botAction: context.botReply.action,
+          replyType: context.botReply.replyType,
+          reasons: [textOnlyReason],
         }),
       );
       return 'text';
@@ -2386,6 +2416,29 @@ export class WhatsAppService implements OnModuleInit {
     );
 
     return decision;
+  }
+
+  private operationalTextOnlyReason(incomingMessage: string, reply: string, mediaCount: number): string | null {
+    if (mediaCount > 0) return 'operational_media_text_only';
+
+    const combined = this.normalizeTextForVoiceDecision(`${incomingMessage} ${reply}`);
+    if (!combined) return null;
+
+    if (/https?:\/\//i.test(reply) || /www\./i.test(reply)) return 'operational_link_text_only';
+
+    const operationalPatterns: Array<[RegExp, string]> = [
+      [/(ubicacion|direccion|donde estan|donde queda|mapa|maps|gps|calle|sector)/, 'operational_location_text_only'],
+      [/(cuenta|banco|bancaria|deposito|transferencia|pago)/, 'operational_payment_text_only'],
+      [/(catalogo|producto|precio|\brd\b|stock|disponible|cotizacion|total|envio)/, 'operational_commerce_text_only'],
+      [/(foto|imagen|video|multimedia|media)/, 'operational_media_text_only'],
+      [/(telefono|whatsapp|contacto|numero)/, 'operational_contact_text_only'],
+    ];
+
+    for (const [pattern, reason] of operationalPatterns) {
+      if (pattern.test(combined)) return reason;
+    }
+
+    return null;
   }
 
   private shouldPromoteTextReplyToVoice(message: string, reply: string): boolean {

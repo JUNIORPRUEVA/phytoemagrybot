@@ -75,6 +75,12 @@ export class BotService {
       (m) => !(m.role === 'user' && m.content === normalizedMessage),
     );
 
+    const lastAssistantMessage = [...history].reverse().find((m) => m.role === 'assistant');
+    const effectiveMessage = this.buildEffectiveUserMessage(
+      normalizedMessage,
+      lastAssistantMessage?.content,
+    );
+
     const systemPrompt = await this.buildKnowledgeContext(
       config,
       botConfig,
@@ -109,7 +115,7 @@ export class BotService {
           maxTokens: config.aiSettings?.maxCompletionTokens,
           systemPrompt,
           history,
-          message: normalizedMessage,
+          message: effectiveMessage,
           tools: openAiTools,
           executeToolCall: (toolName, args) =>
             this.toolsExecutor.execute(toolName, args, normalizedContactId, toolsConfig),
@@ -121,10 +127,14 @@ export class BotService {
           maxTokens: config.aiSettings?.maxCompletionTokens,
           systemPrompt,
           history,
-          message: normalizedMessage,
+          message: effectiveMessage,
         });
 
-    const finalReply = aiReply.content.trim();
+    const finalReply = this.repairToolGroundedReply(
+      normalizedMessage,
+      aiReply.content.trim(),
+      aiReply.toolResults ?? [],
+    );
 
     await this.memoryService.saveMessage({
       contactId: normalizedContactId,
@@ -160,6 +170,7 @@ export class BotService {
         replyType,
         hotLead,
         source: 'ai',
+        toolsUsed: aiReply.toolsUsed ?? [],
       }),
     );
 
@@ -237,6 +248,7 @@ export class BotService {
     const products = [
       'El catálogo de productos vive en la base de datos y se consulta por tools.',
       'Para responder con datos exactos:',
+      '- Si el cliente pregunta productos, catálogo, precio, disponibilidad, stock o total, DEBES usar la tool aplicable antes de responder.',
       '- Usa consultar_catalogo cuando el cliente pregunte qué vendes o pida lista de productos.',
       '- Usa consultar_stock cuando el cliente pregunte por disponibilidad/stock.',
       '- Usa generar_cotizacion cuando el cliente quiera el total (incluye envío).',
@@ -245,6 +257,7 @@ export class BotService {
     const company = [
       'La información real de la empresa vive en la base de datos y se consulta por tools.',
       'Para responder con datos exactos:',
+      '- Si el cliente pregunta ubicación, horario, cuentas, teléfonos, contacto o fotos, DEBES usar consultar_info_empresa antes de responder.',
       '- Usa consultar_info_empresa cuando el cliente pregunte por ubicación, horario, cuentas de pago, teléfonos o fotos.',
       'No inventes dirección, GPS, horarios, cuentas ni teléfonos si no consultaste la tool.',
     ].join('\n');
@@ -372,11 +385,87 @@ export class BotService {
   }
 
   private detectIntent(message: string): BotIntent {
-    const normalized = message.trim().toLowerCase();
+    const normalized = this.normalizeForIntent(message);
     if (this.detectHotLead(message)) return 'compra';
-    if (/precio|cuanto cuesta|cu.nto cuesta|cuanto vale|cu.nto vale/.test(normalized)) return 'interes';
-    if (/funciona|sirve|beneficio|resultado|verdad/.test(normalized)) return 'duda';
+    if (/precio|cuanto cuesta|cuanto vale|vale|catalogo|catalogo|producto|stock|disponible|ubicacion|direccion|donde|horario|cuenta|pago|telefono|contacto|cotizacion|total/.test(normalized)) return 'interes';
+    if (/funciona|sirve|beneficio|resultado|verdad|como se usa|uso/.test(normalized)) return 'duda';
     return 'otro';
+  }
+
+  private buildEffectiveUserMessage(message: string, lastAssistant?: string): string {
+    const normalized = this.normalizeForIntent(message);
+    if (!this.isShortContinuation(normalized) || !lastAssistant?.trim()) {
+      return message;
+    }
+
+    return [
+      message,
+      '',
+      '[CONTEXTO DE CONTINUIDAD]',
+      'El usuario está respondiendo de forma corta al último mensaje del bot.',
+      `Último mensaje del bot: ${lastAssistant.trim().slice(0, 500)}`,
+      'Interpreta la respuesta según ese contexto; no saludes de nuevo ni cambies de tema.',
+    ].join('\n');
+  }
+
+  private isShortContinuation(normalized: string): boolean {
+    return [
+      'si',
+      'sii',
+      'sip',
+      'claro',
+      'dale',
+      'ok',
+      'okay',
+      'ta bien',
+      'esta bien',
+      'aja',
+      'ajá',
+      'perfecto',
+      'listo',
+      'bueno',
+    ].includes(normalized);
+  }
+
+  private repairToolGroundedReply(
+    message: string,
+    content: string,
+    toolResults: import('../tools/tools.types').ToolExecutionResult[],
+  ): string {
+    const normalized = this.normalizeForIntent(message);
+    const askedLocation = /ubicacion|direccion|donde|maps|mapa|tienda/.test(normalized);
+    if (!askedLocation) return content;
+
+    const companyTool = toolResults.find((r) => r.toolName === 'consultar_info_empresa');
+    const result = this.asRecord(companyTool?.result);
+    const address = this.asString(result.address);
+    if (!address) return content;
+
+    const normalizedContent = this.normalizeForIntent(content);
+    const normalizedAddress = this.normalizeForIntent(address);
+    if (normalizedAddress && normalizedContent.includes(normalizedAddress.slice(0, Math.min(20, normalizedAddress.length)))) {
+      return content;
+    }
+
+    const companyName = this.asString(result.companyName) || 'nuestra tienda';
+    const maps = this.asString(result.googleMapsLink);
+    return [
+      `${companyName} está ubicada en ${address}.`,
+      maps ? `Mapa: ${maps}` : '',
+      '¿Quieres que también te pase el horario?',
+    ]
+      .filter(Boolean)
+      .join(' ');
+  }
+
+  private normalizeForIntent(value: string): string {
+    return value
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-zA-Z0-9\s]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .toLowerCase()
+      .trim();
   }
 
   private intentToBotDecisionIntent(intent: BotIntent): BotDecisionIntent {

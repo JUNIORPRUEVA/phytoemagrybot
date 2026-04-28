@@ -580,11 +580,12 @@ class ProductData {
   }
 }
 
-/// Configuration for the 6 bot tools stored at configurations.tools.
+/// Configuration for the 7 bot tools stored at configurations.tools.
 class BotToolsConfigData {
   const BotToolsConfigData({
     this.consultarStockEnabled = true,
     this.consultarCatalogoEnabled = true,
+    this.consultarInfoEmpresaEnabled = true,
     this.generarCotizacionEnabled = true,
     this.generarCotizacionCostoEnvio = 200.0,
     this.aplicarDescuentoEnabled = false,
@@ -597,6 +598,7 @@ class BotToolsConfigData {
 
   final bool consultarStockEnabled;
   final bool consultarCatalogoEnabled;
+  final bool consultarInfoEmpresaEnabled;
   final bool generarCotizacionEnabled;
   final double generarCotizacionCostoEnvio;
   final bool aplicarDescuentoEnabled;
@@ -606,10 +608,48 @@ class BotToolsConfigData {
   final String escalarAVendedorNumero;
   final String escalarAVendedorEmail;
 
+  BotToolsConfigData copyWith({
+    bool? consultarStockEnabled,
+    bool? consultarCatalogoEnabled,
+    bool? consultarInfoEmpresaEnabled,
+    bool? generarCotizacionEnabled,
+    double? generarCotizacionCostoEnvio,
+    bool? aplicarDescuentoEnabled,
+    int? aplicarDescuentoMaxPorcentaje,
+    bool? crearPedidoEnabled,
+    bool? escalarAVendedorEnabled,
+    String? escalarAVendedorNumero,
+    String? escalarAVendedorEmail,
+  }) {
+    return BotToolsConfigData(
+      consultarStockEnabled: consultarStockEnabled ?? this.consultarStockEnabled,
+      consultarCatalogoEnabled:
+          consultarCatalogoEnabled ?? this.consultarCatalogoEnabled,
+      consultarInfoEmpresaEnabled:
+          consultarInfoEmpresaEnabled ?? this.consultarInfoEmpresaEnabled,
+      generarCotizacionEnabled:
+          generarCotizacionEnabled ?? this.generarCotizacionEnabled,
+      generarCotizacionCostoEnvio:
+          generarCotizacionCostoEnvio ?? this.generarCotizacionCostoEnvio,
+      aplicarDescuentoEnabled:
+          aplicarDescuentoEnabled ?? this.aplicarDescuentoEnabled,
+      aplicarDescuentoMaxPorcentaje:
+          aplicarDescuentoMaxPorcentaje ?? this.aplicarDescuentoMaxPorcentaje,
+      crearPedidoEnabled: crearPedidoEnabled ?? this.crearPedidoEnabled,
+      escalarAVendedorEnabled:
+          escalarAVendedorEnabled ?? this.escalarAVendedorEnabled,
+      escalarAVendedorNumero: escalarAVendedorNumero ?? this.escalarAVendedorNumero,
+      escalarAVendedorEmail: escalarAVendedorEmail ?? this.escalarAVendedorEmail,
+    );
+  }
+
   factory BotToolsConfigData.fromJson(Map<String, dynamic>? json) {
     if (json == null) return const BotToolsConfigData();
     final consultarStock = (json['consultarStock'] as Map<String, dynamic>?) ?? <String, dynamic>{};
     final consultarCatalogo = (json['consultarCatalogo'] as Map<String, dynamic>?) ?? <String, dynamic>{};
+    final consultarInfoEmpresa =
+        (json['consultarInfoEmpresa'] as Map<String, dynamic>?) ??
+            <String, dynamic>{};
     final generarCotizacion = (json['generarCotizacion'] as Map<String, dynamic>?) ?? <String, dynamic>{};
     final aplicarDescuento = (json['aplicarDescuento'] as Map<String, dynamic>?) ?? <String, dynamic>{};
     final crearPedido = (json['crearPedido'] as Map<String, dynamic>?) ?? <String, dynamic>{};
@@ -617,6 +657,8 @@ class BotToolsConfigData {
     return BotToolsConfigData(
       consultarStockEnabled: (consultarStock['enabled'] as bool?) ?? true,
       consultarCatalogoEnabled: (consultarCatalogo['enabled'] as bool?) ?? true,
+      consultarInfoEmpresaEnabled:
+          (consultarInfoEmpresa['enabled'] as bool?) ?? true,
       generarCotizacionEnabled: (generarCotizacion['enabled'] as bool?) ?? true,
       generarCotizacionCostoEnvio: ((generarCotizacion['costoEnvio'] as num?) ?? 200).toDouble(),
       aplicarDescuentoEnabled: (aplicarDescuento['enabled'] as bool?) ?? false,
@@ -632,6 +674,7 @@ class BotToolsConfigData {
     return <String, dynamic>{
       'consultarStock': <String, dynamic>{'enabled': consultarStockEnabled},
       'consultarCatalogo': <String, dynamic>{'enabled': consultarCatalogoEnabled},
+      'consultarInfoEmpresa': <String, dynamic>{'enabled': consultarInfoEmpresaEnabled},
       'generarCotizacion': <String, dynamic>{
         'enabled': generarCotizacionEnabled,
         'costoEnvio': generarCotizacionCostoEnvio,
