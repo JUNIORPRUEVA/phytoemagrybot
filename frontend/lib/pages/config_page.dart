@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 
 import '../services/api_service.dart';
 import '../widgets/secondary_page_layout.dart';
-import 'company_context_page.dart';
 import 'connect_whatsapp_page.dart';
 import 'memory_page.dart';
 
@@ -29,12 +28,10 @@ abstract class ConfigPageStateAccess {
   Future<void> reloadCurrentSection();
 }
 
-enum _ConfigSection { channels, company, memory }
+enum _ConfigSection { channels, memory }
 
 class _ConfigPageState extends State<ConfigPage>
     implements ConfigPageStateAccess {
-  final GlobalKey<State<CompanyContextPage>> _companyPageKey =
-      GlobalKey<State<CompanyContextPage>>();
   final GlobalKey<State<MemoryPage>> _memoryPageKey =
       GlobalKey<State<MemoryPage>>();
 
@@ -108,15 +105,6 @@ class _ConfigPageState extends State<ConfigPage>
       return false;
     }
 
-    if (_selectedSection == _ConfigSection.company) {
-      final companyState =
-          _companyPageKey.currentState as CompanyContextPageStateAccess?;
-      final handled = companyState?.handleBackNavigation() ?? false;
-      if (handled) {
-        return true;
-      }
-    }
-
     if (_selectedSection == _ConfigSection.memory) {
       final memoryState = _memoryPageKey.currentState as MemoryPageStateAccess?;
       final handled = memoryState?.handleBackNavigation() ?? false;
@@ -142,10 +130,6 @@ class _ConfigPageState extends State<ConfigPage>
     switch (selectedSection) {
       case _ConfigSection.channels:
         return 'Canales';
-      case _ConfigSection.company:
-        final companyState =
-            _companyPageKey.currentState as CompanyContextPageStateAccess?;
-        return companyState?.currentTitle() ?? 'Empresa';
       case _ConfigSection.memory:
         return 'Memoria';
     }
@@ -195,10 +179,7 @@ class _ConfigPageState extends State<ConfigPage>
             Text(
               _loadError!,
               textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: Color(0xFFB91C1C),
-                fontSize: 13,
-              ),
+              style: const TextStyle(color: Color(0xFFB91C1C), fontSize: 13),
             ),
             const SizedBox(height: 16),
             OutlinedButton(
@@ -224,18 +205,9 @@ class _ConfigPageState extends State<ConfigPage>
           ),
           const SizedBox(height: 12),
           _ConfigSectionTile(
-            icon: Icons.business_center_rounded,
-            title: 'Empresa',
-            subtitle:
-                'Ubicacion, contacto, horarios, cuentas e informacion operativa.',
-            onTap: () => _openSection(_ConfigSection.company),
-          ),
-          const SizedBox(height: 12),
-          _ConfigSectionTile(
             icon: Icons.psychology_alt_rounded,
             title: 'Memoria',
-            subtitle:
-                'Ventana de memoria y datos recordados por contacto.',
+            subtitle: 'Ventana de memoria y datos recordados por contacto.',
             onTap: () => _openSection(_ConfigSection.memory),
           ),
         ],
@@ -249,14 +221,6 @@ class _ConfigPageState extends State<ConfigPage>
         return ConnectWhatsAppPage(
           apiService: widget.apiService,
           onConfigUpdated: _handleNestedConfigUpdated,
-        );
-      case _ConfigSection.company:
-        return CompanyContextPage(
-          key: _companyPageKey,
-          apiService: widget.apiService,
-          onConfigUpdated: _handleNestedConfigUpdated,
-          onRequestBack: _closeSection,
-          onMainViewChanged: (_) => _handleNestedNavigationChanged(),
         );
       case _ConfigSection.memory:
         return MemoryPage(
@@ -334,10 +298,7 @@ class _ConfigSectionTile extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 12),
-            const Icon(
-              Icons.chevron_right_rounded,
-              color: Color(0xFF94A3B8),
-            ),
+            const Icon(Icons.chevron_right_rounded, color: Color(0xFF94A3B8)),
           ],
         ),
       ),

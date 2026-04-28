@@ -95,13 +95,14 @@ export class AiService {
 
     try {
       for (let round = 0; round < MAX_ROUNDS; round++) {
+        const toolChoice = round === 0 && params.toolChoice ? params.toolChoice : 'auto';
         const completion = await openai.chat.completions.create({
           model: modelName,
           temperature,
           max_completion_tokens: maxTokens,
           messages,
           tools: params.tools,
-          tool_choice: 'auto',
+          tool_choice: toolChoice,
         });
 
         const choice = completion.choices[0];

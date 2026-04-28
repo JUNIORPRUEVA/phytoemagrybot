@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../pages/bot_prompt_config_page.dart';
+import '../pages/company_context_page.dart';
 import '../pages/config_page.dart';
 import '../pages/tools_page.dart';
 import '../pages/users_page.dart';
@@ -38,8 +39,9 @@ class DashboardShell extends StatefulWidget {
 class _DashboardShellState extends State<DashboardShell> {
   static const int _promptPageIndex = 0;
   static const int _galleryPageIndex = 1;
-  static const int _configPageIndex = 2;
-  static const int _usersPageIndex = 3;
+  static const int _companyPageIndex = 2;
+  static const int _configPageIndex = 3;
+  static const int _usersPageIndex = 4;
 
   int _selectedIndex = 0;
   int _mobileLastPrimaryPageIndex = 0;
@@ -47,6 +49,8 @@ class _DashboardShellState extends State<DashboardShell> {
       GlobalKey<State<BotPromptConfigPage>>();
   final GlobalKey<State<ToolsPage>> _toolsDirectPageKey =
       GlobalKey<State<ToolsPage>>();
+    final GlobalKey<State<CompanyContextPage>> _companyPageKey =
+      GlobalKey<State<CompanyContextPage>>();
   final GlobalKey<State<ConfigPage>> _configPageKey =
       GlobalKey<State<ConfigPage>>();
   late final ApiService _apiService;
@@ -112,6 +116,12 @@ class _DashboardShellState extends State<DashboardShell> {
     if (_selectedIndex == _configPageIndex) {
       final state = _configPageKey.currentState as ConfigPageStateAccess?;
       await state?.reloadCurrentSection();
+    }
+
+    if (_selectedIndex == _companyPageIndex) {
+      final state =
+          _companyPageKey.currentState as CompanyContextPageStateAccess?;
+      await state?.reload();
     }
   }
 
@@ -182,6 +192,16 @@ class _DashboardShellState extends State<DashboardShell> {
           }
         },
       ),
+      CompanyContextPage(
+        key: _companyPageKey,
+        apiService: _apiService,
+        onConfigUpdated: _refreshOverview,
+        onMainViewChanged: (_) {
+          if (mounted) {
+            setState(() {});
+          }
+        },
+      ),
       ConfigPage(
         key: _configPageKey,
         apiService: _apiService,
@@ -202,6 +222,7 @@ class _DashboardShellState extends State<DashboardShell> {
     final labels = <String>[
       'Instrucciones',
       'Herramientas',
+      'Empresa',
       'Configuracion',
       if (isAdmin) 'Usuarios',
     ];
@@ -209,38 +230,61 @@ class _DashboardShellState extends State<DashboardShell> {
     final icons = <IconData>[
       Icons.auto_awesome_rounded,
       Icons.build_rounded,
+      Icons.business_center_rounded,
       Icons.settings_rounded,
       if (isAdmin) Icons.group_rounded,
     ];
+    final int pageCount = pages.length;
+    final int navCount = <int>[labels.length, icons.length, pageCount]
+        .reduce((int a, int b) => a < b ? a : b);
+    final int safeSelectedIndex = _selectedIndex >= 0 && _selectedIndex < pageCount
+        ? _selectedIndex
+        : _mobileMainPageIndex;
     final mobileDrawerIndices = <int>[
       if (isAdmin) _usersPageIndex,
+      _companyPageIndex,
       _configPageIndex,
-    ];
+    ].where((int index) => index >= 0 && index < navCount).toList();
+    final mobileBottomNavIndices = _mobileBottomNavIndices
+        .where((int index) => index >= 0 && index < navCount)
+        .toList(growable: false);
 
     final bool isMobile = MediaQuery.sizeOf(context).width < 900;
     final configState = _configPageKey.currentState as ConfigPageStateAccess?;
     final configTitle = configState?.currentTitle() ?? labels[_configPageIndex];
     final canNavigateConfigBack = configState?.canNavigateBack() ?? false;
+    final companyState =
+      _companyPageKey.currentState as CompanyContextPageStateAccess?;
+    final companyTitle =
+      companyState?.currentTitle() ?? labels[_companyPageIndex];
     final toolsDirectState = _toolsDirectPageKey.currentState as ToolsPageStateAccess?;
     final bool isMobileMainPage =
-        isMobile && _selectedIndex == _mobileMainPageIndex;
-    final int mobileNavIndex = _mobileBottomNavIndices.indexOf(
+      isMobile && safeSelectedIndex == _mobileMainPageIndex;
+    final int mobileNavIndex = mobileBottomNavIndices.indexOf(
       _mobileLastPrimaryPageIndex,
     );
     final bool showDesktopConfigBack =
-      !isMobile && _selectedIndex == _configPageIndex && canNavigateConfigBack;
-    final String currentAppBarTitle = _selectedIndex == _configPageIndex
-      ? configTitle
-      : _selectedIndex == _galleryPageIndex
-        ? (toolsDirectState?.currentTitle() ?? labels[_galleryPageIndex])
-        : labels[_selectedIndex];
+      !isMobile && safeSelectedIndex == _configPageIndex && canNavigateConfigBack;
+    final bool showDesktopCompanyBack =
+        !isMobile &&
+      safeSelectedIndex == _companyPageIndex &&
+        companyTitle != labels[_companyPageIndex];
+    final String currentAppBarTitle = safeSelectedIndex == _configPageIndex
+        ? configTitle
+      : safeSelectedIndex == _companyPageIndex
+            ? companyTitle
+        : safeSelectedIndex == _galleryPageIndex
+                ? (toolsDirectState?.currentTitle() ?? labels[_galleryPageIndex])
+          : safeSelectedIndex < labels.length
+            ? labels[safeSelectedIndex]
+            : labels[_mobileMainPageIndex];
 
     return Scaffold(
       drawer: isMobile
           ? _MobileDrawer(
               overviewFuture: _overviewFuture,
               brandNameResolver: _resolveBrandName,
-              selectedIndex: _selectedIndex,
+              selectedIndex: safeSelectedIndex,
               labels: labels,
               icons: icons,
               itemIndices: mobileDrawerIndices,
@@ -275,6 +319,16 @@ class _DashboardShellState extends State<DashboardShell> {
                       tooltip: 'Regresar',
                       icon: const Icon(Icons.arrow_back_rounded),
                     )
+                  : showDesktopCompanyBack
+                  ? IconButton(
+                      onPressed: () {
+                        final state = _companyPageKey.currentState
+                            as CompanyContextPageStateAccess?;
+                        state?.handleBackNavigation();
+                      },
+                      tooltip: 'Regresar',
+                      icon: const Icon(Icons.arrow_back_rounded),
+                    )
                   : isMobile
                   ? IconButton(
                       onPressed: _handleMobileBack,
@@ -286,7 +340,7 @@ class _DashboardShellState extends State<DashboardShell> {
                 future: _overviewFuture,
                 builder: (context, snapshot) {
                   final brandName = _resolveBrandName(snapshot.data);
-                  if (isMobile || _selectedIndex == _configPageIndex) {
+                  if (isMobile || safeSelectedIndex == _configPageIndex || safeSelectedIndex == _companyPageIndex) {
                     return Text(currentAppBarTitle);
                   }
 
@@ -322,8 +376,13 @@ class _DashboardShellState extends State<DashboardShell> {
                                 _handleMobileBack();
                                 return;
                               }
-                              if (_selectedIndex == _configPageIndex) {
+                              if (safeSelectedIndex == _configPageIndex) {
                                 final state = _configPageKey.currentState as ConfigPageStateAccess?;
+                                state?.handleBackNavigation();
+                              }
+                              if (_selectedIndex == _companyPageIndex) {
+                                final state = _companyPageKey.currentState
+                                    as CompanyContextPageStateAccess?;
                                 state?.handleBackNavigation();
                               }
                               return;
@@ -356,9 +415,12 @@ class _DashboardShellState extends State<DashboardShell> {
 
                           final canShowBackAction =
                               isMobile ||
-                              (_selectedIndex == _configPageIndex &&
+                              (safeSelectedIndex == _configPageIndex &&
                                   canNavigateConfigBack &&
-                                  !showDesktopConfigBack);
+                                !showDesktopConfigBack) ||
+                              (_selectedIndex == _companyPageIndex &&
+                                companyTitle != labels[_companyPageIndex] &&
+                                !showDesktopCompanyBack);
                           if (canShowBackAction) {
                             items.add(const PopupMenuDivider());
                             items.add(
@@ -382,8 +444,8 @@ class _DashboardShellState extends State<DashboardShell> {
               height: 72,
               labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
               onDestinationSelected: (index) =>
-                  _selectPage(_mobileBottomNavIndices[index]),
-              destinations: _mobileBottomNavIndices
+                  _selectPage(mobileBottomNavIndices[index]),
+              destinations: mobileBottomNavIndices
                   .map(
                     (pageIndex) => NavigationDestination(
                       icon: Icon(icons[pageIndex]),
@@ -394,7 +456,7 @@ class _DashboardShellState extends State<DashboardShell> {
                   .toList(),
             )
           : _AppFooter(overviewFuture: _overviewFuture),
-      floatingActionButton: isMobile && _selectedIndex == _promptPageIndex
+      floatingActionButton: isMobile && safeSelectedIndex == _promptPageIndex
           ? FloatingActionButton.extended(
               onPressed: () {
                 final state =
@@ -517,7 +579,7 @@ class _DashboardShellState extends State<DashboardShell> {
                           ),
                           child: SingleChildScrollView(
                             key: ValueKey<int>(_selectedIndex),
-                            child: pages[_selectedIndex],
+                            child: pages[safeSelectedIndex],
                           ),
                         ),
                       ),
@@ -534,16 +596,26 @@ class _DashboardShellState extends State<DashboardShell> {
 
   void _selectPage(int index) {
     setState(() {
-      if (_mobileBottomNavIndices.contains(index)) {
-        _mobileLastPrimaryPageIndex = index;
+      final int nextIndex = index < 0 ? _mobileMainPageIndex : index;
+      if (_mobileBottomNavIndices.contains(nextIndex)) {
+        _mobileLastPrimaryPageIndex = nextIndex;
       }
-      _selectedIndex = index;
+      _selectedIndex = nextIndex;
     });
   }
 
   void _handleMobileBack() {
     if (_selectedIndex == _configPageIndex) {
       final state = _configPageKey.currentState as ConfigPageStateAccess?;
+      final handled = state?.handleBackNavigation() ?? false;
+      if (handled) {
+        return;
+      }
+    }
+
+    if (_selectedIndex == _companyPageIndex) {
+      final state =
+          _companyPageKey.currentState as CompanyContextPageStateAccess?;
       final handled = state?.handleBackNavigation() ?? false;
       if (handled) {
         return;
@@ -867,6 +939,10 @@ class _MobileDrawer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final validItemIndices = itemIndices
+        .where((int index) => index >= 0 && index < labels.length && index < icons.length)
+        .toList(growable: false);
+
     return Drawer(
       child: SafeArea(
         child: Column(
@@ -913,7 +989,7 @@ class _MobileDrawer extends StatelessWidget {
             Expanded(
               child: ListView(
                 padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
-                children: itemIndices
+                children: validItemIndices
                     .map(
                       (pageIndex) => Padding(
                         padding: const EdgeInsets.only(bottom: 8),

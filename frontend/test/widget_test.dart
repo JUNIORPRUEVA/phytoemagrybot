@@ -55,7 +55,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Instrucciones'), findsWidgets);
-    expect(find.text('Productos'), findsWidgets);
+    expect(find.text('Herramientas'), findsWidgets);
 
     await binding.setSurfaceSize(null);
   });

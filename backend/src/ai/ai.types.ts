@@ -2,6 +2,7 @@ import { AppConfigRecord } from '../config/config.types';
 import { StoredMessage } from '../memory/memory.types';
 import { BotDecisionAction, BotDecisionIntent } from '../bot/bot-decision.types';
 import { OpenAITool, ToolExecutionResult } from '../tools/tools.types';
+import OpenAI from 'openai';
 
 export type AssistantReplyType = 'text' | 'audio';
 export type AssistantResponseStyle = 'brief' | 'balanced' | 'detailed';
@@ -61,4 +62,5 @@ export interface SimpleGenerateReplyParams {
 export interface GenerateReplyWithToolsParams extends SimpleGenerateReplyParams {
   tools: OpenAITool[];
   executeToolCall: (toolName: string, args: Record<string, unknown>) => Promise<ToolExecutionResult>;
+  toolChoice?: OpenAI.ChatCompletionToolChoiceOption;
 }

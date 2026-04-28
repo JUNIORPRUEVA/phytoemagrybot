@@ -24,6 +24,7 @@ export class MemoryService implements OnModuleInit {
   private readonly logger = new Logger(MemoryService.name);
   private static readonly SHORT_MEMORY_LIMIT = 20;
   private static readonly SHORT_MEMORY_TTL_SECONDS = 60 * 60 * 24;
+  private static readonly LAST_ASSISTANT_TTL_SECONDS = 60 * 60 * 24;
   private static readonly LONG_MEMORY_TTL_DAYS = 15;
   private static readonly LONG_MEMORY_TTL_SECONDS = 60 * 60 * 24 * 15;
   private static readonly SUMMARY_REFRESH_INTERVAL = 5;
@@ -106,6 +107,14 @@ export class MemoryService implements OnModuleInit {
       MemoryService.SHORT_MEMORY_TTL_SECONDS,
     );
 
+    if (params.role === 'assistant') {
+      await this.redisService.set(
+        this.getLastAssistantKey(contactId),
+        message,
+        MemoryService.LAST_ASSISTANT_TTL_SECONDS,
+      );
+    }
+
     if (params.role === 'user') {
       await this.touchLongMemoryExpiry(contactId);
       await this.updateClientMemory(contactId, content, recentMessages);
@@ -121,6 +130,17 @@ export class MemoryService implements OnModuleInit {
     }
 
     return message;
+  }
+
+  async getLastAssistantMessage(contactId: string): Promise<StoredMessage | null> {
+    const normalizedContactId = this.normalizeContactId(contactId);
+    const cached = await this.redisService.get<StoredMessage>(this.getLastAssistantKey(normalizedContactId));
+    if (cached?.role === 'assistant' && cached.content?.trim()) {
+      return cached;
+    }
+
+    const recent = await this.getRecentMessages(normalizedContactId, MemoryService.SHORT_MEMORY_LIMIT);
+    return [...recent].reverse().find((message) => message.role === 'assistant') ?? null;
   }
 
   async getRecentMessages(contactId: string, limit = 10): Promise<StoredMessage[]> {
@@ -687,6 +707,7 @@ export class MemoryService implements OnModuleInit {
       this.getSummaryCounterKey(normalizedContactId),
       this.getConversationBufferKey(normalizedContactId),
       this.getConversationCacheKey(normalizedContactId),
+      this.getLastAssistantKey(normalizedContactId),
       this.getGroupedBufferKey(normalizedContactId),
       this.getGroupedTimerKey(normalizedContactId),
       this.getGroupedRecipientKey(normalizedContactId),
@@ -698,13 +719,14 @@ export class MemoryService implements OnModuleInit {
       this.redisService.deleteByPattern(`wa-inbound:${normalizedContactId}:*`),
     ]);
 
-    return 7 + replyCacheKeys + inboundKeys;
+    return 8 + replyCacheKeys + inboundKeys;
   }
 
   private async clearAllRuntimeMemory(): Promise<number> {
     const patterns = [
       'buffer:*',
       'cache:*',
+      'last-assistant:*',
       'grouped-buffer:*',
       'grouped-buffer:timer:*',
       'grouped-buffer:recipient:*',
@@ -726,6 +748,10 @@ export class MemoryService implements OnModuleInit {
 
   private getConversationCacheKey(contactId: string): string {
     return `cache:${contactId}`;
+  }
+
+  private getLastAssistantKey(contactId: string): string {
+    return `last-assistant:${contactId}`;
   }
 
   private getGroupedBufferKey(contactId: string): string {

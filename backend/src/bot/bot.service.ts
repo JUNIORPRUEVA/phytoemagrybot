@@ -9,6 +9,7 @@ import { BotIntent, BotReplyResult, BotTestReport, BotTestStepResult } from './b
 import { ToolsService } from '../tools/tools.service';
 import { ToolsExecutor } from '../tools/tools.executor';
 import { PromptComposerService } from './prompt-composer.service';
+import OpenAI from 'openai';
 
 interface StructuredProduct {
   id: string;
@@ -22,9 +23,22 @@ interface StructuredProduct {
   activo: boolean;
 }
 
+type ContinuationPolarity = 'affirmative' | 'negative' | 'ambiguous' | null;
+
+interface ContinuationContext {
+  isContinuation: boolean;
+  polarity: ContinuationPolarity;
+  lastAssistant: string | null;
+  inferredIntent: BotIntent | null;
+  inferredAction: BotDecisionAction | null;
+  topic: 'product' | 'catalog' | 'price' | 'purchase' | 'company' | 'general' | null;
+}
+
 @Injectable()
 export class BotService {
   private readonly logger = new Logger(BotService.name);
+
+  private static readonly COMPANY_TOOL_NAME = 'consultar_info_empresa';
 
   constructor(
     private readonly aiService: AiService,
@@ -75,13 +89,19 @@ export class BotService {
       (m) => !(m.role === 'user' && m.content === normalizedMessage),
     );
 
-    const lastAssistantMessage = [...history].reverse().find((m) => m.role === 'assistant');
-    const effectiveMessage = this.buildEffectiveUserMessage(
+    const lastAssistantFromHistory = [...history].reverse().find((m) => m.role === 'assistant');
+    const isShortReply = this.isShortContinuation(this.normalizeForIntent(normalizedMessage));
+    const lastAssistantMessage = lastAssistantFromHistory ?? (isShortReply
+      ? await this.memoryService.getLastAssistantMessage(normalizedContactId)
+      : null);
+    const continuation = this.buildContinuationContext(
       normalizedMessage,
       lastAssistantMessage?.content,
+      memoryContext.clientMemory.lastIntent,
     );
+    const effectiveMessage = this.buildEffectiveUserMessage(normalizedMessage, continuation);
 
-    const systemPrompt = await this.buildKnowledgeContext(
+    let systemPrompt = await this.buildKnowledgeContext(
       config,
       botConfig,
       memoryContext.clientMemory,
@@ -97,6 +117,13 @@ export class BotService {
         hasSummary: !!memoryContext.summary.summary,
         clientStatus: memoryContext.clientMemory.status,
         clientName: memoryContext.clientMemory.name,
+        rawMemoryMessages: memoryContext.messages.length,
+        lastAssistantFound: !!lastAssistantMessage?.content,
+        lastAssistantSource: lastAssistantFromHistory ? 'history' : lastAssistantMessage ? 'fallback' : null,
+        continuationDetected: continuation.isContinuation,
+        continuationPolarity: continuation.polarity,
+        continuationTopic: continuation.topic,
+        inferredIntent: continuation.inferredIntent,
       }),
     );
 
@@ -104,7 +131,28 @@ export class BotService {
       this.asRecord(config.configurations).tools,
     );
     const toolsConfig = this.toolsService.resolveConfig(rawToolsConfig);
-    const openAiTools = this.toolsService.buildOpenAITools(toolsConfig);
+    let openAiTools = this.toolsService.buildOpenAITools(toolsConfig);
+
+    const companyToolNeed = this.detectCompanyInfoToolNeed(effectiveMessage);
+    let toolChoice: OpenAI.ChatCompletionToolChoiceOption | undefined;
+    if (companyToolNeed && openAiTools.length > 0) {
+      const hasCompanyTool = this.hasTool(openAiTools, BotService.COMPANY_TOOL_NAME);
+      if (!hasCompanyTool) {
+        openAiTools = [...openAiTools, this.buildConsultarInfoEmpresaToolSpec()];
+      }
+
+      toolChoice = {
+        type: 'function',
+        function: { name: BotService.COMPANY_TOOL_NAME },
+      };
+
+      systemPrompt = [
+        systemPrompt,
+        '[EMPRESA_TOOL_HINT]',
+        `Para responder este mensaje, primero llama ${BotService.COMPANY_TOOL_NAME} con campo="${companyToolNeed.campo}".`,
+      ].join('\n\n');
+    }
+
     const hasTools = openAiTools.length > 0;
 
     const aiReply = hasTools
@@ -117,6 +165,7 @@ export class BotService {
           history,
           message: effectiveMessage,
           tools: openAiTools,
+          toolChoice,
           executeToolCall: (toolName, args) =>
             this.toolsExecutor.execute(toolName, args, normalizedContactId, toolsConfig),
         })
@@ -130,10 +179,15 @@ export class BotService {
           message: effectiveMessage,
         });
 
-    const finalReply = this.repairToolGroundedReply(
+    const toolGroundedReply = this.repairToolGroundedReply(
       normalizedMessage,
       aiReply.content.trim(),
       aiReply.toolResults ?? [],
+    );
+    const finalReply = this.repairContinuationReply(
+      normalizedMessage,
+      toolGroundedReply,
+      continuation,
     );
 
     await this.memoryService.saveMessage({
@@ -142,8 +196,12 @@ export class BotService {
       content: finalReply,
     });
 
-    const hotLead = this.detectHotLead(normalizedMessage);
-    const intent = this.detectIntent(normalizedMessage);
+    const hotLead = this.detectHotLead(normalizedMessage) || continuation.inferredIntent === 'compra';
+    const intent = this.resolveIntentWithContinuation(
+      normalizedMessage,
+      this.detectIntent(normalizedMessage),
+      continuation,
+    );
     const usedMemory = history.length > 0;
     const replyType = metadata?.messageType === 'audio' ? 'audio' : 'text';
 
@@ -154,8 +212,8 @@ export class BotService {
       intent,
       decisionIntent: this.intentToBotDecisionIntent(intent),
       stage: 'curioso' as ContactStage,
-      action: (hotLead ? 'cerrar' : 'guiar') as BotDecisionAction,
-      purchaseIntentScore: hotLead ? 80 : 15,
+      action: (continuation.inferredAction ?? (hotLead ? 'cerrar' : 'guiar')) as BotDecisionAction,
+      purchaseIntentScore: hotLead ? 80 : continuation.isContinuation ? 35 : 15,
       hotLead,
       cached: false,
       usedGallery: false,
@@ -171,6 +229,10 @@ export class BotService {
         hotLead,
         source: 'ai',
         toolsUsed: aiReply.toolsUsed ?? [],
+        continuationDetected: continuation.isContinuation,
+        continuationPolarity: continuation.polarity,
+        lastAssistantFound: !!continuation.lastAssistant,
+        inferredIntent: continuation.inferredIntent,
       }),
     );
 
@@ -393,39 +455,221 @@ export class BotService {
     return 'otro';
   }
 
-  private buildEffectiveUserMessage(message: string, lastAssistant?: string): string {
+  private buildContinuationContext(
+    message: string,
+    lastAssistant?: string,
+    lastIntent?: string | null,
+  ): ContinuationContext {
     const normalized = this.normalizeForIntent(message);
-    if (!this.isShortContinuation(normalized) || !lastAssistant?.trim()) {
+    const polarity = this.classifyShortContinuation(normalized);
+    const assistant = lastAssistant?.trim() || null;
+    if (!polarity || !assistant) {
+      return {
+        isContinuation: false,
+        polarity,
+        lastAssistant: assistant,
+        inferredIntent: null,
+        inferredAction: null,
+        topic: null,
+      };
+    }
+
+    const topic = this.inferContinuationTopic(assistant);
+    const inferredIntent = this.inferContinuationIntent(polarity, topic, lastIntent);
+    const inferredAction = this.inferContinuationAction(polarity, topic);
+
+    return {
+      isContinuation: true,
+      polarity,
+      lastAssistant: assistant,
+      inferredIntent,
+      inferredAction,
+      topic,
+    };
+  }
+
+  private buildEffectiveUserMessage(message: string, continuation: ContinuationContext): string {
+    if (!continuation.isContinuation || !continuation.lastAssistant) {
       return message;
     }
+
+    const polarityLabel =
+      continuation.polarity === 'affirmative'
+        ? 'afirmativamente'
+        : continuation.polarity === 'negative'
+          ? 'negativamente'
+          : 'de forma corta/ambigua';
 
     return [
       message,
       '',
       '[CONTEXTO DE CONTINUIDAD]',
-      'El usuario está respondiendo de forma corta al último mensaje del bot.',
-      `Último mensaje del bot: ${lastAssistant.trim().slice(0, 500)}`,
-      'Interpreta la respuesta según ese contexto; no saludes de nuevo ni cambies de tema.',
+      `El usuario está respondiendo ${polarityLabel} al último mensaje del bot.`,
+      `Último mensaje del bot: ${continuation.lastAssistant.slice(0, 500)}`,
+      continuation.topic ? `Tema inferido: ${continuation.topic}.` : '',
+      continuation.inferredIntent ? `Intención inferida: ${continuation.inferredIntent}.` : '',
+      'Continúa exactamente desde ese ofrecimiento/pregunta; no saludes, no cambies de tema y no repitas la misma pregunta.',
+      'Si el usuario aceptó una oferta, avanza al próximo paso lógico como una persona por WhatsApp.',
+      'Si hace falta catálogo, precio, stock, cotización o variante, usa la tool correspondiente o pide solo el dato faltante.',
     ].join('\n');
   }
 
+  private classifyShortContinuation(normalized: string): ContinuationPolarity {
+    if (
+      [
+        'si',
+        'sii',
+        'sip',
+        'claro',
+        'dale',
+        'ok',
+        'okay',
+        'ta bien',
+        'esta bien',
+        'aja',
+        'ajá',
+        'perfecto',
+        'listo',
+        'bueno',
+      ].includes(normalized)
+    ) {
+      return 'affirmative';
+    }
+
+    if (
+      [
+        'no',
+        'nop',
+        'no gracias',
+        'ahora no',
+        'todavia no',
+        'despues',
+        'luego',
+        'nah',
+      ].includes(normalized)
+    ) {
+      return 'negative';
+    }
+
+    if (['como', 'y eso', 'explicame', 'dime', 'cual'].includes(normalized)) {
+      return 'ambiguous';
+    }
+
+    return null;
+  }
+
+  private inferContinuationTopic(lastAssistant: string): ContinuationContext['topic'] {
+    const normalized = this.normalizeForIntent(lastAssistant);
+    if (/catalogo|productos|opciones|lista/.test(normalized)) return 'catalog';
+    if (/precio|cuesta|vale|cotiz|total/.test(normalized)) return 'price';
+    if (/compr|pedido|probarlo|quieres probar|te gustaria probar|lo quieres/.test(normalized)) return 'purchase';
+    if (/producto|phytoemagry|capsula|suplemento|rebajar|perdida de peso/.test(normalized)) return 'product';
+    if (/ubicacion|direccion|horario|telefono|cuenta|pago|tienda/.test(normalized)) return 'company';
+    return 'general';
+  }
+
+  private inferContinuationIntent(
+    polarity: ContinuationPolarity,
+    topic: ContinuationContext['topic'],
+    lastIntent?: string | null,
+  ): BotIntent | null {
+    if (polarity === 'negative') return 'otro';
+    if (polarity !== 'affirmative' && polarity !== 'ambiguous') return null;
+    if (topic === 'purchase') return 'compra';
+    if (topic === 'catalog') return 'interes';
+    if (topic === 'product') return 'interes';
+    if (topic === 'price') return 'interes';
+    if (topic === 'company') return 'interes';
+    if (lastIntent === 'compra') return 'compra';
+    if (lastIntent === 'interes' || lastIntent === 'interesado') return 'interes';
+    if (lastIntent === 'duda') return 'duda';
+    return 'interes';
+  }
+
+  private inferContinuationAction(
+    polarity: ContinuationPolarity,
+    topic: ContinuationContext['topic'],
+  ): BotDecisionAction | null {
+    if (polarity === 'negative') return 'guiar';
+    if (polarity === 'affirmative' && topic === 'purchase') return 'cerrar';
+    if (polarity === 'affirmative') return 'guiar';
+    return null;
+  }
+
+  private resolveIntentWithContinuation(
+    message: string,
+    detectedIntent: BotIntent,
+    continuation: ContinuationContext,
+  ): BotIntent {
+    if (continuation.isContinuation && continuation.inferredIntent) {
+      return continuation.inferredIntent;
+    }
+    const normalized = this.normalizeForIntent(message);
+    if (this.classifyShortContinuation(normalized) && detectedIntent === 'otro') {
+      return continuation.inferredIntent ?? 'interes';
+    }
+    return detectedIntent;
+  }
+
   private isShortContinuation(normalized: string): boolean {
-    return [
-      'si',
-      'sii',
-      'sip',
-      'claro',
-      'dale',
-      'ok',
-      'okay',
-      'ta bien',
-      'esta bien',
-      'aja',
-      'ajá',
-      'perfecto',
-      'listo',
-      'bueno',
-    ].includes(normalized);
+    return this.classifyShortContinuation(normalized) !== null;
+  }
+
+  private repairContinuationReply(
+    message: string,
+    content: string,
+    continuation: ContinuationContext,
+  ): string {
+    if (!continuation.isContinuation || !continuation.lastAssistant) return content;
+
+    if (continuation.polarity === 'negative') {
+      return this.isGenericOrRepeatedContinuationReply(content, continuation)
+        ? 'Dale, sin problema. Si luego quieres retomarlo, aquí estoy para ayudarte.'
+        : content;
+    }
+
+    if (continuation.polarity !== 'affirmative') return content;
+    if (!this.isGenericOrRepeatedContinuationReply(content, continuation)) return content;
+
+    if (continuation.topic === 'purchase') {
+      return 'Perfecto, dale. Entonces seguimos con ese producto. Para orientarte bien con el próximo paso, ¿quieres que te cotice una unidad?';
+    }
+
+    if (continuation.topic === 'catalog') {
+      return 'Perfecto. Te muestro las opciones disponibles y seguimos con la que más te interese.';
+    }
+
+    if (continuation.topic === 'product') {
+      return 'Claro. Te explico breve: es una opción pensada para apoyar tu objetivo de rebajar dentro de una rutina constante. ¿Quieres que te pase precio y disponibilidad?';
+    }
+
+    if (continuation.topic === 'price') {
+      return 'Dale. Para darte el total exacto, dime cuántas unidades quieres cotizar.';
+    }
+
+    return 'Claro, seguimos con eso. Dime cuál dato quieres que te confirme primero.';
+  }
+
+  private isGenericOrRepeatedContinuationReply(
+    content: string,
+    continuation: ContinuationContext,
+  ): boolean {
+    const normalized = this.normalizeForIntent(content);
+    if (/en que puedo ayudarte|como puedo ayudarte|hay algo mas|te gustaria saber mas|quieres saber mas/.test(normalized)) {
+      return true;
+    }
+
+    if (!continuation.lastAssistant) return false;
+    const last = this.normalizeForIntent(continuation.lastAssistant);
+    const repeatedOffer = [
+      'te gustaria probarlo',
+      'quieres probarlo',
+      'te gustaria saber mas',
+      'quieres saber mas',
+      'quieres que te muestre',
+    ].some((phrase) => last.includes(phrase) && normalized.includes(phrase));
+
+    return repeatedOffer;
   }
 
   private repairToolGroundedReply(
@@ -434,29 +678,186 @@ export class BotService {
     toolResults: import('../tools/tools.types').ToolExecutionResult[],
   ): string {
     const normalized = this.normalizeForIntent(message);
-    const askedLocation = /ubicacion|direccion|donde|maps|mapa|tienda/.test(normalized);
-    if (!askedLocation) return content;
+    const askedLocation = /ubicacion|direc|direccion|donde|maps|mapa|gps|tienda|local|sucursal/.test(normalized);
+    const askedSchedule = /horario|abren|abierto|cierran|cerrado|hasta que hora|a que hora/.test(normalized);
+    const askedPayments = /cuenta|cuentas|banco|transfer|transferencia|deposit|deposito|pago|pagar|como pago|cómo pago/.test(normalized);
+    const askedPhones = /telefono|tel|whatsapp|contacto|numero|n[úu]mero|llamar|escribir/.test(normalized);
+    const askedPhotos = /foto|fotos|imagen|imagenes|logo/.test(normalized);
 
-    const companyTool = toolResults.find((r) => r.toolName === 'consultar_info_empresa');
-    const result = this.asRecord(companyTool?.result);
-    const address = this.asString(result.address);
-    if (!address) return content;
-
-    const normalizedContent = this.normalizeForIntent(content);
-    const normalizedAddress = this.normalizeForIntent(address);
-    if (normalizedAddress && normalizedContent.includes(normalizedAddress.slice(0, Math.min(20, normalizedAddress.length)))) {
+    if (!askedLocation && !askedSchedule && !askedPayments && !askedPhones && !askedPhotos) {
       return content;
     }
 
-    const companyName = this.asString(result.companyName) || 'nuestra tienda';
-    const maps = this.asString(result.googleMapsLink);
-    return [
-      `${companyName} está ubicada en ${address}.`,
-      maps ? `Mapa: ${maps}` : '',
-      '¿Quieres que también te pase el horario?',
-    ]
-      .filter(Boolean)
-      .join(' ');
+    const companyTool = toolResults.find((r) => r.toolName === BotService.COMPANY_TOOL_NAME);
+    const result = this.asRecord(companyTool?.result);
+    const normalizedContent = this.normalizeForIntent(content);
+    const companyName = this.asString(result.companyName) || 'la empresa';
+
+    const segments: string[] = [];
+
+    if (askedLocation) {
+      const address = this.asString(result.address);
+      const maps = this.asString(result.googleMapsLink);
+      const normalizedAddress = this.normalizeForIntent(address);
+
+      const contentMentionsAddress =
+        normalizedAddress &&
+        normalizedContent.includes(
+          normalizedAddress.slice(0, Math.min(20, normalizedAddress.length)),
+        );
+
+      if (address && !contentMentionsAddress) {
+        segments.push(`${companyName} está ubicada en ${address}.`);
+        if (maps) segments.push(`Mapa: ${maps}`);
+      }
+    }
+
+    if (askedSchedule) {
+      const workingHours = Array.isArray(result.workingHours)
+        ? (result.workingHours as Array<Record<string, unknown>>)
+        : [];
+
+      const hasHoursInContent = /lunes|martes|miercoles|miercoles|jueves|viernes|sabado|sabado|domingo|\b\d{1,2}:\d{2}\b/.test(
+        normalizedContent,
+      );
+
+      if (workingHours.length > 0 && !hasHoursInContent) {
+        const lines = workingHours
+          .map((item) => {
+            const day = this.asString(item.day);
+            const open = item.open === true;
+            if (!day) return '';
+            if (!open) return `- ${day}: cerrado`;
+            const from = this.asString(item.from);
+            const to = this.asString(item.to);
+            if (from && to) return `- ${day}: ${from} - ${to}`;
+            return `- ${day}: abierto`;
+          })
+          .filter(Boolean);
+
+        if (lines.length > 0) {
+          segments.push(['Horario:', ...lines].join('\n'));
+        }
+      }
+    }
+
+    if (askedPayments) {
+      const accounts = Array.isArray(result.bankAccounts)
+        ? (result.bankAccounts as Array<Record<string, unknown>>)
+        : [];
+      const hasAccountInContent = /ban|bhd|popular|cuenta|transfer|deposit/.test(normalizedContent);
+
+      if (accounts.length > 0 && !hasAccountInContent) {
+        const lines = accounts
+          .slice(0, 3)
+          .map((acc) => {
+            const bank = this.asString(acc.bank);
+            const accountType = this.asString(acc.accountType);
+            const number = this.asString(acc.number);
+            const holder = this.asString(acc.holder);
+            const bits = [
+              bank ? `Banco: ${bank}` : '',
+              accountType ? `Tipo: ${accountType}` : '',
+              number ? `Número: ${number}` : '',
+              holder ? `Titular: ${holder}` : '',
+            ].filter(Boolean);
+            return bits.length ? `- ${bits.join(' | ')}` : '';
+          })
+          .filter(Boolean);
+
+        if (lines.length > 0) {
+          segments.push(['Cuentas para pago:', ...lines].join('\n'));
+        }
+      }
+    }
+
+    if (askedPhones) {
+      const phone = this.asString(result.phone);
+      const whatsapp = this.asString(result.whatsapp);
+      const hasPhoneInContent = /\b\d{7,}\b/.test(normalizedContent) || normalizedContent.includes('whatsapp');
+
+      if ((phone || whatsapp) && !hasPhoneInContent) {
+        const lines = [
+          phone ? `Teléfono: ${phone}` : '',
+          whatsapp ? `WhatsApp: ${whatsapp}` : '',
+        ].filter(Boolean);
+
+        if (lines.length > 0) {
+          segments.push(lines.join(' | '));
+        }
+      }
+    }
+
+    if (askedPhotos) {
+      const images = Array.isArray(result.images)
+        ? (result.images as Array<Record<string, unknown>>)
+        : [];
+      const hasUrlInContent = /https?:\/\//.test(content);
+
+      if (images.length > 0 && !hasUrlInContent) {
+        const urls = images
+          .map((img) => this.asString((img as Record<string, unknown>).url))
+          .filter(Boolean)
+          .slice(0, 3);
+        if (urls.length > 0) {
+          segments.push(['Fotos:', ...urls.map((u) => `- ${u}`)].join('\n'));
+        }
+      }
+    }
+
+    if (segments.length === 0) return content;
+    return segments.join('\n\n');
+  }
+
+  private detectCompanyInfoToolNeed(message: string): {
+    campo: 'todo' | 'ubicacion' | 'horario' | 'cuentas' | 'telefonos' | 'fotos';
+  } | null {
+    const normalized = this.normalizeForIntent(message);
+
+    const wantsLocation = /ubicacion|direc|direccion|donde|maps|mapa|gps|local|sucursal/.test(normalized);
+    const wantsSchedule = /horario|abren|abierto|cierran|cerrado|hasta que hora|a que hora/.test(normalized);
+    const wantsPayments = /cuenta|cuentas|banco|transfer|transferencia|deposit|deposito|pago|pagar|como pago|cómo pago/.test(normalized);
+    const wantsPhones = /telefono|tel|whatsapp|contacto|numero|n[úu]mero|llamar|escribir/.test(normalized);
+    const wantsPhotos = /foto|fotos|imagen|imagenes|logo/.test(normalized);
+
+    if (!wantsLocation && !wantsSchedule && !wantsPayments && !wantsPhones && !wantsPhotos) {
+      return null;
+    }
+
+    const hits = [wantsLocation, wantsSchedule, wantsPayments, wantsPhones, wantsPhotos].filter(Boolean).length;
+    if (hits > 1) return { campo: 'todo' };
+    if (wantsLocation) return { campo: 'ubicacion' };
+    if (wantsSchedule) return { campo: 'horario' };
+    if (wantsPayments) return { campo: 'cuentas' };
+    if (wantsPhones) return { campo: 'telefonos' };
+    if (wantsPhotos) return { campo: 'fotos' };
+    return { campo: 'todo' };
+  }
+
+  private hasTool(tools: import('../tools/tools.types').OpenAITool[], name: string): boolean {
+    return tools.some((tool) => tool.type === 'function' && (tool as any).function?.name === name);
+  }
+
+  private buildConsultarInfoEmpresaToolSpec(): import('../tools/tools.types').OpenAITool {
+    return {
+      type: 'function',
+      function: {
+        name: BotService.COMPANY_TOOL_NAME,
+        description:
+          'Obtiene información real de la empresa (ubicación, GPS/Maps, horarios, cuentas de pago, teléfonos y fotos). Úsala cuando el cliente pregunte por ubicación, horario, métodos de pago, cuentas bancarias o datos de contacto.',
+        parameters: {
+          type: 'object',
+          properties: {
+            campo: {
+              type: 'string',
+              description: 'Qué información necesitas. Si no estás seguro, usa "todo".',
+              enum: ['todo', 'ubicacion', 'horario', 'cuentas', 'telefonos', 'fotos'],
+            },
+          },
+          required: [],
+        },
+      },
+    } as any;
   }
 
   private normalizeForIntent(value: string): string {

@@ -8,6 +8,7 @@ const DEFAULT_AI_REPLY = 'Hola, claro. Te ayudo ahora mismo.';
 
 function createService(options?: {
   aiReply?: string;
+  aiReplies?: string[];
   toolReply?: string;
   toolResults?: Array<{ toolName: string; result: Record<string, unknown> }>;
   openAiTools?: unknown[];
@@ -16,8 +17,11 @@ function createService(options?: {
   configPromptBase?: string;
   botFullPrompt?: string;
   configConfigurations?: Record<string, unknown>;
+  hideAssistantFromContext?: boolean;
 }) {
   let savedMessages: Array<{ role: 'user' | 'assistant'; content: string }> = [];
+  let simpleReplyCalls = 0;
+  let toolReplyCalls = 0;
 
   const botConfigService = {
     async getConfig() {
@@ -38,17 +42,21 @@ function createService(options?: {
   return new BotService(
     {
       async generateSimpleReply(params: Record<string, unknown>) {
+        const reply = options?.aiReplies?.[simpleReplyCalls] ?? options?.aiReply ?? DEFAULT_AI_REPLY;
+        simpleReplyCalls += 1;
         options?.onGenerateSimpleReply?.(params);
         return {
           type: 'text' as const,
-          content: options?.aiReply ?? DEFAULT_AI_REPLY,
+          content: reply,
         };
       },
       async generateReplyWithTools(params: Record<string, unknown>) {
+        const reply = options?.aiReplies?.[toolReplyCalls] ?? options?.toolReply ?? options?.aiReply ?? DEFAULT_AI_REPLY;
+        toolReplyCalls += 1;
         options?.onGenerateToolReply?.(params);
         return {
           type: 'text' as const,
-          content: options?.toolReply ?? options?.aiReply ?? DEFAULT_AI_REPLY,
+          content: reply,
           toolsUsed: options?.toolResults?.map((result) => result.toolName) ?? [],
           toolResults: options?.toolResults ?? [],
         };
@@ -77,8 +85,11 @@ function createService(options?: {
         return entry;
       },
       async getConversationContext() {
+        const contextMessages = options?.hideAssistantFromContext
+          ? savedMessages.filter((m) => m.role !== 'assistant')
+          : savedMessages;
         return {
-          messages: savedMessages.map((m) => ({ role: m.role, content: m.content })),
+          messages: contextMessages.map((m) => ({ role: m.role, content: m.content })),
           clientMemory: {
             contactId: 'test-contact',
             name: null,
@@ -99,6 +110,10 @@ function createService(options?: {
             expiresAt: null,
           },
         };
+      },
+      async getLastAssistantMessage() {
+        const last = [...savedMessages].reverse().find((m) => m.role === 'assistant');
+        return last ? { role: last.role, content: last.content } : null;
       },
     } as any,
     {
@@ -191,7 +206,88 @@ test('short affirmative replies are enriched with the last assistant message for
   const message = String((capturedSecondCall as { message?: string } | null)?.message ?? '');
   assert.match(message, /\[CONTEXTO DE CONTINUIDAD\]/);
   assert.match(message, /Último mensaje del bot: ¿Te gustaría saber más sobre nuestros productos\?/);
-  assert.match(message, /no saludes de nuevo/i);
+  assert.match(message, /no saludes/i);
+  assert.match(message, /próximo paso lógico/i);
+});
+
+test('short affirmative replies inherit product context instead of falling back to generic intent', async () => {
+  let capturedSecondCall: Record<string, unknown> | null = null;
+  let callCount = 0;
+  const service = createService({
+    aiReplies: [
+      'Tenemos el producto "Phytoemagry", que es un suplemento natural para apoyar la pérdida de peso. ¿Te gustaría probarlo?',
+      'Perfecto, te explico el siguiente paso.',
+    ],
+    onGenerateSimpleReply: (params) => {
+      callCount += 1;
+      if (callCount === 2) capturedSecondCall = params;
+    },
+  });
+
+  await service.processIncomingMessage('18095550110', 'Productos');
+  const result = await service.processIncomingMessage('18095550110', 'Si');
+
+  const message = String((capturedSecondCall as { message?: string } | null)?.message ?? '');
+  assert.match(message, /Intención inferida: compra|Intención inferida: interes/);
+  assert.match(message, /Continúa exactamente desde ese ofrecimiento/);
+  assert.notEqual(result.intent, 'otro');
+  assert.equal(result.action, 'cerrar');
+});
+
+test('generic AI reply after an affirmative continuation is repaired into a real next step', async () => {
+  const service = createService({
+    aiReplies: [
+      'Tenemos el producto "Phytoemagry", que es un suplemento natural para apoyar la pérdida de peso. ¿Te gustaría probarlo?',
+      '¿Te gustaría saber más sobre las cápsulas para rebajar?',
+    ],
+  });
+
+  await service.processIncomingMessage('18095550111', 'Productos');
+  const result = await service.processIncomingMessage('18095550111', 'Si');
+
+  assert.match(result.reply, /Perfecto, dale/);
+  assert.match(result.reply, /seguimos con ese producto/);
+  assert.doesNotMatch(result.reply, /Te gustaría saber más sobre las cápsulas/i);
+  assert.equal(result.intent, 'compra');
+});
+
+test('short replies use last-assistant fallback when recent history is incomplete', async () => {
+  let capturedSecondCall: Record<string, unknown> | null = null;
+  let callCount = 0;
+  const service = createService({
+    hideAssistantFromContext: true,
+    aiReplies: [
+      'Tenemos el producto "Phytoemagry". ¿Te gustaría probarlo?',
+      'Perfecto, seguimos.',
+    ],
+    onGenerateSimpleReply: (params) => {
+      callCount += 1;
+      if (callCount === 2) capturedSecondCall = params;
+    },
+  });
+
+  await service.processIncomingMessage('18095550113', 'Productos');
+  const result = await service.processIncomingMessage('18095550113', 'Si');
+
+  const message = String((capturedSecondCall as { message?: string } | null)?.message ?? '');
+  assert.match(message, /Último mensaje del bot: Tenemos el producto "Phytoemagry"/);
+  assert.equal(result.intent, 'compra');
+});
+
+test('short negative replies after an offer do not restart or insist', async () => {
+  const service = createService({
+    aiReplies: [
+      'Tenemos el producto "Phytoemagry". ¿Te gustaría probarlo?',
+      '¿Te gustaría saber más sobre las cápsulas para rebajar?',
+    ],
+  });
+
+  await service.processIncomingMessage('18095550112', 'Productos');
+  const result = await service.processIncomingMessage('18095550112', 'No');
+
+  assert.match(result.reply, /sin problema/i);
+  assert.doesNotMatch(result.reply, /Te gustaría saber más sobre las cápsulas/i);
+  assert.equal(result.intent, 'otro');
 });
 
 test('location requests are classified as interest and repaired when company tool data is ignored', async () => {
