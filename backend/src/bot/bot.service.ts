@@ -9,6 +9,7 @@ import { BotDecisionAction, BotDecisionIntent, ContactStage } from './bot-decisi
 import { BotIntent, BotReplyResult, BotTestReport, BotTestStepResult } from './bot.types';
 import { ToolsService } from '../tools/tools.service';
 import { ToolsExecutor } from '../tools/tools.executor';
+import { PromptComposerService } from './prompt-composer.service';
 
 interface StructuredProduct {
   id: string;
@@ -34,6 +35,7 @@ export class BotService {
     private readonly memoryService: MemoryService,
     private readonly toolsService: ToolsService,
     private readonly toolsExecutor: ToolsExecutor,
+    private readonly promptComposerService: PromptComposerService,
   ) {}
 
   async processIncomingMessage(
@@ -233,7 +235,7 @@ export class BotService {
     clientMemory?: import('../memory/memory.types').ClientMemorySnapshot,
     conversationSummary?: import('../memory/memory.types').ConversationSummarySnapshot,
   ): Promise<string> {
-    const instructions = this.buildInstructionsBlock(config, botConfig);
+    const instructions = this.promptComposerService.buildInstructionsBlock(config, botConfig);
     const products = this.buildProductsBlock(config);
     const company = (await this.companyContextService.buildAgentContext()).trim();
     const memory = this.buildMemoryBlock(clientMemory, conversationSummary);
@@ -298,81 +300,6 @@ export class BotService {
     }
 
     return lines.join('\n');
-  }
-
-  private buildInstructionsBlock(
-    config: Awaited<ReturnType<ClientConfigService['getConfig']>>,
-    botConfig: Awaited<ReturnType<BotConfigService['getConfig']>>,
-  ): string {
-    const configurations = this.asRecord(config.configurations);
-    const instructions = this.asRecord(configurations.instructions);
-    const identity = this.asRecord(instructions.identity);
-    const rules = this.asStringList(instructions.rules);
-    const salesPrompts = this.asRecord(instructions.salesPrompts);
-
-    // Prompt sessions configured from the Prompts page (configurations.prompts)
-    const prompts = this.asRecord(configurations.prompts);
-    const greetingPrompt = this.asString(prompts.greeting);
-    const companyInfoPrompt = this.asString(prompts.companyInfo);
-    const productInfoPrompt = this.asString(prompts.productInfo);
-    const salesGuidelinesPrompt = this.asString(prompts.salesGuidelines);
-    const objectionHandlingPrompt = this.asString(prompts.objectionHandling);
-    const closingPrompt = this.asString(prompts.closingPrompt);
-    const supportPrompt = this.asString(prompts.supportPrompt);
-
-    const basePrompt = [config.promptBase, this.botConfigService.getFullPrompt(botConfig)]
-      .map((s) => s.trim())
-      .filter(Boolean)
-      .join('\n\n');
-
-    const lines: string[] = [];
-    if (basePrompt) lines.push(basePrompt);
-
-    // Identity fields from configurations.instructions.identity
-    const identityFields = [
-      this.asString(identity.assistantName) ? 'Nombre: ' + this.asString(identity.assistantName) : '',
-      this.asString(identity.role) ? 'Rol: ' + this.asString(identity.role) : '',
-      this.asString(identity.objective) ? 'Objetivo: ' + this.asString(identity.objective) : '',
-      this.asString(identity.tone) ? 'Tono: ' + this.asString(identity.tone) : '',
-      this.asString(identity.personality) ? 'Personalidad: ' + this.asString(identity.personality) : '',
-      this.asString(identity.responseStyle) ? 'Estilo: ' + this.asString(identity.responseStyle) : '',
-      this.asString(identity.signature) ? 'Firma: ' + this.asString(identity.signature) : '',
-      this.asString(identity.guardrails) ? 'Guardrails: ' + this.asString(identity.guardrails) : '',
-    ].filter(Boolean);
-
-    if (identityFields.length > 0) lines.push(identityFields.join('\n'));
-
-    // Rules from configurations.instructions.rules
-    if (rules.length > 0) {
-      lines.push('Reglas:\n' + rules.map((r) => '- ' + r).join('\n'));
-    }
-
-    // Sales prompts from configurations.instructions.salesPrompts
-    const salesFields = [
-      this.asString(salesPrompts.opening) ? 'Apertura: ' + this.asString(salesPrompts.opening) : '',
-      this.asString(salesPrompts.qualification) ? 'Calificacion: ' + this.asString(salesPrompts.qualification) : '',
-      this.asString(salesPrompts.offer) ? 'Oferta: ' + this.asString(salesPrompts.offer) : '',
-      this.asString(salesPrompts.objectionHandling) ? 'Objeciones: ' + this.asString(salesPrompts.objectionHandling) : '',
-      this.asString(salesPrompts.closing) ? 'Cierre: ' + this.asString(salesPrompts.closing) : '',
-      this.asString(salesPrompts.followUp) ? 'Seguimiento: ' + this.asString(salesPrompts.followUp) : '',
-    ].filter(Boolean);
-
-    if (salesFields.length > 0) {
-      lines.push('Ventas:\n' + salesFields.join('\n'));
-    }
-
-    // Prompt sessions from the Prompts page (configurations.prompts) — these are
-    // the most important instructions; every non-empty session is injected verbatim
-    // so the bot fully follows each configured section.
-    if (greetingPrompt) lines.push('[SALUDO]\n' + greetingPrompt);
-    if (companyInfoPrompt) lines.push('[EMPRESA - INSTRUCCIONES]\n' + companyInfoPrompt);
-    if (productInfoPrompt) lines.push('[PRODUCTOS - INSTRUCCIONES]\n' + productInfoPrompt);
-    if (salesGuidelinesPrompt) lines.push('[VENTAS Y CONVERSION]\n' + salesGuidelinesPrompt);
-    if (objectionHandlingPrompt) lines.push('[MANEJO DE OBJECIONES]\n' + objectionHandlingPrompt);
-    if (closingPrompt) lines.push('[CIERRE]\n' + closingPrompt);
-    if (supportPrompt) lines.push('[SOPORTE Y POSTVENTA]\n' + supportPrompt);
-
-    return lines.join('\n\n');
   }
 
   private buildProductsBlock(

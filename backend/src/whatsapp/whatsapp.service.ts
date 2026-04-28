@@ -1201,9 +1201,11 @@ export class WhatsAppService implements OnModuleInit {
     );
     const replyToSend = uniqueComposedReply ?? replyToSendRaw;
 
+    const allowRepeatVideos = this.detectExplicitVideoResendRequest(message);
     const deliverableMediaFiles = this.filterDeliverableMediaFiles(
       botReply.mediaFiles,
       conversationSendState,
+      { allowRepeatVideos },
     );
 
     const explicitVoiceRequest = this.detectExplicitVoicePreference(message);
@@ -1449,29 +1451,11 @@ export class WhatsAppService implements OnModuleInit {
 
   private async getConversationSendState(
     contactId: string,
-    message: string,
+    _message: string,
   ): Promise<ConversationSendState> {
-    const topic = this.buildConversationTopic(message);
+    // Single conversation state per contactId (no topic/intention split).
+    const topic = 'general';
     const topicKey = this.getConversationTopicKey(contactId);
-    const currentTopic = (await this.redisService.get<string>(topicKey)) ?? '';
-
-    if (currentTopic && currentTopic !== topic) {
-      await this.redisService.set(topicKey, topic, WhatsAppService.CONVERSATION_SEND_STATE_TTL_SECONDS);
-      await this.redisService.set(
-        this.getConversationSentVideosKey(contactId),
-        [],
-        WhatsAppService.CONVERSATION_SEND_STATE_TTL_SECONDS,
-      );
-
-      return {
-        topic,
-        sentVideos: [],
-        sentMessages: this.asStringList(
-          await this.redisService.get<string[]>(this.getConversationSentMessagesKey(contactId)),
-        ),
-      };
-    }
-
     await this.redisService.set(topicKey, topic, WhatsAppService.CONVERSATION_SEND_STATE_TTL_SECONDS);
 
     return {
@@ -1488,6 +1472,9 @@ export class WhatsAppService implements OnModuleInit {
   private filterDeliverableMediaFiles(
     mediaFiles: MediaFile[],
     state: ConversationSendState,
+    options?: {
+      allowRepeatVideos?: boolean;
+    },
   ): MediaFile[] {
     let selectedVideoCount = 0;
     let historicalVideoCount = state.sentVideos.length;
@@ -1502,7 +1489,8 @@ export class WhatsAppService implements OnModuleInit {
         return false;
       }
 
-      if (state.sentVideos.includes(videoId)) {
+      const alreadySent = state.sentVideos.includes(videoId);
+      if (alreadySent && options?.allowRepeatVideos !== true) {
         console.log('VIDEO OMITIDO: ya enviado anteriormente', videoId);
         return false;
       }
@@ -1512,15 +1500,50 @@ export class WhatsAppService implements OnModuleInit {
         return false;
       }
 
-      if (historicalVideoCount >= WhatsAppService.MAX_VIDEOS_PER_TOPIC) {
+      if (!alreadySent && historicalVideoCount >= WhatsAppService.MAX_VIDEOS_PER_TOPIC) {
         console.log('VIDEO OMITIDO: limite por conversacion alcanzado', videoId);
         return false;
       }
 
       selectedVideoCount += 1;
-      historicalVideoCount += 1;
+      if (!alreadySent) {
+        historicalVideoCount += 1;
+      }
       return true;
     });
+  }
+
+  private detectExplicitVideoResendRequest(message: string): boolean {
+    const normalized = (message || '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    if (!normalized) {
+      return false;
+    }
+
+    return [
+      'otra vez',
+      'de nuevo',
+      'reenvi',
+      'reenvia',
+      'reenvialo',
+      'vuelve a mandar',
+      'vuelves a mandar',
+      'mandame el video otra vez',
+      'mandame el video de nuevo',
+      'mandamelo otra vez',
+      'mandamelo de nuevo',
+      'envialo otra vez',
+      'envialo de nuevo',
+      'mandalo otra vez',
+      'mandalo de nuevo',
+      'otra ves',
+    ].some((needle) => normalized.includes(needle));
   }
 
   private async rememberSentMessage(
@@ -1577,64 +1600,6 @@ export class WhatsAppService implements OnModuleInit {
       topic,
       WhatsAppService.CONVERSATION_SEND_STATE_TTL_SECONDS,
     );
-  }
-
-  private buildConversationTopic(message: string): string {
-    const normalized = (message || '')
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .toLowerCase()
-      .replace(/[^a-z0-9\s]/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-
-    if (!normalized) {
-      return 'general';
-    }
-
-    const catalogIntentKeywords = ['video', 'videos', 'foto', 'fotos', 'imagen', 'imagenes'];
-    if (catalogIntentKeywords.some((keyword) => normalized.includes(keyword))) {
-      return 'catalog_media';
-    }
-
-    if (normalized.includes('precio') || normalized.includes('cuesta') || normalized.includes('valor')) {
-      return 'pricing';
-    }
-
-    if (
-      normalized.includes('pago')
-      || normalized.includes('transferencia')
-      || normalized.includes('tarjeta')
-      || normalized.includes('deposito')
-    ) {
-      return 'payment';
-    }
-
-    if (
-      normalized.includes('donde')
-      || normalized.includes('ubic')
-      || normalized.includes('direccion')
-      || normalized.includes('local')
-    ) {
-      return 'location';
-    }
-
-    const stopwords = new Set([
-      'que', 'como', 'donde', 'cuando', 'tengo', 'tienes', 'quiero', 'mandame', 'muestrame',
-      'explicame', 'por', 'para', 'del', 'las', 'los', 'una', 'uno', 'con', 'sin', 'esta',
-      'este', 'eso', 'esa', 'hay', 'otra', 'vez', 'vuelves', 'volver', 'ahora', 'mismo',
-    ]);
-
-    const tokens = normalized
-      .split(' ')
-      .filter((token) => token.length >= 3 && !stopwords.has(token))
-      .slice(0, 5);
-
-    if (tokens.length === 0) {
-      return 'general';
-    }
-
-    return createHash('sha1').update(tokens.join('|')).digest('hex').slice(0, 12);
   }
 
   private resolveMediaCaption(

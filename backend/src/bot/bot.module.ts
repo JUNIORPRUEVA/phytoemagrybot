@@ -6,6 +6,7 @@ import { ClientConfigModule } from '../config/config.module';
 import { MemoryModule } from '../memory/memory.module';
 import { ToolsModule } from '../tools/tools.module';
 import { BotController } from './bot.controller';
+import { PromptComposerService } from './prompt-composer.service';
 import { BotService } from './bot.service';
 
 @Module({
@@ -18,7 +19,7 @@ import { BotService } from './bot.service';
     ToolsModule,
   ],
   controllers: [BotController],
-  providers: [BotService],
+  providers: [BotService, PromptComposerService],
   exports: [BotService],
 })
 export class BotModule {}

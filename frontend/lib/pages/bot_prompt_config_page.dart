@@ -37,26 +37,26 @@ class _BotPromptConfigPageState extends State<BotPromptConfigPage>
   static const String _audioRulesSectionKey = 'audio_rules';
 
   static const String _identityPlaceholder =
-    'Eres un asistente de ventas por WhatsApp. Hablas como una persona real dominicana. Eres directo, claro y natural. No hablas mucho ni explicas de mas. Tu objetivo es vender. Usa expresiones naturales como: claro, perfecto, dale, tranquilo, te explico.';
+      'Eres un asistente de ventas por WhatsApp. Hablas como una persona real dominicana. Eres directo, claro y natural. No hablas mucho ni explicas de mas. Tu objetivo es vender. Usa expresiones naturales como: claro, perfecto, dale, tranquilo, te explico.';
   static const String _objectivePlaceholder =
-    'Vendes un suplemento natural llamado PHYTOEMAGRY. Funciona para bajar de peso sin dieta estricta, acelerar el metabolismo, controlar el apetito y reducir liquidos retenidos. Puede ayudar a bajar hasta 10 libras por semana dependiendo de la persona. Se toma 1 capsula diaria despues del desayuno. Si preguntan, explica breve y claro. Si muestran interes, responde con beneficio y pregunta de cierre. Si dicen me interesa, precio o quiero, pasa directo a cerrar.';
+      'Vendes un suplemento natural llamado PHYTOEMAGRY. Funciona para bajar de peso sin dieta estricta, acelerar el metabolismo, controlar el apetito y reducir liquidos retenidos. Puede ayudar a bajar hasta 10 libras por semana dependiendo de la persona. Se toma 1 capsula diaria despues del desayuno. Si preguntan, explica breve y claro. Si muestran interes, responde con beneficio y pregunta de cierre. Si dicen me interesa, precio o quiero, pasa directo a cerrar.';
   static const String _rulesPlaceholder =
-    'Responde corto, claro y natural. No uses lenguaje tecnico. No suenes robotico. No des explicaciones largas si no te las piden. Siempre guia la conversacion hacia la compra. Cada mensaje debe vender, resolver una duda o llevar a la accion. No des demasiada informacion sin que la pidan. No uses palabras complicadas ni te desvíes del objetivo de vender.';
+      'Responde corto, claro y natural. No uses lenguaje tecnico. No suenes robotico. No des explicaciones largas si no te las piden. Siempre guia la conversacion hacia la compra. Cada mensaje debe vender, resolver una duda o llevar a la accion. No des demasiada informacion sin que la pidan. No uses palabras complicadas ni te desvíes del objetivo de vender.';
   static const String _salesPlaceholder =
-    'Si el cliente duda, responde con seguridad y luego pregunta siempre: quieres probarlo? Cuando este interesado usa urgencia suave como: tenemos disponibilidad ahora mismo, se estan vendiendo bastante rapido, te lo puedo enviar hoy si confirmas. Si el cliente dice que si, pide en un solo mensaje nombre, direccion con ciudad y sector, y telefono. El objetivo final es cerrar la venta rapido, natural y sin presion agresiva.';
+      'Si el cliente duda, responde con seguridad y luego pregunta siempre: quieres probarlo? Cuando este interesado usa urgencia suave como: tenemos disponibilidad ahora mismo, se estan vendiendo bastante rapido, te lo puedo enviar hoy si confirmas. Si el cliente dice que si, pide en un solo mensaje nombre, direccion con ciudad y sector, y telefono. El objetivo final es cerrar la venta rapido, natural y sin presion agresiva.';
 
   static const String _greetingPlaceholder =
-    'Hola 👋 Que tal? En que te puedo ayudar hoy?';
+      'Hola 👋 Que tal? En que te puedo ayudar hoy?';
   static const String _farewellPlaceholder =
-    'Perfecto, cualquier cosa me escribes y te ayudo. 🙌';
+      'Perfecto, cualquier cosa me escribes y te ayudo. 🙌';
   static const String _shortReplyPlaceholder =
-    'Responde directo, en 1-2 frases, y avanza con una sola pregunta si hace falta.';
+      'Responde directo, en 1-2 frases, y avanza con una sola pregunta si hace falta.';
   static const String _longReplyPlaceholder =
-    'Si el cliente pide detalles, explica completo y ordenado, sin sonar tecnico ni robotico, y cierra con un siguiente paso.';
+      'Si el cliente pide detalles, explica completo y ordenado, sin sonar tecnico ni robotico, y cierra con un siguiente paso.';
   static const String _mediaRulesPlaceholder =
-    '- Si hay imagenes o videos disponibles y ayudan a vender, priorizalos.\n- No digas que no hay media sin revisar URLs/IDs disponibles.\n- No inventes IDs/URLs.';
+      '- Si hay imagenes o videos disponibles y ayudan a vender, priorizalos.\n- No digas que no hay media sin revisar URLs/IDs disponibles.\n- No inventes IDs/URLs.';
   static const String _audioRulesPlaceholder =
-    '- La decision de audio es solo de formato, no de contenido.\n- Si respondes en audio, el audio debe decir EXACTAMENTE lo mismo que el texto final.\n- No reescribas ni parafrasees para voz. Prohibido doble generacion.';
+      '- La decision de audio es solo de formato, no de contenido.\n- Si respondes en audio, el audio debe decir EXACTAMENTE lo mismo que el texto final.\n- No reescribas ni parafrasees para voz. Prohibido doble generacion.';
 
   final TextEditingController _identityController = TextEditingController();
   final TextEditingController _objectiveController = TextEditingController();
@@ -71,6 +71,7 @@ class _BotPromptConfigPageState extends State<BotPromptConfigPage>
   final Set<String> _expandedSections = <String>{};
 
   ClientConfigData? _currentConfig;
+  BotPromptConfigData? _currentBotPromptConfig;
   bool _isLoading = true;
   bool _isSaving = false;
 
@@ -123,6 +124,7 @@ class _BotPromptConfigPageState extends State<BotPromptConfigPage>
       }
 
       _currentConfig = config;
+      _currentBotPromptConfig = botConfig;
       _applyConfig(config, botConfig);
     } catch (_) {
       if (!mounted) {
@@ -153,8 +155,14 @@ class _BotPromptConfigPageState extends State<BotPromptConfigPage>
       final specials = _extractSection(taggedPrompt, 'PROMPTS_ESPECIALES');
       _greetingController.text = _extractSpecialPrompt(specials, 'SALUDO');
       _farewellController.text = _extractSpecialPrompt(specials, 'DESPEDIDA');
-      _shortReplyController.text = _extractSpecialPrompt(specials, 'RESPUESTA_CORTA');
-      _longReplyController.text = _extractSpecialPrompt(specials, 'RESPUESTA_LARGA');
+      _shortReplyController.text = _extractSpecialPrompt(
+        specials,
+        'RESPUESTA_CORTA',
+      );
+      _longReplyController.text = _extractSpecialPrompt(
+        specials,
+        'RESPUESTA_LARGA',
+      );
 
       _mediaRulesController.text = _extractSection(taggedPrompt, 'MEDIA_RULES');
       _audioRulesController.text = _extractSection(taggedPrompt, 'AUDIO_RULES');
@@ -190,9 +198,7 @@ class _BotPromptConfigPageState extends State<BotPromptConfigPage>
       botConfig?.promptSales,
     ]);
 
-    _greetingController.text = _joinBlocks(<String?>[
-      config.greetingPrompt,
-    ]);
+    _greetingController.text = _joinBlocks(<String?>[config.greetingPrompt]);
     _farewellController.text = '';
     _shortReplyController.text = '';
     _longReplyController.text = '';
@@ -275,35 +281,35 @@ class _BotPromptConfigPageState extends State<BotPromptConfigPage>
 
   String _buildFinalPrompt() {
     final identity = _identityController.text.trim().isEmpty
-      ? _identityPlaceholder
-      : _identityController.text.trim();
+        ? _identityPlaceholder
+        : _identityController.text.trim();
     final objective = _objectiveController.text.trim().isEmpty
-      ? _objectivePlaceholder
-      : _objectiveController.text.trim();
+        ? _objectivePlaceholder
+        : _objectiveController.text.trim();
     final rules = _rulesController.text.trim().isEmpty
-      ? _rulesPlaceholder
-      : _rulesController.text.trim();
+        ? _rulesPlaceholder
+        : _rulesController.text.trim();
     final sales = _salesController.text.trim().isEmpty
-      ? _salesPlaceholder
-      : _salesController.text.trim();
+        ? _salesPlaceholder
+        : _salesController.text.trim();
     final greeting = _greetingController.text.trim().isEmpty
-      ? _greetingPlaceholder
-      : _greetingController.text.trim();
+        ? _greetingPlaceholder
+        : _greetingController.text.trim();
     final farewell = _farewellController.text.trim().isEmpty
-      ? _farewellPlaceholder
-      : _farewellController.text.trim();
+        ? _farewellPlaceholder
+        : _farewellController.text.trim();
     final shortReply = _shortReplyController.text.trim().isEmpty
-      ? _shortReplyPlaceholder
-      : _shortReplyController.text.trim();
+        ? _shortReplyPlaceholder
+        : _shortReplyController.text.trim();
     final longReply = _longReplyController.text.trim().isEmpty
-      ? _longReplyPlaceholder
-      : _longReplyController.text.trim();
+        ? _longReplyPlaceholder
+        : _longReplyController.text.trim();
     final mediaRules = _mediaRulesController.text.trim().isEmpty
-      ? _mediaRulesPlaceholder
-      : _mediaRulesController.text.trim();
+        ? _mediaRulesPlaceholder
+        : _mediaRulesController.text.trim();
     final audioRules = _audioRulesController.text.trim().isEmpty
-      ? _audioRulesPlaceholder
-      : _audioRulesController.text.trim();
+        ? _audioRulesPlaceholder
+        : _audioRulesController.text.trim();
 
     return '''[IDENTIDAD]
 ${identity}
@@ -334,7 +340,8 @@ ${longReply}
 ${mediaRules}
 
 [AUDIO_RULES]
-${audioRules}'''.trim();
+${audioRules}'''
+        .trim();
   }
 
   Future<void> _saveConfig() async {
@@ -342,6 +349,8 @@ ${audioRules}'''.trim();
     if (current == null) {
       return;
     }
+
+    final existingBotConfig = _currentBotPromptConfig;
 
     setState(() {
       _isSaving = true;
@@ -354,33 +363,47 @@ ${audioRules}'''.trim();
         .where((line) => line.isNotEmpty)
         .toList();
 
+    final updatedIdentity = BotIdentityConfigData(
+      assistantName: current.botIdentity.assistantName,
+      role: _identityController.text.trim(),
+      objective: _objectiveController.text.trim(),
+      tone: current.botIdentity.tone,
+      personality: current.botIdentity.personality,
+      responseStyle: current.botIdentity.responseStyle,
+      signature: current.botIdentity.signature,
+      guardrails: _rulesController.text.trim(),
+    );
+
+    final updatedSalesPrompts = SalesPromptBundleData(
+      opening: current.salesPrompts.opening,
+      qualification: current.salesPrompts.qualification,
+      offer: _salesController.text.trim(),
+      objectionHandling: current.salesPrompts.objectionHandling,
+      closing: current.salesPrompts.closing,
+      followUp: current.salesPrompts.followUp,
+    );
+
     try {
       final updatedConfig = await widget.apiService.savePrompts(
         promptBase: finalPrompt,
-        greetingPrompt: '',
-        companyInfoPrompt: '',
-        productInfoPrompt: '',
-        salesGuidelinesPrompt: '',
-        objectionHandlingPrompt: '',
-        closingPrompt: '',
-        supportPrompt: '',
-        identity: BotIdentityConfigData(
-          role: _identityController.text.trim(),
-          objective: _objectiveController.text.trim(),
-          guardrails: _rulesController.text.trim(),
-        ),
+        greetingPrompt: current.greetingPrompt,
+        companyInfoPrompt: current.companyInfoPrompt,
+        productInfoPrompt: current.productInfoPrompt,
+        salesGuidelinesPrompt: current.salesGuidelinesPrompt,
+        objectionHandlingPrompt: current.objectionHandlingPrompt,
+        closingPrompt: current.closingPrompt,
+        supportPrompt: current.supportPrompt,
+        identity: updatedIdentity,
         botRules: rules,
-        salesPromptBundle: SalesPromptBundleData(
-          offer: _salesController.text.trim(),
-        ),
+        salesPromptBundle: updatedSalesPrompts,
         products: current.products,
       );
 
       await widget.apiService.saveBotPromptConfig(
         promptBase: finalPrompt,
-        promptShort: '',
-        promptHuman: '',
-        promptSales: '',
+        promptShort: existingBotConfig?.promptShort ?? '',
+        promptHuman: existingBotConfig?.promptHuman ?? '',
+        promptSales: existingBotConfig?.promptSales ?? '',
       );
 
       if (!mounted) {
@@ -419,8 +442,9 @@ ${audioRules}'''.trim();
     messenger.showSnackBar(
       SnackBar(
         content: Text(message.replaceFirst('Exception: ', '')),
-        backgroundColor:
-            isError ? const Color(0xFF9F1239) : const Color(0xFF166534),
+        backgroundColor: isError
+            ? const Color(0xFF9F1239)
+            : const Color(0xFF166534),
       ),
     );
   }
@@ -616,7 +640,10 @@ class _PromptCard extends StatelessWidget {
               borderRadius: BorderRadius.circular(16),
               onTap: () => onToggle(sectionKey),
               child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 16,
+                ),
                 child: Row(
                   children: <Widget>[
                     Expanded(
@@ -660,15 +687,21 @@ class _PromptCard extends StatelessWidget {
                         contentPadding: const EdgeInsets.all(14),
                         border: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(12),
-                          borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                          borderSide: const BorderSide(
+                            color: Color(0xFFE2E8F0),
+                          ),
                         ),
                         enabledBorder: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(12),
-                          borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                          borderSide: const BorderSide(
+                            color: Color(0xFFE2E8F0),
+                          ),
                         ),
                         focusedBorder: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(12),
-                          borderSide: const BorderSide(color: Color(0xFF2563EB)),
+                          borderSide: const BorderSide(
+                            color: Color(0xFF2563EB),
+                          ),
                         ),
                       ),
                     ),

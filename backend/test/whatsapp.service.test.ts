@@ -2609,7 +2609,7 @@ test('processAndDeliverMessage omits an already sent video and rewrites duplicat
   await service.processAndDeliverMessage(
     createResolvedConfig(),
     '18095551234',
-    'me vuelves a mandar el video?',
+    'ok',
     'text',
     {
       outboundAddress: '18095551234@s.whatsapp.net',
@@ -2622,7 +2622,7 @@ test('processAndDeliverMessage omits an already sent video and rewrites duplicat
   assert.equal(sentTexts[1]?.text, 'Claro, te comparto un video para que veas como funciona.');
 });
 
-test('processAndDeliverMessage allows sending a video again after the topic changes', async () => {
+test('processAndDeliverMessage allows sending a video again when explicitly requested', async () => {
   const { service, botService } = createAudioFlowService();
   const deliveredMedia: string[] = [];
 
@@ -2711,6 +2711,99 @@ test('processAndDeliverMessage allows sending a video again after the topic chan
   );
 
   assert.equal(deliveredMedia.length, 2);
+});
+
+test('processAndDeliverMessage does not reset sent videos when intent changes', async () => {
+  const { service, botService } = createAudioFlowService();
+  const deliveredMedia: string[] = [];
+
+  botService.processIncomingMessage = async (_contactId: string, message: string) => {
+    if (message.includes('ubicados')) {
+      return {
+        reply: 'Estamos ubicados en el centro de la ciudad.',
+        replyType: 'text',
+        mediaFiles: [],
+        intent: 'ubicacion',
+        decisionIntent: 'info',
+        stage: 'interesado',
+        action: 'guiar',
+        purchaseIntentScore: 20,
+        hotLead: false,
+        cached: false,
+        usedGallery: false,
+        usedMemory: false,
+        source: 'ai',
+      };
+    }
+
+    return {
+      reply: 'Te comparto un video para que veas como funciona.',
+      replyType: 'text',
+      mediaFiles: [{
+        id: 1,
+        title: 'video-demo',
+        description: null,
+        fileUrl: 'https://example.com/producto-demo.mp4',
+        fileType: 'video',
+        createdAt: new Date(),
+      }],
+      intent: 'catalogo',
+      decisionIntent: 'info',
+      stage: 'interesado',
+      action: 'guiar',
+      purchaseIntentScore: 40,
+      hotLead: false,
+      cached: false,
+      usedGallery: true,
+      usedMemory: false,
+      source: 'ai',
+    };
+  };
+
+  service.deliverMatchedMedia = async (
+    _resolved: unknown,
+    to: string,
+    mediaFiles: Array<{ fileUrl: string }>,
+  ) => {
+    if (mediaFiles.length === 0) {
+      return;
+    }
+
+    deliveredMedia.push(`${to}:${mediaFiles[0]?.fileUrl ?? ''}`);
+  };
+
+  await service.processAndDeliverMessage(
+    createResolvedConfig(),
+    '18095551234',
+    'tienes video del producto?',
+    'text',
+    {
+      outboundAddress: '18095551234@s.whatsapp.net',
+    },
+  );
+
+  await service.processAndDeliverMessage(
+    createResolvedConfig(),
+    '18095551234',
+    'donde estan ubicados?',
+    'text',
+    {
+      outboundAddress: '18095551234@s.whatsapp.net',
+    },
+  );
+
+  await service.processAndDeliverMessage(
+    createResolvedConfig(),
+    '18095551234',
+    'tienes video del producto?',
+    'text',
+    {
+      outboundAddress: '18095551234@s.whatsapp.net',
+    },
+  );
+
+  // No explicit resend request, so the second catalog reply should not re-send the same video.
+  assert.equal(deliveredMedia.length, 1);
 });
 
 test('processAndDeliverMessage falls back to text when media delivery fails', async () => {
