@@ -6,12 +6,14 @@ class LoginPage extends StatefulWidget {
     required this.isBusy,
     required this.errorMessage,
     required this.onSubmit,
+    required this.onShowRegister,
     this.onEditBackendUrl,
   });
 
   final bool isBusy;
   final String? errorMessage;
   final Future<void> Function({required String identifier, required String password}) onSubmit;
+  final VoidCallback onShowRegister;
   final VoidCallback? onEditBackendUrl;
 
   @override
@@ -47,6 +49,16 @@ class _LoginPageState extends State<LoginPage> {
       eyebrow: 'Acceso seguro',
       title: 'Inicia sesión',
       subtitle: null,
+      footer: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: <Widget>[
+          const Text('¿No tienes cuenta?'),
+          TextButton(
+            onPressed: widget.isBusy ? null : widget.onShowRegister,
+            child: const Text('Crear cuenta'),
+          ),
+        ],
+      ),
       headerAction: widget.onEditBackendUrl == null
           ? null
           : IconButton(
@@ -90,8 +102,8 @@ class _LoginPageState extends State<LoginPage> {
                 if ((value?.isEmpty ?? true)) {
                   return 'Escribe tu contraseña.';
                 }
-                if ((value?.length ?? 0) < 8) {
-                  return 'La contraseña debe tener al menos 8 caracteres.';
+                if ((value?.length ?? 0) < 6) {
+                  return 'La contraseña debe tener al menos 6 caracteres.';
                 }
                 return null;
               },

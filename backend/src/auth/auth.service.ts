@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
   InternalServerErrorException,
@@ -23,17 +24,30 @@ export class AuthService {
   ) {}
 
   async register(dto: RegisterDto) {
-    const existing = await this.usersService.findByIdentifier(dto.email);
-    if (existing) {
-      throw new ConflictException('El correo ya está registrado.');
+    const normalizedEmail = dto.email?.trim().toLowerCase();
+    const normalizedPhone = dto.phone?.trim();
+
+    if (!normalizedEmail && !normalizedPhone) {
+      throw new BadRequestException('Debes enviar correo o teléfono.');
     }
 
-    if (dto.phone?.trim()) {
-      const existingPhone = await this.usersService.findByIdentifier(dto.phone);
+    if (normalizedEmail) {
+      const existing = await this.usersService.findByIdentifier(normalizedEmail);
+      if (existing) {
+        throw new ConflictException('El correo ya está registrado.');
+      }
+    }
+
+    if (normalizedPhone) {
+      const existingPhone = await this.usersService.findByIdentifier(normalizedPhone);
       if (existingPhone) {
         throw new ConflictException('El teléfono ya está registrado.');
       }
     }
+
+    // User.email is mandatory in current schema; for phone-only signup we derive
+    // a deterministic internal email from phone.
+    const safeEmail = normalizedEmail ?? `${normalizedPhone}@phone.local`;
 
     const role = (await this.usersService.countActiveUsers()) === 0
       ? UserRole.admin
@@ -41,27 +55,39 @@ export class AuthService {
 
     const user = await this.usersService.create({
       name: dto.name,
-      email: dto.email,
-      phone: dto.phone,
+      email: safeEmail,
+      phone: normalizedPhone,
       password: dto.password,
       role,
       isActive: true,
     });
 
-    // Create company and set user as owner
-    const company = await this.companyService.create(
-      {
-        name: dto.companyName,
-        phone: dto.companyPhone,
-        email: dto.email,
-      },
-      user.id,
-    );
+    try {
+      const company = await this.companyService.create(
+        {
+          name: dto.companyName,
+          phone: dto.companyPhone,
+          email: normalizedEmail,
+        },
+        user.id,
+      );
 
-    // Seed initial resources for this company
-    await this.companyService.seedCompanyResources(company.id);
+      await this.companyService.seedCompanyResources(company.id);
 
-    return { user, company: this.companyService.toPublicCompany(company) };
+      return {
+        token: this.signToken({
+          userId: user.id,
+          role: user.role,
+          email: user.email,
+          activeCompanyId: company.id,
+        }),
+        user,
+        company: this.companyService.toPublicCompany(company),
+      };
+    } catch (error) {
+      await this.usersService.softDelete(user.id);
+      throw error;
+    }
   }
 
   async login(dto: LoginDto) {

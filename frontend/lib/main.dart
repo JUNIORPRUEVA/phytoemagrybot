@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import 'pages/login_page.dart';
+import 'pages/onboarding_start_page.dart';
+import 'pages/register_page.dart';
 import 'services/app_settings_service.dart';
 import 'services/auth_service.dart';
 import 'services/api_service.dart';
@@ -39,6 +41,7 @@ class _DashboardAppState extends State<DashboardApp> {
   late AuthService _authService;
   late SessionController _sessionController;
   late String _baseUrl;
+  bool _showRegister = false;
 
   @override
   void initState() {
@@ -333,6 +336,13 @@ class _DashboardAppState extends State<DashboardApp> {
 
           if (_sessionController.isAuthenticated &&
               _sessionController.currentUser != null) {
+            if (_sessionController.mustCompleteOnboarding) {
+              return OnboardingStartPage(
+                companyName: _sessionController.activeCompany?.name ?? 'tu empresa',
+                onContinue: _sessionController.completeOnboarding,
+              );
+            }
+
             return DashboardShell(
               apiService: _apiService,
               authService: _authService,
@@ -341,10 +351,36 @@ class _DashboardAppState extends State<DashboardApp> {
             );
           }
 
+          if (_showRegister) {
+            return RegisterPage(
+              isBusy: _sessionController.isBusy,
+              errorMessage: _sessionController.errorMessage,
+              onShowLogin: () => setState(() => _showRegister = false),
+              onSubmit: ({
+                required String name,
+                required String? email,
+                required String? phone,
+                required String password,
+                required String companyName,
+                required String? companyPhone,
+              }) {
+                return _sessionController.register(
+                  name: name,
+                  email: email,
+                  phone: phone,
+                  password: password,
+                  companyName: companyName,
+                  companyPhone: companyPhone,
+                );
+              },
+            );
+          }
+
           return LoginPage(
             isBusy: _sessionController.isBusy,
             errorMessage: _sessionController.errorMessage,
             onEditBackendUrl: () => _openBackendDialog(context),
+            onShowRegister: () => setState(() => _showRegister = true),
             onSubmit: ({required String identifier, required String password}) {
               return _sessionController.login(
                 identifier: identifier,

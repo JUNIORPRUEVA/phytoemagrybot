@@ -6,8 +6,9 @@ export class RegisterDto {
   @MaxLength(120)
   name!: string;
 
+  @IsOptional()
   @IsEmail()
-  email!: string;
+  email?: string;
 
   @IsOptional()
   @IsString()
@@ -15,7 +16,7 @@ export class RegisterDto {
   phone?: string;
 
   @IsString()
-  @MinLength(8)
+  @MinLength(6)
   @MaxLength(120)
   password!: string;
 

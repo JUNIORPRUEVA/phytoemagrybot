@@ -96,31 +96,27 @@ class AuthService {
 
   Future<AuthSessionData> register({
     required String name,
-    required String email,
+    String? email,
     String? phone,
     required String password,
     required String companyName,
+    String? companyPhone,
   }) async {
     final data = await _apiClient.postJson(
       '/auth/register',
       body: <String, dynamic>{
         'name': name.trim(),
-        'email': email.trim(),
+        'email': (email?.trim().isNotEmpty ?? false) ? email!.trim() : null,
         'phone': (phone?.trim().isNotEmpty ?? false) ? phone!.trim() : null,
         'password': password,
         'companyName': companyName.trim(),
+        'companyPhone': (companyPhone?.trim().isNotEmpty ?? false)
+            ? companyPhone!.trim()
+            : null,
       },
     );
 
-    // Register returns { user, company }. Wrap into a session shape without token.
-    // The caller must proceed to login to obtain a real JWT.
-    return AuthSessionData(
-      token: '',
-      user: AuthUserData.fromJson(_asMap(data['user'])),
-      company: data['company'] != null
-          ? AuthCompanyData.fromJson(_asMap(data['company'] as Map<String, dynamic>))
-          : null,
-    );
+    return AuthSessionData.fromJson(data);
   }
 
   Future<AuthSessionData> login({
@@ -141,6 +137,17 @@ class AuthService {
   Future<AuthUserData> getUser() async {
     final data = await _apiClient.getJson('/auth/me');
     return AuthUserData.fromJson(data);
+  }
+
+  Future<AuthSessionData> getSessionProfile() async {
+    final data = await _apiClient.getJson('/auth/me');
+    return AuthSessionData(
+      token: '',
+      user: AuthUserData.fromJson(data),
+      company: data['company'] == null
+          ? null
+          : AuthCompanyData.fromJson(_asMap(data['company'])),
+    );
   }
 
   Future<void> logout() async {
@@ -243,14 +250,19 @@ class SessionController extends ChangeNotifier {
 
   SessionStatus _status = SessionStatus.loading;
   AuthUserData? _currentUser;
+  AuthCompanyData? _activeCompany;
   bool _isBusy = false;
   String? _errorMessage;
+  bool _mustCompleteOnboarding = false;
 
   SessionStatus get status => _status;
   AuthUserData? get currentUser => _currentUser;
+  AuthCompanyData? get activeCompany => _activeCompany;
+  String? get activeCompanyId => _activeCompany?.id;
   bool get isBusy => _isBusy;
   bool get isAuthenticated => _status == SessionStatus.authenticated;
   String? get errorMessage => _errorMessage;
+  bool get mustCompleteOnboarding => _mustCompleteOnboarding;
 
   Future<void> restoreSession() async {
     _status = SessionStatus.loading;
@@ -277,7 +289,10 @@ class SessionController extends ChangeNotifier {
     _applyToken(token);
 
     try {
-      _currentUser = await authService.getUser();
+      final session = await authService.getSessionProfile();
+      _currentUser = session.user;
+      _activeCompany = session.company;
+      _mustCompleteOnboarding = false;
       _errorMessage = null;
       _status = SessionStatus.authenticated;
     } catch (_) {
@@ -304,6 +319,8 @@ class SessionController extends ChangeNotifier {
       await authService.persistToken(session.token);
       _applyToken(session.token);
       _currentUser = session.user;
+      _activeCompany = session.company;
+      _mustCompleteOnboarding = false;
       _errorMessage = null;
       _status = SessionStatus.authenticated;
     } catch (error) {
@@ -316,28 +333,28 @@ class SessionController extends ChangeNotifier {
 
   Future<void> register({
     required String name,
-    required String email,
+    String? email,
     String? phone,
     required String password,
     required String companyName,
+    String? companyPhone,
   }) async {
     _setBusy(true);
 
     try {
-      await authService.register(
+      final session = await authService.register(
         name: name,
         email: email,
         phone: phone,
         password: password,
         companyName: companyName,
-      );
-      final session = await authService.login(
-        identifier: email,
-        password: password,
+        companyPhone: companyPhone,
       );
       await authService.persistToken(session.token);
       _applyToken(session.token);
       _currentUser = session.user;
+      _activeCompany = session.company;
+      _mustCompleteOnboarding = true;
       _errorMessage = null;
       _status = SessionStatus.authenticated;
     } catch (error) {
@@ -359,9 +376,19 @@ class SessionController extends ChangeNotifier {
 
     await _clearSessionLocal();
     _currentUser = null;
+    _activeCompany = null;
+    _mustCompleteOnboarding = false;
     _errorMessage = null;
     _status = SessionStatus.unauthenticated;
     _setBusy(false);
+  }
+
+  void completeOnboarding() {
+    if (!_mustCompleteOnboarding) {
+      return;
+    }
+    _mustCompleteOnboarding = false;
+    notifyListeners();
   }
 
   void clearError() {
