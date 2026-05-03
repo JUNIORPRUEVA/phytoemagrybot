@@ -18,6 +18,7 @@ class RegisterPage extends StatefulWidget {
     required String email,
     required String? phone,
     required String password,
+    required String companyName,
   }) onSubmit;
   final VoidCallback onShowLogin;
 
@@ -28,6 +29,7 @@ class RegisterPage extends StatefulWidget {
 class _RegisterPageState extends State<RegisterPage> {
   final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
   final TextEditingController _nameController = TextEditingController();
+  final TextEditingController _companyNameController = TextEditingController();
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _phoneController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
@@ -35,6 +37,7 @@ class _RegisterPageState extends State<RegisterPage> {
   @override
   void dispose() {
     _nameController.dispose();
+    _companyNameController.dispose();
     _emailController.dispose();
     _phoneController.dispose();
     _passwordController.dispose();
@@ -51,6 +54,7 @@ class _RegisterPageState extends State<RegisterPage> {
       email: _emailController.text.trim(),
       phone: _phoneController.text.trim().isEmpty ? null : _phoneController.text.trim(),
       password: _passwordController.text,
+      companyName: _companyNameController.text.trim(),
     );
   }
 

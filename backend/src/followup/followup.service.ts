@@ -82,12 +82,12 @@ export class FollowupService implements OnModuleInit {
     const config = await this.getFollowupConfig(companyId);
 
     if (!config.enabled) {
-      await this.deactivate(contactId, 'disabled');
+      await this.deactivate(contactId, 'disabled', companyId);
       return;
     }
 
     if (await this.isConversationEnded(contactId)) {
-      await this.deactivate(contactId, 'conversation_ended');
+      await this.deactivate(contactId, 'conversation_ended', companyId);
       return;
     }
 
@@ -95,7 +95,7 @@ export class FollowupService implements OnModuleInit {
       ? await this.memoryService.getConversationContext(companyId, contactId, 10)
       : { clientMemory: { contactId, objections: [], status: 'nuevo' as const, name: null, objective: null, interest: null, lastIntent: null, personalData: {}, updatedAt: null, notes: null, expiresAt: null }, messages: [], summary: { summary: null } };
     if (this.shouldSuppressFollowup(context.clientMemory, context.messages)) {
-      await this.deactivate(contactId, 'suppressed');
+      await this.deactivate(contactId, 'suppressed', companyId);
       return;
     }
 
@@ -206,6 +206,7 @@ export class FollowupService implements OnModuleInit {
     outboundAddress?: string | null;
     message: string;
     scheduleFollowup?: boolean;
+    companyId: string;
   }) {
     const contactId = this.normalizeContactId(params.contactId);
     const message = params.message.trim();
@@ -220,7 +221,7 @@ export class FollowupService implements OnModuleInit {
       contactId,
       role: 'assistant',
       content: message,
-      companyId: (params as { companyId?: string }).companyId ?? '',
+      companyId: params.companyId,
     });
 
     if (params.scheduleFollowup ?? true) {
@@ -230,7 +231,7 @@ export class FollowupService implements OnModuleInit {
         reply: message,
       });
     } else {
-      await this.deactivate(contactId, 'manual_send_without_followup');
+      await this.deactivate(contactId, 'manual_send_without_followup', params.companyId);
     }
 
     return {
@@ -270,12 +271,12 @@ export class FollowupService implements OnModuleInit {
     companyId?: string,
   ): Promise<void> {
     if (followup.followupStep >= config.maxFollowups) {
-      await this.deactivate(followup.contactId, 'max_reached');
+      await this.deactivate(followup.contactId, 'max_reached', companyId);
       return;
     }
 
     if (await this.isConversationEnded(followup.contactId)) {
-      await this.deactivate(followup.contactId, 'conversation_ended');
+      await this.deactivate(followup.contactId, 'conversation_ended', companyId);
       return;
     }
 
@@ -283,7 +284,7 @@ export class FollowupService implements OnModuleInit {
       ? await this.memoryService.getConversationContext(companyId, followup.contactId, 10)
       : { clientMemory: { contactId: followup.contactId, objections: [], status: 'nuevo' as const, name: null, objective: null, interest: null, lastIntent: null, personalData: {}, updatedAt: null, notes: null, expiresAt: null }, messages: [], summary: { contactId: followup.contactId, summary: null, updatedAt: null, expiresAt: null } };
     if (this.shouldSuppressFollowup(memoryContext.clientMemory, memoryContext.messages)) {
-      await this.deactivate(followup.contactId, 'suppressed');
+      await this.deactivate(followup.contactId, 'suppressed', companyId);
       return;
     }
 
@@ -297,7 +298,7 @@ export class FollowupService implements OnModuleInit {
         contactId: followup.contactId,
         role: 'assistant',
         content: message,
-        companyId: companyId ?? '',
+        companyId: companyId!,
       });
 
       const reachedMax = nextStep >= config.maxFollowups;
@@ -340,7 +341,10 @@ export class FollowupService implements OnModuleInit {
     memoryContext: Awaited<ReturnType<MemoryService['getConversationContext']>>,
     companyId?: string,
   ): Promise<string> {
-    const resolvedCompanyId = companyId ?? '';
+    if (!companyId) {
+      throw new Error('companyId is required for generateFollowupMessage');
+    }
+    const resolvedCompanyId = companyId;
     const config = await this.clientConfigService.getConfig(resolvedCompanyId);
     const botConfig = await this.botConfigService.getConfig(resolvedCompanyId);
     const companyContext = await this.companyContextService.buildAgentContext(resolvedCompanyId);
@@ -655,7 +659,10 @@ export class FollowupService implements OnModuleInit {
   }
 
   private async sendFollowupText(outboundAddress: string, text: string, companyId?: string): Promise<void> {
-    const resolvedCompanyId = companyId ?? '';
+    if (!companyId) {
+      throw new Error('companyId is required for generateFollowupMessage');
+    }
+    const resolvedCompanyId = companyId;
     const config = await this.clientConfigService.getConfig(resolvedCompanyId);
     const apiBaseUrl = config.whatsappSettings?.apiBaseUrl?.trim() || '';
     const apiKey = config.whatsappSettings?.apiKey?.trim() || '';
@@ -723,9 +730,19 @@ export class FollowupService implements OnModuleInit {
   }
 
   private async getFollowupConfig(companyId?: string): Promise<FollowupConfig> {
-    const resolvedCompanyId: string = companyId ?? await this.prisma.whatsAppInstance
+    let resolvedCompanyId: string | undefined = companyId ?? await this.prisma.whatsAppInstance
       .findFirst({ orderBy: { createdAt: 'asc' }, select: { companyId: true } })
-      .then((r): string => r?.companyId || '');
+      .then((r) => r?.companyId ?? undefined);
+    if (!resolvedCompanyId) {
+      return {
+        enabled: false,
+        followup1DelayMinutes: 10,
+        followup2DelayMinutes: 30,
+        followup3DelayHours: 24,
+        maxFollowups: 3,
+        stopIfUserReply: true,
+      };
+    }
     const config = await this.clientConfigService.getConfig(resolvedCompanyId);
     const settings = config.botSettings;
 
@@ -747,9 +764,9 @@ export class FollowupService implements OnModuleInit {
     return `conversation_end:${contactId}`;
   }
 
-  private async deactivate(contactId: string, reason: string): Promise<void> {
+  private async deactivate(contactId: string, reason: string, companyId?: string): Promise<void> {
     await this.prisma.conversationFollowup.updateMany({
-      where: { contactId },
+      where: companyId ? { contactId, companyId } : { contactId },
       data: {
         isActive: false,
         nextFollowupAt: null,

@@ -37,16 +37,35 @@ class AuthUserData {
   }
 }
 
+class AuthCompanyData {
+  const AuthCompanyData({required this.id, required this.name});
+
+  final String id;
+  final String name;
+
+  factory AuthCompanyData.fromJson(Map<String, dynamic> json) {
+    return AuthCompanyData(
+      id: (json['id'] as String?) ?? '',
+      name: (json['name'] as String?) ?? '',
+    );
+  }
+}
+
 class AuthSessionData {
-  const AuthSessionData({required this.token, required this.user});
+  const AuthSessionData({required this.token, required this.user, this.company});
 
   final String token;
   final AuthUserData user;
+  final AuthCompanyData? company;
+
+  String? get activeCompanyId => company?.id;
 
   factory AuthSessionData.fromJson(Map<String, dynamic> json) {
+    final companyJson = json['company'];
     return AuthSessionData(
       token: (json['token'] as String?) ?? '',
       user: AuthUserData.fromJson(_asMap(json['user'])),
+      company: companyJson != null ? AuthCompanyData.fromJson(_asMap(companyJson)) : null,
     );
   }
 }
@@ -75,11 +94,12 @@ class AuthService {
     _apiClient.clearSessionToken();
   }
 
-  Future<AuthUserData> register({
+  Future<AuthSessionData> register({
     required String name,
     required String email,
     String? phone,
     required String password,
+    required String companyName,
   }) async {
     final data = await _apiClient.postJson(
       '/auth/register',
@@ -88,10 +108,19 @@ class AuthService {
         'email': email.trim(),
         'phone': (phone?.trim().isNotEmpty ?? false) ? phone!.trim() : null,
         'password': password,
+        'companyName': companyName.trim(),
       },
     );
 
-    return AuthUserData.fromJson(_asMap(data['user']));
+    // Register returns { user, company }. Wrap into a session shape without token.
+    // The caller must proceed to login to obtain a real JWT.
+    return AuthSessionData(
+      token: '',
+      user: AuthUserData.fromJson(_asMap(data['user'])),
+      company: data['company'] != null
+          ? AuthCompanyData.fromJson(_asMap(data['company'] as Map<String, dynamic>))
+          : null,
+    );
   }
 
   Future<AuthSessionData> login({
@@ -290,6 +319,7 @@ class SessionController extends ChangeNotifier {
     required String email,
     String? phone,
     required String password,
+    required String companyName,
   }) async {
     _setBusy(true);
 
@@ -299,6 +329,7 @@ class SessionController extends ChangeNotifier {
         email: email,
         phone: phone,
         password: password,
+        companyName: companyName,
       );
       final session = await authService.login(
         identifier: email,

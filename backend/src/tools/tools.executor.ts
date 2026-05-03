@@ -19,7 +19,7 @@ export class ToolsExecutor {
     args: Record<string, unknown>,
     contactId: string,
     toolConfig: ToolConfig,
-    companyId?: string,
+    companyId: string,
   ): Promise<ToolExecutionResult> {
     this.logger.log(JSON.stringify({ event: 'tool_execute', toolName, contactId, args }));
 
@@ -52,11 +52,11 @@ export class ToolsExecutor {
     }
   }
 
-  private async consultarStock(args: Record<string, unknown>, companyId?: string) {
+  private async consultarStock(args: Record<string, unknown>, companyId: string) {
     const nombre = String(args.nombre_producto ?? '').trim();
     if (!nombre) return { error: 'Se requiere el nombre del producto' };
 
-    const products = await this.productsService.buscarPorNombre(companyId ?? '', nombre);
+    const products = await this.productsService.buscarPorNombre(companyId, nombre);
     if (products.length === 0) {
       return { disponible: false, mensaje: `No encontré el producto "${nombre}" en el catálogo.` };
     }
@@ -78,8 +78,8 @@ export class ToolsExecutor {
     }));
   }
 
-  private async consultarCatalogo(companyId?: string) {
-    const products = await this.productsService.findActive(companyId ?? '');
+  private async consultarCatalogo(companyId: string) {
+    const products = await this.productsService.findActive(companyId);
     if (products.length === 0) return { mensaje: 'No hay productos disponibles.' };
 
     return products.map((p) => ({
@@ -101,7 +101,7 @@ export class ToolsExecutor {
     }));
   }
 
-  private async consultarInfoEmpresa(args: Record<string, unknown>, companyId?: string) {
+  private async consultarInfoEmpresa(args: Record<string, unknown>, companyId: string) {
     const rawCampo = typeof args.campo === 'string' ? args.campo.trim().toLowerCase() : '';
     const campo =
       rawCampo === 'ubicacion' ||
@@ -112,7 +112,7 @@ export class ToolsExecutor {
         ? rawCampo
         : 'todo';
 
-    const ctx = await this.companyContextService.getContext(companyId ?? '');
+    const ctx = await this.companyContextService.getContext(companyId);
 
     const base = {
       companyName: ctx.companyName,
@@ -174,7 +174,7 @@ export class ToolsExecutor {
     };
   }
 
-  private async generarCotizacion(args: Record<string, unknown>, toolConfig: ToolConfig, companyId?: string) {
+  private async generarCotizacion(args: Record<string, unknown>, toolConfig: ToolConfig, companyId: string) {
     const productos = Array.isArray(args.productos)
       ? args.productos as Array<{ id: number; cantidad: number; variante?: string }>
       : [];
@@ -193,7 +193,7 @@ export class ToolsExecutor {
 
     for (const item of productos) {
       try {
-        const p = await this.productsService.findOne(companyId ?? '', item.id);
+        const p = await this.productsService.findOne(companyId, item.id);
         const variants = this.productsService.getActiveVariants(p.variantesJson);
         const selectedVariant = this.findVariant(variants, item.variante);
         if (variants.length > 0 && !selectedVariant) {
@@ -285,7 +285,7 @@ export class ToolsExecutor {
     };
   }
 
-  private async crearPedido(args: Record<string, unknown>, contactId: string, companyId?: string) {
+  private async crearPedido(args: Record<string, unknown>, contactId: string, companyId: string) {
     const productos = Array.isArray(args.productos) ? args.productos : [];
     const direccion = args.direccion ? String(args.direccion) : null;
     const notas = args.notas ? String(args.notas) : null;
@@ -302,7 +302,7 @@ export class ToolsExecutor {
     const order = await this.prisma.order.create({
       data: {
         contactId,
-        companyId: companyId ?? '',
+        companyId,
         productosJson: productos,
         estado: 'pendiente',
         total: total > 0 ? total : null,

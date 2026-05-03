@@ -52,6 +52,7 @@ export class ConversationsController {
         outboundAddress: dto.outboundAddress,
         message: dto.content,
         scheduleFollowup: dto.scheduleFollowup,
+        companyId,
       });
     }
 

@@ -225,6 +225,13 @@ export class WhatsAppService implements OnModuleInit {
     input?: { phone?: string | null },
     companyId?: string,
   ): Promise<ManagedWhatsAppInstance> {
+    if (!companyId?.trim()) {
+      throw new HttpException(
+        'Se requiere companyId para crear una instancia de WhatsApp',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
     const instanceName = this.normalizeInstanceName(name);
     const normalizedPhone = this.normalizeOptionalInstanceField(input?.phone);
 
@@ -237,16 +244,14 @@ export class WhatsAppService implements OnModuleInit {
       throw new HttpException('La instancia ya existe', HttpStatus.BAD_REQUEST);
     }
 
-    if (companyId) {
-      const connectedInstance = await this.prisma.whatsAppInstance.findFirst({
-        where: { companyId, status: 'connected' },
-      });
-      if (connectedInstance) {
-        throw new HttpException(
-          'Ya existe una instancia conectada para esta empresa',
-          HttpStatus.BAD_REQUEST,
-        );
-      }
+    const connectedInstance = await this.prisma.whatsAppInstance.findFirst({
+      where: { companyId, status: 'connected' },
+    });
+    if (connectedInstance) {
+      throw new HttpException(
+        'Ya existe una instancia conectada para esta empresa',
+        HttpStatus.BAD_REQUEST,
+      );
     }
 
     try {
@@ -263,13 +268,13 @@ export class WhatsAppService implements OnModuleInit {
       where: { name: instanceName },
       update: {
         ...(normalizedPhone ? { phone: normalizedPhone } : {}),
-        ...(companyId ? { companyId } : {}),
+        companyId,
       },
       create: {
         name: instanceName,
         status: 'connecting',
         phone: normalizedPhone,
-        companyId: companyId ?? '',
+        companyId,
       },
     });
 
@@ -1149,9 +1154,26 @@ export class WhatsAppService implements OnModuleInit {
       this.sendPresence(resolved, effectiveOutboundAddress, 'composing').catch(() => undefined);
     }
 
+    const resolvedCompanyId = options?.companyId;
+    if (!resolvedCompanyId) {
+      this.logger.warn(
+        JSON.stringify({ event: 'whatsapp_delivery_no_company_id', contactId, messageType }),
+      );
+      await this.sendTextReliably(resolved, effectiveOutboundAddress, fallbackMessage, diagnostic, {
+        contactId,
+        reason: 'no_company_id',
+      });
+      await this.followupService.registerBotReply({
+        contactId,
+        outboundAddress: effectiveOutboundAddress,
+        reply: fallbackMessage,
+      });
+      return;
+    }
+
     let botReply: Awaited<ReturnType<BotService['processIncomingMessage']>>;
     try {
-      botReply = await this.botService.processIncomingMessage(contactId, message, options?.companyId ?? '', {
+      botReply = await this.botService.processIncomingMessage(contactId, message, resolvedCompanyId, {
         messageType,
         transcript: messageType === 'audio' ? message : undefined,
       });
@@ -3040,20 +3062,17 @@ export class WhatsAppService implements OnModuleInit {
     name: string,
     status: InstanceStatus,
     phone: string | null,
-  ): Promise<WhatsAppInstance> {
-    return this.prisma.whatsAppInstance.upsert({
-      where: { name },
-      create: {
-        name,
-        status,
-        phone,
-        companyId: '',
-      },
-      update: {
-        status,
-        phone,
-      },
-    });
+  ): Promise<WhatsAppInstance | null> {
+    try {
+      return await this.prisma.whatsAppInstance.update({
+        where: { name },
+        data: { status, phone },
+      });
+    } catch {
+      // Instance not found in local DB — skip auto-creation.
+      // Instances must be created explicitly via createInstance() with a valid companyId.
+      return null;
+    }
   }
 
   private async waitForManagedStatus(name: string, attempts = 5): Promise<ManagedWhatsAppInstance> {
