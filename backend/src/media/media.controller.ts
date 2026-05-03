@@ -7,6 +7,7 @@ import {
   ParseIntPipe,
   ParseFilePipeBuilder,
   Post,
+  Req,
   UploadedFile,
   UseInterceptors,
 } from '@nestjs/common';
@@ -15,6 +16,7 @@ import { UploadableStorageFile } from '../storage/storage.types';
 import { ALLOWED_MEDIA_MIME_PATTERN, MAX_MEDIA_FILE_SIZE } from './media.constants';
 import { UploadMediaDto } from './dto/upload-media.dto';
 import { MediaService } from './media.service';
+import { AuthenticatedRequest } from '../auth/auth.types';
 
 @Controller('media')
 export class MediaController {
@@ -29,6 +31,7 @@ export class MediaController {
     }),
   )
   upload(
+    @Req() req: AuthenticatedRequest,
     @UploadedFile(
       new ParseFilePipeBuilder()
         .addFileTypeValidator({ fileType: ALLOWED_MEDIA_MIME_PATTERN })
@@ -38,12 +41,12 @@ export class MediaController {
     file: UploadableStorageFile,
     @Body() dto: UploadMediaDto,
   ) {
-    return this.mediaService.createMedia(file, dto);
+    return this.mediaService.createMedia(file, dto, req.user!.activeCompanyId);
   }
 
   @Get()
-  getAll() {
-    return this.mediaService.getAllMedia();
+  getAll(@Req() req: AuthenticatedRequest) {
+    return this.mediaService.getAllMedia(req.user!.activeCompanyId);
   }
 
   @Delete(':id')

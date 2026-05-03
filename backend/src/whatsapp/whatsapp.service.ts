@@ -223,6 +223,7 @@ export class WhatsAppService implements OnModuleInit {
   async createInstance(
     name: string,
     input?: { phone?: string | null },
+    companyId?: string,
   ): Promise<ManagedWhatsAppInstance> {
     const instanceName = this.normalizeInstanceName(name);
     const normalizedPhone = this.normalizeOptionalInstanceField(input?.phone);
@@ -236,14 +237,16 @@ export class WhatsAppService implements OnModuleInit {
       throw new HttpException('La instancia ya existe', HttpStatus.BAD_REQUEST);
     }
 
-    const connectedInstance = await this.prisma.whatsAppInstance.findFirst({
-      where: { status: 'connected' },
-    });
-    if (connectedInstance) {
-      throw new HttpException(
-        'Ya existe una instancia conectada',
-        HttpStatus.BAD_REQUEST,
-      );
+    if (companyId) {
+      const connectedInstance = await this.prisma.whatsAppInstance.findFirst({
+        where: { companyId, status: 'connected' },
+      });
+      if (connectedInstance) {
+        throw new HttpException(
+          'Ya existe una instancia conectada para esta empresa',
+          HttpStatus.BAD_REQUEST,
+        );
+      }
     }
 
     try {
@@ -260,11 +263,13 @@ export class WhatsAppService implements OnModuleInit {
       where: { name: instanceName },
       update: {
         ...(normalizedPhone ? { phone: normalizedPhone } : {}),
+        ...(companyId ? { companyId } : {}),
       },
       create: {
         name: instanceName,
         status: 'connecting',
         phone: normalizedPhone,
+        companyId: companyId ?? '',
       },
     });
 
@@ -273,10 +278,11 @@ export class WhatsAppService implements OnModuleInit {
     return this.waitForManagedStatus(instanceName);
   }
 
-  async getInstances(): Promise<ManagedWhatsAppInstance[]> {
+  async getInstances(companyId?: string): Promise<ManagedWhatsAppInstance[]> {
     await this.syncInstancesFromEvolution();
 
     const instances = await this.prisma.whatsAppInstance.findMany({
+      where: companyId ? { companyId } : undefined,
       orderBy: { createdAt: 'desc' },
     });
 
@@ -705,17 +711,25 @@ export class WhatsAppService implements OnModuleInit {
     const rawData = this.getWebhookMessageData(payload);
     const rawKey = this.asRecord(rawData.key);
 
-    const resolved = await this.resolveConfig();
-    this.validateWebhook(headers, resolved.whatsapp);
     const webhookInstanceName =
-      this.asString(payload.instance) || resolved.whatsapp.instanceName;
+      this.asString(payload.instance) || '';
+
+    // Resolve company from instance — critical for multitenancy
+    const companyId = webhookInstanceName
+      ? await this.resolveCompanyIdFromInstanceName(webhookInstanceName)
+      : null;
+
+    const resolved = await this.resolveConfig(companyId ?? undefined);
+    this.validateWebhook(headers, resolved.whatsapp);
+    const effectiveInstanceName =
+      webhookInstanceName || resolved.whatsapp.instanceName;
     trace = this.mergeWebhookTraceContext(trace, {
-      instanceName: webhookInstanceName || trace.instanceName,
+      instanceName: effectiveInstanceName || trace.instanceName,
     });
     this.logWebhookStage('validated', trace, {
       webhookSecretConfigured: Boolean(resolved.whatsapp.webhookSecret?.trim()),
     });
-    await this.rememberSenderJidMapping(payload, webhookInstanceName);
+    await this.rememberSenderJidMapping(payload, effectiveInstanceName);
 
     if (rawKey.fromMe === true || rawData.fromMe === true) {
       this.logWebhookStage('ignored', trace, { reason: 'from_me' });
@@ -734,8 +748,8 @@ export class WhatsAppService implements OnModuleInit {
     }
 
     const instancePhone = await this.getInstancePhoneNumber(resolved.whatsapp.instanceName);
-    payload = await this.enrichWebhookPayloadFromKnownLid(payload, webhookInstanceName);
-    payload = await this.enrichWebhookPayloadFromEvolution(payload, webhookInstanceName);
+    payload = await this.enrichWebhookPayloadFromKnownLid(payload, effectiveInstanceName);
+    payload = await this.enrichWebhookPayloadFromEvolution(payload, effectiveInstanceName);
     payload = this.attachWebhookRoutingMetadata(payload, instancePhone);
     const recipientRouting = this.resolveWebhookRecipientRouting(payload, instancePhone);
     this.logWebhookStage('enriched', trace, {
@@ -832,7 +846,7 @@ export class WhatsAppService implements OnModuleInit {
       return;
     }
 
-    await this.followupService.registerUserReply(incoming.number);
+    await this.followupService.registerUserReply(incoming.number, companyId ?? undefined);
 
     const spamGroupWindowMs = resolved.config.botSettings?.spamGroupWindowMs ?? 800;
 
@@ -855,18 +869,25 @@ export class WhatsAppService implements OnModuleInit {
     }
 
     if (incoming.type === 'audio') {
-      await this.processIncomingAudioMessage(resolved, incoming, deliveryDiagnostic);
+      await this.processIncomingAudioMessage(resolved, incoming, deliveryDiagnostic, companyId ?? undefined);
       return;
     }
 
     await this.processAndDeliverMessage(resolved, incoming.number, incoming.message, incoming.type, {
       outboundAddress: incoming.outboundAddress,
       diagnostic: deliveryDiagnostic,
+      companyId: companyId ?? undefined,
     });
   }
 
   private async flushGroupedTextMessage(contactId: string): Promise<void> {
-    const resolved = await this.resolveConfig();
+    // Resolve companyId from the instance associated with this contact
+    const instance = await this.prisma.whatsAppInstance.findFirst({
+      orderBy: { createdAt: 'asc' },
+      select: { companyId: true },
+    });
+    const companyId = instance?.companyId ?? undefined;
+    const resolved = await this.resolveConfig(companyId);
     const groupedMessage = await this.redisService.consumeGroupedMessage(contactId);
 
     if (!groupedMessage?.message.trim()) {
@@ -883,6 +904,7 @@ export class WhatsAppService implements OnModuleInit {
     await this.processAndDeliverMessage(resolved, contactId, groupedMessage.message, 'text', {
       outboundAddress: groupedMessage.outboundAddress || undefined,
       skipComposingPresence: true,
+      companyId,
     });
   }
 
@@ -1067,6 +1089,7 @@ export class WhatsAppService implements OnModuleInit {
       outboundAddress?: string;
       diagnostic?: DeliveryDiagnosticContext;
       skipComposingPresence?: boolean;
+      companyId?: string;
     },
   ): Promise<void> {
     const fallbackMessage = this.buildSalesActiveDeliveryFallbackMessage(resolved, message);
@@ -1128,7 +1151,7 @@ export class WhatsAppService implements OnModuleInit {
 
     let botReply: Awaited<ReturnType<BotService['processIncomingMessage']>>;
     try {
-      botReply = await this.botService.processIncomingMessage(contactId, message, {
+      botReply = await this.botService.processIncomingMessage(contactId, message, options?.companyId ?? '', {
         messageType,
         transcript: messageType === 'audio' ? message : undefined,
       });
@@ -1152,6 +1175,7 @@ export class WhatsAppService implements OnModuleInit {
         contactId,
         outboundAddress: effectiveOutboundAddress,
         reply: fallbackMessage,
+        companyId: options?.companyId,
       });
       return;
     }
@@ -1362,6 +1386,7 @@ export class WhatsAppService implements OnModuleInit {
       contactId,
       outboundAddress: effectiveOutboundAddress,
       reply: replyToSend,
+      companyId: options?.companyId,
     });
     console.log('ENVIADA:', {
       text: replyToSend,
@@ -1631,6 +1656,7 @@ export class WhatsAppService implements OnModuleInit {
     resolved: ResolvedWhatsAppClient,
     incoming: NormalizedIncomingWhatsAppMessage,
     diagnostic?: DeliveryDiagnosticContext,
+    companyId?: string,
   ): Promise<void> {
     const durationSeconds = incoming.audio?.seconds;
     const outboundAddress = incoming.outboundAddress?.trim() || '';
@@ -1709,6 +1735,7 @@ export class WhatsAppService implements OnModuleInit {
         preferAudioReply: true,
         outboundAddress,
         diagnostic: mergedDiagnostic,
+        companyId,
       });
       await this.rememberVoiceReplyPreference(incoming.number);
     } catch (error) {
@@ -2919,13 +2946,34 @@ export class WhatsAppService implements OnModuleInit {
     return `audio-stt:${createHash('sha1').update(rawSignature).digest('hex')}`;
   }
 
-  private async resolveConfig(): Promise<ResolvedWhatsAppClient> {
-    const config = await this.clientConfigService.getConfig();
+  private async resolveConfig(companyId?: string): Promise<ResolvedWhatsAppClient> {
+    const config = await this.clientConfigService.getConfig(
+      companyId ?? await this.resolveDefaultCompanyId(),
+    );
 
     return {
       config,
       whatsapp: this.extractWhatsAppConfiguration(config),
     };
+  }
+
+  private async resolveDefaultCompanyId(): Promise<string> {
+    const instance = await this.prisma.whatsAppInstance.findFirst({
+      orderBy: { createdAt: 'asc' },
+      select: { companyId: true },
+    });
+    if (!instance?.companyId) {
+      throw new Error('No company found for this WhatsApp instance');
+    }
+    return instance.companyId;
+  }
+
+  private async resolveCompanyIdFromInstanceName(instanceName: string): Promise<string | null> {
+    const instance = await this.prisma.whatsAppInstance.findFirst({
+      where: { name: instanceName },
+      select: { companyId: true },
+    });
+    return instance?.companyId ?? null;
   }
 
   private async syncInstancesFromEvolution(): Promise<void> {
@@ -2999,6 +3047,7 @@ export class WhatsAppService implements OnModuleInit {
         name,
         status,
         phone,
+        companyId: '',
       },
       update: {
         status,
@@ -5053,7 +5102,7 @@ export class WhatsAppService implements OnModuleInit {
     webhookSecretConfigured: boolean;
     webhookUrl: string;
   }> {
-    const config = await this.clientConfigService.getConfig();
+    const config = await this.clientConfigService.getConfig('');
     const configurations = this.asRecord(config.configurations);
     const whatsapp = this.asRecord(configurations.whatsapp);
 

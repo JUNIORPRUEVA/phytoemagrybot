@@ -86,9 +86,10 @@ export class MemoryService implements OnModuleInit {
     contactId: string;
     role: ConversationRole;
     content: string;
+    companyId: string;
   }): Promise<StoredMessage> {
     const contactId = this.normalizeContactId(params.contactId);
-    const content = params.content.trim();
+    const { companyId, content } = params;
 
     if (!content) {
       throw new BadRequestException('content is required');
@@ -116,34 +117,34 @@ export class MemoryService implements OnModuleInit {
     }
 
     if (params.role === 'user') {
-      await this.touchLongMemoryExpiry(contactId);
-      await this.updateClientMemory(contactId, content, recentMessages);
+      await this.touchLongMemoryExpiry(companyId, contactId);
+      await this.updateClientMemory(companyId, contactId, content, recentMessages);
 
       const messageCount = await this.redisService.increment(
-        this.getSummaryCounterKey(contactId),
+        this.getSummaryCounterKey(companyId, contactId),
         MemoryService.LONG_MEMORY_TTL_SECONDS,
       );
 
       if (messageCount % MemoryService.SUMMARY_REFRESH_INTERVAL === 0) {
-        await this.updateSummary(contactId, recentMessages);
+        await this.updateSummary(companyId, contactId, recentMessages);
       }
     }
 
     return message;
   }
 
-  async getLastAssistantMessage(contactId: string): Promise<StoredMessage | null> {
+  async getLastAssistantMessage(companyId: string, contactId: string): Promise<StoredMessage | null> {
     const normalizedContactId = this.normalizeContactId(contactId);
     const cached = await this.redisService.get<StoredMessage>(this.getLastAssistantKey(normalizedContactId));
     if (cached?.role === 'assistant' && cached.content?.trim()) {
       return cached;
     }
 
-    const recent = await this.getRecentMessages(normalizedContactId, MemoryService.SHORT_MEMORY_LIMIT);
+    const recent = await this.getRecentMessages(companyId, normalizedContactId, MemoryService.SHORT_MEMORY_LIMIT);
     return [...recent].reverse().find((message) => message.role === 'assistant') ?? null;
   }
 
-  async getRecentMessages(contactId: string, limit = 10): Promise<StoredMessage[]> {
+  async getRecentMessages(companyId: string, contactId: string, limit = 10): Promise<StoredMessage[]> {
     const normalizedContactId = this.normalizeContactId(contactId);
 
     try {
@@ -160,7 +161,7 @@ export class MemoryService implements OnModuleInit {
     }
 
     const messages = await this.prisma.conversationMessage.findMany({
-      where: { contactId: normalizedContactId },
+      where: { contactId: normalizedContactId, companyId },
       orderBy: { createdAt: 'desc' },
       take: limit,
       select: {
@@ -180,28 +181,28 @@ export class MemoryService implements OnModuleInit {
     return normalizedMessages;
   }
 
-  async getClientMemory(contactId: string): Promise<ClientMemorySnapshot> {
+  async getClientMemory(companyId: string, contactId: string): Promise<ClientMemorySnapshot> {
     const normalizedContactId = this.normalizeContactId(contactId);
     const memory = await this.prisma.clientMemory.findUnique({
-      where: { contactId: normalizedContactId },
+      where: { companyId_contactId: { companyId, contactId: normalizedContactId } },
     });
 
     if (memory?.expiresAt && memory.expiresAt.getTime() <= Date.now()) {
-      await this.prisma.clientMemory.deleteMany({ where: { contactId: normalizedContactId } });
+      await this.prisma.clientMemory.deleteMany({ where: { companyId, contactId: normalizedContactId } });
       return this.toClientMemorySnapshot(normalizedContactId, null);
     }
 
     return this.toClientMemorySnapshot(normalizedContactId, memory);
   }
 
-  async getSummary(contactId: string): Promise<ConversationSummarySnapshot> {
+  async getSummary(companyId: string, contactId: string): Promise<ConversationSummarySnapshot> {
     const normalizedContactId = this.normalizeContactId(contactId);
     const summary = await this.prisma.conversationSummary.findUnique({
-      where: { contactId: normalizedContactId },
+      where: { companyId_contactId: { companyId, contactId: normalizedContactId } },
     });
 
     if (summary?.expiresAt && summary.expiresAt.getTime() <= Date.now()) {
-      await this.prisma.conversationSummary.deleteMany({ where: { contactId: normalizedContactId } });
+      await this.prisma.conversationSummary.deleteMany({ where: { companyId, contactId: normalizedContactId } });
       return this.toSummarySnapshot(normalizedContactId, null);
     }
 
@@ -209,14 +210,15 @@ export class MemoryService implements OnModuleInit {
   }
 
   async getConversationContext(
+    companyId: string,
     contactId: string,
     limit = 10,
   ): Promise<ConversationContextSnapshot> {
     const normalizedContactId = this.normalizeContactId(contactId);
     const [messages, clientMemory, summary] = await Promise.all([
-      this.getRecentMessages(normalizedContactId, limit),
-      this.getClientMemory(normalizedContactId),
-      this.getSummary(normalizedContactId),
+      this.getRecentMessages(companyId, normalizedContactId, limit),
+      this.getClientMemory(companyId, normalizedContactId),
+      this.getSummary(companyId, normalizedContactId),
     ]);
 
     return {
@@ -226,12 +228,13 @@ export class MemoryService implements OnModuleInit {
     };
   }
 
-  async listContacts(query?: string): Promise<MemoryContactListItem[]> {
+  async listContacts(companyId: string, query?: string): Promise<MemoryContactListItem[]> {
     const normalizedQuery = query?.trim().toLowerCase() ?? '';
     const now = new Date();
     const [messageGroups, memories, summaries] = await Promise.all([
       this.prisma.conversationMessage.groupBy({
         by: ['contactId'],
+        where: { companyId },
         _max: { createdAt: true },
         orderBy: {
           _max: { createdAt: 'desc' },
@@ -239,12 +242,12 @@ export class MemoryService implements OnModuleInit {
         take: 100,
       }),
       this.prisma.clientMemory.findMany({
-        where: { expiresAt: { gt: now } },
+        where: { companyId, expiresAt: { gt: now } },
         orderBy: { updatedAt: 'desc' },
         take: 100,
       }),
       this.prisma.conversationSummary.findMany({
-        where: { expiresAt: { gt: now } },
+        where: { companyId, expiresAt: { gt: now } },
         orderBy: { updatedAt: 'desc' },
         take: 100,
       }),
@@ -332,17 +335,17 @@ export class MemoryService implements OnModuleInit {
     return items;
   }
 
-  async getContact(contactId: string): Promise<MemoryContactListItem> {
+  async getContact(companyId: string, contactId: string): Promise<MemoryContactListItem> {
     const normalizedContactId = this.normalizeContactId(contactId);
     const now = new Date();
     const [lastMessage, memory, summary] = await Promise.all([
       this.prisma.conversationMessage.findFirst({
-        where: { contactId: normalizedContactId },
+        where: { contactId: normalizedContactId, companyId },
         orderBy: { createdAt: 'desc' },
         select: { createdAt: true },
       }),
-      this.prisma.clientMemory.findUnique({ where: { contactId: normalizedContactId } }),
-      this.prisma.conversationSummary.findUnique({ where: { contactId: normalizedContactId } }),
+      this.prisma.clientMemory.findUnique({ where: { companyId_contactId: { companyId, contactId: normalizedContactId } } }),
+      this.prisma.conversationSummary.findUnique({ where: { companyId_contactId: { companyId, contactId: normalizedContactId } } }),
     ]);
 
     const activeMemory =
@@ -365,6 +368,7 @@ export class MemoryService implements OnModuleInit {
   }
 
   async updateMemoryEntry(
+    companyId: string,
     contactId: string,
     input: UpdateMemoryEntryInput,
   ): Promise<ConversationContextSnapshot> {
@@ -376,8 +380,9 @@ export class MemoryService implements OnModuleInit {
     const status = this.normalizeStatus(input.status ?? this.deriveStatusFromLegacyIntent(input.lastIntent));
 
     const memory = await this.prisma.clientMemory.upsert({
-      where: { contactId: normalizedContactId },
+      where: { companyId_contactId: { companyId, contactId: normalizedContactId } },
       create: {
+        companyId,
         contactId: normalizedContactId,
         name: this.normalizeOptionalText(input.name),
         objective,
@@ -403,8 +408,9 @@ export class MemoryService implements OnModuleInit {
     const summaryText = this.normalizeOptionalText(input.summary);
     if (summaryText != null) {
       await this.prisma.conversationSummary.upsert({
-        where: { contactId: normalizedContactId },
+        where: { companyId_contactId: { companyId, contactId: normalizedContactId } },
         create: {
+          companyId,
           contactId: normalizedContactId,
           summary: this.truncateSummary(summaryText),
           expiresAt: this.buildLongMemoryExpiry(),
@@ -417,27 +423,28 @@ export class MemoryService implements OnModuleInit {
     }
 
     if (summaryText == null) {
-      await this.prisma.conversationSummary.deleteMany({ where: { contactId: normalizedContactId } });
+      await this.prisma.conversationSummary.deleteMany({ where: { companyId, contactId: normalizedContactId } });
     }
 
     return {
-      messages: await this.getRecentMessages(normalizedContactId),
+      messages: await this.getRecentMessages(companyId, normalizedContactId),
       clientMemory: this.toClientMemorySnapshot(normalizedContactId, memory),
-      summary: await this.getSummary(normalizedContactId),
+      summary: await this.getSummary(companyId, normalizedContactId),
     };
   }
 
   async updateClientMemory(
+    companyId: string,
     contactId: string,
     text: string,
     recentMessages?: StoredMessage[],
   ): Promise<ClientMemorySnapshot> {
     const normalizedContactId = this.normalizeContactId(contactId);
     const normalizedText = text.trim();
-    const shortMemory = recentMessages ?? await this.getRecentMessages(normalizedContactId);
+    const shortMemory = recentMessages ?? await this.getRecentMessages(companyId, normalizedContactId);
 
     const current = await this.prisma.clientMemory.findUnique({
-      where: { contactId: normalizedContactId },
+      where: { companyId_contactId: { companyId, contactId: normalizedContactId } },
     });
 
     if (!this.shouldStoreProfileSignal(normalizedText, shortMemory)) {
@@ -470,8 +477,9 @@ export class MemoryService implements OnModuleInit {
     const mergedPersonalData = this.mergePersonalData(existingPersonalData, extractedPersonalData, isExplicitUpdate);
 
     const memory = await this.prisma.clientMemory.upsert({
-      where: { contactId: normalizedContactId },
+      where: { companyId_contactId: { companyId, contactId: normalizedContactId } },
       create: {
+        companyId,
         contactId: normalizedContactId,
         name: detectedName,
         objective: detectedObjective,
@@ -500,6 +508,7 @@ export class MemoryService implements OnModuleInit {
   }
 
   async updateSummary(
+    companyId: string,
     contactId: string,
     recentMessages?: StoredMessage[],
   ): Promise<ConversationSummarySnapshot> {
@@ -507,12 +516,13 @@ export class MemoryService implements OnModuleInit {
     const [messages, clientMemory, currentSummary] = await Promise.all([
       recentMessages
         ? Promise.resolve(recentMessages)
-        : this.getRecentMessages(normalizedContactId, MemoryService.SHORT_MEMORY_LIMIT),
-      this.getClientMemory(normalizedContactId),
-      this.getSummary(normalizedContactId),
+        : this.getRecentMessages(companyId, normalizedContactId, MemoryService.SHORT_MEMORY_LIMIT),
+      this.getClientMemory(companyId, normalizedContactId),
+      this.getSummary(companyId, normalizedContactId),
     ]);
 
     const summaryText = await this.generateSummaryText(
+      companyId,
       normalizedContactId,
       messages,
       clientMemory,
@@ -520,8 +530,9 @@ export class MemoryService implements OnModuleInit {
     );
 
     const summary = await this.prisma.conversationSummary.upsert({
-      where: { contactId: normalizedContactId },
+      where: { companyId_contactId: { companyId, contactId: normalizedContactId } },
       create: {
+        companyId,
         contactId: normalizedContactId,
         summary: this.truncateSummary(summaryText),
         expiresAt: this.buildLongMemoryExpiry(),
@@ -557,20 +568,20 @@ export class MemoryService implements OnModuleInit {
     );
   }
 
-  async deleteClientMemory(contactId: string, actor?: string): Promise<MemoryDeleteResult> {
+  async deleteClientMemory(companyId: string, contactId: string, actor?: string): Promise<MemoryDeleteResult> {
     const normalizedContactId = this.normalizeContactId(contactId);
     const normalizedActor = this.normalizeActor(actor);
     const deletedAt = new Date().toISOString();
 
     const [conversationMemory, conversationMessages, conversationSummaries, clientMemory, contactState, contactConversationSummary, followups] =
       await this.prisma.$transaction([
-        this.prisma.conversationMemory.deleteMany({ where: { contactId: normalizedContactId } }),
-        this.prisma.conversationMessage.deleteMany({ where: { contactId: normalizedContactId } }),
-        this.prisma.conversationSummary.deleteMany({ where: { contactId: normalizedContactId } }),
-        this.prisma.clientMemory.deleteMany({ where: { contactId: normalizedContactId } }),
-        this.prisma.contactState.deleteMany({ where: { contactId: normalizedContactId } }),
-        this.prisma.contactConversationSummary.deleteMany({ where: { contactId: normalizedContactId } }),
-        this.prisma.conversationFollowup.deleteMany({ where: { contactId: normalizedContactId } }),
+        this.prisma.conversationMemory.deleteMany({ where: { companyId, contactId: normalizedContactId } }),
+        this.prisma.conversationMessage.deleteMany({ where: { companyId, contactId: normalizedContactId } }),
+        this.prisma.conversationSummary.deleteMany({ where: { companyId, contactId: normalizedContactId } }),
+        this.prisma.clientMemory.deleteMany({ where: { companyId, contactId: normalizedContactId } }),
+        this.prisma.contactState.deleteMany({ where: { companyId, contactId: normalizedContactId } }),
+        this.prisma.contactConversationSummary.deleteMany({ where: { companyId, contactId: normalizedContactId } }),
+        this.prisma.conversationFollowup.deleteMany({ where: { companyId, contactId: normalizedContactId } }),
       ]);
 
     const redisCounts = await this.clearRuntimeMemory(normalizedContactId);
@@ -596,19 +607,19 @@ export class MemoryService implements OnModuleInit {
     return result;
   }
 
-  async deleteConversation(contactId: string, actor?: string): Promise<MemoryDeleteResult> {
+  async deleteConversation(companyId: string, contactId: string, actor?: string): Promise<MemoryDeleteResult> {
     const normalizedContactId = this.normalizeContactId(contactId);
     const normalizedActor = this.normalizeActor(actor);
     const deletedAt = new Date().toISOString();
 
     const [conversationMemory, conversationMessages, conversationSummaries, contactState, contactConversationSummary, followups] =
       await this.prisma.$transaction([
-        this.prisma.conversationMemory.deleteMany({ where: { contactId: normalizedContactId } }),
-        this.prisma.conversationMessage.deleteMany({ where: { contactId: normalizedContactId } }),
-        this.prisma.conversationSummary.deleteMany({ where: { contactId: normalizedContactId } }),
-        this.prisma.contactState.deleteMany({ where: { contactId: normalizedContactId } }),
-        this.prisma.contactConversationSummary.deleteMany({ where: { contactId: normalizedContactId } }),
-        this.prisma.conversationFollowup.deleteMany({ where: { contactId: normalizedContactId } }),
+        this.prisma.conversationMemory.deleteMany({ where: { companyId, contactId: normalizedContactId } }),
+        this.prisma.conversationMessage.deleteMany({ where: { companyId, contactId: normalizedContactId } }),
+        this.prisma.conversationSummary.deleteMany({ where: { companyId, contactId: normalizedContactId } }),
+        this.prisma.contactState.deleteMany({ where: { companyId, contactId: normalizedContactId } }),
+        this.prisma.contactConversationSummary.deleteMany({ where: { companyId, contactId: normalizedContactId } }),
+        this.prisma.conversationFollowup.deleteMany({ where: { companyId, contactId: normalizedContactId } }),
       ]);
 
     const redisCounts = await this.clearRuntimeMemory(normalizedContactId);
@@ -633,15 +644,19 @@ export class MemoryService implements OnModuleInit {
     return result;
   }
 
-  async resetAllMemory(actor?: string): Promise<MemoryDeleteResult> {
+  async resetAllMemory(companyId: string, actor?: string): Promise<MemoryDeleteResult> {
     const normalizedActor = this.normalizeActor(actor);
     const deletedAt = new Date().toISOString();
 
-    await this.prisma.$transaction(async (tx) => {
-      await tx.$executeRawUnsafe(
-        'TRUNCATE TABLE "conversation_memory", "conversation_messages", "conversation_summaries", "client_memory", "contact_state", "conversation_summary", "conversation_followup" RESTART IDENTITY CASCADE',
-      );
-    });
+    await this.prisma.$transaction([
+      this.prisma.conversationMemory.deleteMany({ where: { companyId } }),
+      this.prisma.conversationMessage.deleteMany({ where: { companyId } }),
+      this.prisma.conversationSummary.deleteMany({ where: { companyId } }),
+      this.prisma.clientMemory.deleteMany({ where: { companyId } }),
+      this.prisma.contactState.deleteMany({ where: { companyId } }),
+      this.prisma.contactConversationSummary.deleteMany({ where: { companyId } }),
+      this.prisma.conversationFollowup.deleteMany({ where: { companyId } }),
+    ]);
 
     const redisCounts = await this.clearAllRuntimeMemory();
     const result: MemoryDeleteResult = {
@@ -659,15 +674,18 @@ export class MemoryService implements OnModuleInit {
     return result;
   }
 
-  async deleteAllConversations(actor?: string): Promise<MemoryDeleteResult> {
+  async deleteAllConversations(companyId: string, actor?: string): Promise<MemoryDeleteResult> {
     const normalizedActor = this.normalizeActor(actor);
     const deletedAt = new Date().toISOString();
 
-    await this.prisma.$transaction(async (tx) => {
-      await tx.$executeRawUnsafe(
-        'TRUNCATE TABLE "conversation_memory", "conversation_messages", "conversation_summaries", "contact_state", "conversation_summary", "conversation_followup" RESTART IDENTITY CASCADE',
-      );
-    });
+    await this.prisma.$transaction([
+      this.prisma.conversationMemory.deleteMany({ where: { companyId } }),
+      this.prisma.conversationMessage.deleteMany({ where: { companyId } }),
+      this.prisma.conversationSummary.deleteMany({ where: { companyId } }),
+      this.prisma.contactState.deleteMany({ where: { companyId } }),
+      this.prisma.contactConversationSummary.deleteMany({ where: { companyId } }),
+      this.prisma.conversationFollowup.deleteMany({ where: { companyId } }),
+    ]);
 
     const redisCounts = await this.clearAllRuntimeMemory();
     const result: MemoryDeleteResult = {
@@ -701,10 +719,10 @@ export class MemoryService implements OnModuleInit {
     }
   }
 
-  private async clearRuntimeMemory(contactId: string): Promise<number> {
+  private async clearRuntimeMemory(contactId: string, companyId?: string): Promise<number> {
     const normalizedContactId = this.normalizeContactId(contactId);
-    await this.redisService.deleteMany([
-      this.getSummaryCounterKey(normalizedContactId),
+    const keysToDelete = [
+      companyId ? this.getSummaryCounterKey(companyId, normalizedContactId) : null,
       this.getConversationBufferKey(normalizedContactId),
       this.getConversationCacheKey(normalizedContactId),
       this.getLastAssistantKey(normalizedContactId),
@@ -712,7 +730,8 @@ export class MemoryService implements OnModuleInit {
       this.getGroupedTimerKey(normalizedContactId),
       this.getGroupedRecipientKey(normalizedContactId),
       this.getVoiceReplyPreferenceKey(normalizedContactId),
-    ]);
+    ].filter((k): k is string => k !== null);
+    await this.redisService.deleteMany(keysToDelete);
 
     const [replyCacheKeys, inboundKeys] = await Promise.all([
       this.redisService.deleteByPattern(`cache:${normalizedContactId}:*`),
@@ -780,6 +799,7 @@ export class MemoryService implements OnModuleInit {
   }
 
   private async generateSummaryText(
+    companyId: string,
     contactId: string,
     messages: StoredMessage[],
     clientMemory: ClientMemorySnapshot,
@@ -790,7 +810,7 @@ export class MemoryService implements OnModuleInit {
       return this.buildFallbackSummary(contactId, messages, clientMemory, previousSummary);
     }
 
-    const config = await this.clientConfigService.getConfig();
+    const config = await this.clientConfigService.getConfig(companyId);
     if (!config.openaiKey.trim()) {
       return this.buildFallbackSummary(contactId, messages, clientMemory, previousSummary);
     }
@@ -1189,17 +1209,17 @@ export class MemoryService implements OnModuleInit {
     return new Date(Date.now() + MemoryService.LONG_MEMORY_TTL_DAYS * 24 * 60 * 60 * 1000);
   }
 
-  private async touchLongMemoryExpiry(contactId: string): Promise<void> {
+  private async touchLongMemoryExpiry(companyId: string, contactId: string): Promise<void> {
     const expiresAt = this.buildLongMemoryExpiry();
 
     await Promise.all([
-      this.prisma.clientMemory.updateMany({ where: { contactId }, data: { expiresAt } }),
-      this.prisma.conversationSummary.updateMany({ where: { contactId }, data: { expiresAt } }),
+      this.prisma.clientMemory.updateMany({ where: { companyId, contactId }, data: { expiresAt } }),
+      this.prisma.conversationSummary.updateMany({ where: { companyId, contactId }, data: { expiresAt } }),
     ]);
   }
 
-  private getSummaryCounterKey(contactId: string): string {
-    return `memory:summary-count:${contactId}`;
+  private getSummaryCounterKey(companyId: string, contactId: string): string {
+    return `memory:summary-count:${companyId}:${contactId}`;
   }
 
   private capitalizeWords(value: string): string {

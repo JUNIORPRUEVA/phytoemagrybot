@@ -17,13 +17,14 @@ export class MediaService {
     private readonly storageService: StorageService,
   ) {}
 
-  async createMedia(file: UploadableStorageFile, dto: UploadMediaDto): Promise<MediaFile> {
+  async createMedia(file: UploadableStorageFile, dto: UploadMediaDto, companyId: string): Promise<MediaFile> {
     this.validateFileType(file.mimetype);
 
     const uploaded = await this.storageService.uploadFile(file);
 
     return this.prisma.mediaFile.create({
       data: {
+        companyId,
         title: dto.title.trim(),
         description: dto.description?.trim() || null,
         fileUrl: uploaded.publicUrl,
@@ -32,8 +33,9 @@ export class MediaService {
     });
   }
 
-  async getAllMedia(): Promise<MediaFile[]> {
+  async getAllMedia(companyId: string): Promise<MediaFile[]> {
     return this.prisma.mediaFile.findMany({
+      where: { companyId },
       orderBy: { createdAt: 'desc' },
     });
   }

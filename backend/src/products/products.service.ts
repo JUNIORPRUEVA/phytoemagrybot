@@ -16,26 +16,32 @@ export interface ProductVariant {
 export class ProductsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async findAll() {
-    return this.prisma.product.findMany({ orderBy: { id: 'asc' } });
-  }
-
-  async findActive() {
+  async findAll(companyId: string) {
     return this.prisma.product.findMany({
-      where: { activo: true },
+      where: { companyId },
       orderBy: { id: 'asc' },
     });
   }
 
-  async findOne(id: number) {
-    const product = await this.prisma.product.findUnique({ where: { id } });
+  async findActive(companyId: string) {
+    return this.prisma.product.findMany({
+      where: { companyId, activo: true },
+      orderBy: { id: 'asc' },
+    });
+  }
+
+  async findOne(companyId: string, id: number) {
+    const product = await this.prisma.product.findFirst({
+      where: { id, companyId },
+    });
     if (!product) throw new NotFoundException(`Product ${id} not found`);
     return product;
   }
 
-  async create(dto: CreateProductDto) {
+  async create(companyId: string, dto: CreateProductDto) {
     return this.prisma.product.create({
       data: {
+        companyId,
         titulo: dto.titulo,
         descripcionCorta: dto.descripcionCorta ?? null,
         descripcionCompleta: dto.descripcionCompleta ?? null,
@@ -50,8 +56,8 @@ export class ProductsService {
     });
   }
 
-  async update(id: number, dto: UpdateProductDto) {
-    await this.findOne(id);
+  async update(companyId: string, id: number, dto: UpdateProductDto) {
+    await this.findOne(companyId, id);
     return this.prisma.product.update({
       where: { id },
       data: {
@@ -71,24 +77,27 @@ export class ProductsService {
     });
   }
 
-  async remove(id: number) {
-    await this.findOne(id);
+  async remove(companyId: string, id: number) {
+    await this.findOne(companyId, id);
     return this.prisma.product.delete({ where: { id } });
   }
 
-  async consultarStock(productoId: number): Promise<{ id: number; titulo: string; stock: number; activo: boolean }> {
-    const product = await this.prisma.product.findUnique({
-      where: { id: productoId },
+  async consultarStock(
+    companyId: string,
+    productoId: number,
+  ): Promise<{ id: number; titulo: string; stock: number; activo: boolean }> {
+    const product = await this.prisma.product.findFirst({
+      where: { id: productoId, companyId },
       select: { id: true, titulo: true, stock: true, activo: true },
     });
     if (!product) throw new NotFoundException(`Producto ${productoId} no encontrado`);
     return product;
   }
 
-  async buscarPorNombre(nombre: string) {
+  async buscarPorNombre(companyId: string, nombre: string) {
     const normalized = this.normalizeText(nombre);
     const products = await this.prisma.product.findMany({
-      where: { activo: true },
+      where: { companyId, activo: true },
       orderBy: { id: 'asc' },
     });
     return products.filter((product) => {
@@ -107,9 +116,11 @@ export class ProductsService {
     });
   }
 
-  async getCatalogText(): Promise<string> {
-    const products = await this.findActive();
-    if (products.length === 0) return 'No hay productos disponibles en el catálogo.';
+  async getCatalogText(companyId: string): Promise<string> {
+    const products = await this.findActive(companyId);
+    if (products.length === 0) {
+      return 'No hay productos configurados en el catálogo aún. El administrador debe agregar los productos.';
+    }
 
     return products
       .map((p) => {

@@ -18,8 +18,17 @@ function createService(options?: {
   botFullPrompt?: string;
   configConfigurations?: Record<string, unknown>;
   hideAssistantFromContext?: boolean;
+  messageHistory?: Array<{
+    role: 'user' | 'assistant';
+    content: string;
+    createdAt?: Date;
+  }>;
 }) {
-  let savedMessages: Array<{ role: 'user' | 'assistant'; content: string }> = [];
+  let savedMessages: Array<{
+    role: 'user' | 'assistant';
+    content: string;
+    createdAt?: Date;
+  }> = [...(options?.messageHistory ?? [])];
   let simpleReplyCalls = 0;
   let toolReplyCalls = 0;
 
@@ -81,7 +90,14 @@ function createService(options?: {
     } as any,
     {
       async saveMessage(entry: { contactId?: string; role: 'user' | 'assistant'; content: string }) {
-        savedMessages = [...savedMessages, { role: entry.role, content: entry.content }];
+        savedMessages = [
+          ...savedMessages,
+          {
+            role: entry.role,
+            content: entry.content,
+            createdAt: new Date(),
+          },
+        ];
         return entry;
       },
       async getConversationContext() {
@@ -89,7 +105,11 @@ function createService(options?: {
           ? savedMessages.filter((m) => m.role !== 'assistant')
           : savedMessages;
         return {
-          messages: contextMessages.map((m) => ({ role: m.role, content: m.content })),
+          messages: contextMessages.map((m) => ({
+            role: m.role,
+            content: m.content,
+            createdAt: m.createdAt,
+          })),
           clientMemory: {
             contactId: 'test-contact',
             name: null,
@@ -113,7 +133,9 @@ function createService(options?: {
       },
       async getLastAssistantMessage() {
         const last = [...savedMessages].reverse().find((m) => m.role === 'assistant');
-        return last ? { role: last.role, content: last.content } : null;
+        return last
+          ? { role: last.role, content: last.content, createdAt: last.createdAt }
+          : null;
       },
     } as any,
     {
@@ -249,6 +271,69 @@ test('generic AI reply after an affirmative continuation is repaired into a real
   assert.match(result.reply, /seguimos con ese producto/);
   assert.doesNotMatch(result.reply, /Te gustaría saber más sobre las cápsulas/i);
   assert.equal(result.intent, 'compra');
+});
+
+test('generic service phrasing after an affirmative continuation is repaired into a real next step', async () => {
+  const service = createService({
+    aiReplies: [
+      'Tenemos el producto "Phytoemagry" y te puede funcionar muy bien. ¿Te gustaría probarlo?',
+      'Hola de nuevo, ¿en qué te puedo ayudar con eso?',
+    ],
+  });
+
+  await service.processIncomingMessage('18095550115', 'Productos');
+  const result = await service.processIncomingMessage('18095550115', 'Si');
+
+  assert.match(result.reply, /Perfecto, dale/);
+  assert.doesNotMatch(result.reply, /en qué te puedo ayudar|como te puedo ayudar/i);
+  assert.equal(result.intent, 'compra');
+});
+
+test('returning customers after 3 hours inject a reentry note into the system prompt', async () => {
+  let capturedSecondCall: Record<string, unknown> | null = null;
+  const fourHoursAgo = new Date(Date.now() - 4 * 60 * 60 * 1000);
+  const service = createService({
+    messageHistory: [
+      {
+        role: 'assistant',
+        content: 'Hola, te paso el precio y me dices.',
+        createdAt: fourHoursAgo,
+      },
+    ],
+    aiReplies: ['Hola de nuevo, claro.', 'Te paso el precio ahora mismo.'],
+    onGenerateSimpleReply: (params) => {
+      capturedSecondCall = params;
+    },
+  });
+
+  await service.processIncomingMessage('18095550116', 'hola otra vez');
+
+  const systemPrompt = String(
+    (capturedSecondCall as { systemPrompt?: string } | null)?.systemPrompt ?? '',
+  );
+  assert.match(systemPrompt, /Contexto de reencuentro/);
+  assert.match(systemPrompt, /hola de nuevo/);
+  assert.match(systemPrompt, /No uses "en qué te puedo ayudar"/i);
+});
+
+test('prompt composer bans generic help phrases and instructs reentry for returning clients', () => {
+  const promptComposerService = new PromptComposerService({
+    getFullPrompt() {
+      return 'LEGACY';
+    },
+  } as any);
+
+  const prompt = promptComposerService.buildInstructionsBlock(
+    {
+      configurations: {},
+      promptBase: 'BASE',
+    } as any,
+    {} as any,
+  );
+
+  assert.match(prompt, /Prohibido usar frases genéricas de servicio/);
+  assert.match(prompt, /hola de nuevo/);
+  assert.match(prompt, /vendedor dominicano real/);
 });
 
 test('short replies use last-assistant fallback when recent history is incomplete', async () => {

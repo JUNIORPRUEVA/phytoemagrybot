@@ -8,10 +8,8 @@ import { AppConfigRecord } from './config.types';
 
 @Injectable()
 export class ClientConfigService {
-  private static readonly KNOWLEDGE_CONTEXT_CACHE_KEY = 'bot:knowledge-context:v1';
-  private static readonly LEGACY_KNOWLEDGE_CONTEXT_CACHE_KEY = 'bot:knowledge-context:v2';
-
-  private static readonly CONFIG_ID = 1;
+  private static readonly KNOWLEDGE_CONTEXT_CACHE_KEY_PREFIX = 'bot:knowledge-context:v1';
+  private static readonly LEGACY_KNOWLEDGE_CONTEXT_CACHE_KEY_PREFIX = 'bot:knowledge-context:v2';
   private static readonly DEFAULT_PROMPT =
     'Eres un asistente de ventas por WhatsApp. Hablas como una persona real dominicana, respondes corto y siempre guias al cliente hacia la compra de PHYTOEMAGRY.';
   private static readonly DEFAULT_AI_MODEL = 'gpt-4o-mini';
@@ -33,11 +31,11 @@ export class ClientConfigService {
     private readonly redisService: RedisService,
   ) {}
 
-  async getConfig(): Promise<AppConfigRecord> {
+  async getConfig(companyId: string): Promise<AppConfigRecord> {
     const config = await this.prisma.config.upsert({
-      where: { id: ClientConfigService.CONFIG_ID },
+      where: { companyId },
       create: {
-        id: ClientConfigService.CONFIG_ID,
+        companyId,
         openaiKey: '',
         promptBase: ClientConfigService.DEFAULT_PROMPT,
         configurations: {} as Prisma.InputJsonValue,
@@ -49,17 +47,17 @@ export class ClientConfigService {
     return this.applyEnvironmentFallbacks(syncedConfig);
   }
 
-  async saveConfig(data: SaveConfigDto): Promise<AppConfigRecord> {
-    const current = await this.getStoredConfig();
+  async saveConfig(data: SaveConfigDto, companyId: string): Promise<AppConfigRecord> {
+    const current = await this.getStoredConfig(companyId);
     const mergedConfigurations = this.mergeRecords(
       this.asRecord(current.configurations),
       this.asRecord(data.configurations),
     );
 
     const config = await this.prisma.config.upsert({
-      where: { id: ClientConfigService.CONFIG_ID },
+      where: { companyId },
       create: {
-        id: ClientConfigService.CONFIG_ID,
+        companyId,
         openaiKey: data.openaiKey?.trim() ?? current.openaiKey,
         elevenlabsKey: data.elevenlabsKey?.trim() || current.elevenlabsKey || null,
         promptBase:
@@ -81,8 +79,8 @@ export class ClientConfigService {
 
     const syncedConfig = await this.syncStructuredSettings(config, mergedConfigurations);
     await this.redisService.deleteMany([
-      ClientConfigService.KNOWLEDGE_CONTEXT_CACHE_KEY,
-      ClientConfigService.LEGACY_KNOWLEDGE_CONTEXT_CACHE_KEY,
+      `${ClientConfigService.KNOWLEDGE_CONTEXT_CACHE_KEY_PREFIX}:${companyId}`,
+      `${ClientConfigService.LEGACY_KNOWLEDGE_CONTEXT_CACHE_KEY_PREFIX}:${companyId}`,
     ]);
     return this.applyEnvironmentFallbacks(syncedConfig);
   }
@@ -104,11 +102,11 @@ export class ClientConfigService {
     };
   }
 
-  private async getStoredConfig(): Promise<AppConfigRecord> {
+  private async getStoredConfig(companyId: string): Promise<AppConfigRecord> {
     const config = await this.prisma.config.upsert({
-      where: { id: ClientConfigService.CONFIG_ID },
+      where: { companyId },
       create: {
-        id: ClientConfigService.CONFIG_ID,
+        companyId,
         openaiKey: '',
         promptBase: ClientConfigService.DEFAULT_PROMPT,
         configurations: {} as Prisma.InputJsonValue,

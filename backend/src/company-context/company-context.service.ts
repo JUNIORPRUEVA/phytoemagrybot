@@ -13,9 +13,8 @@ import {
 
 @Injectable()
 export class CompanyContextService implements OnModuleInit {
-  private static readonly CONTEXT_ID = 1;
-  private static readonly KNOWLEDGE_CONTEXT_CACHE_KEY = 'bot:knowledge-context:v1';
-  private static readonly LEGACY_KNOWLEDGE_CONTEXT_CACHE_KEY = 'bot:knowledge-context:v2';
+  private static readonly KNOWLEDGE_CONTEXT_CACHE_KEY_PREFIX = 'bot:knowledge-context:v1';
+  private static readonly LEGACY_KNOWLEDGE_CONTEXT_CACHE_KEY_PREFIX = 'bot:knowledge-context:v2';
 
   constructor(
     private readonly prisma: PrismaService,
@@ -23,21 +22,21 @@ export class CompanyContextService implements OnModuleInit {
   ) {}
 
   async onModuleInit(): Promise<void> {
-    await this.ensureContext();
+    // No-op: per-company seeding done at company creation
   }
 
-  async getContext(): Promise<CompanyContextRecord> {
-    const record = await this.ensureContext();
+  async getContext(companyId: string): Promise<CompanyContextRecord> {
+    const record = await this.ensureContext(companyId);
     const mapped = this.mapRecord(record);
     await this.redisService.deleteMany([
-      CompanyContextService.KNOWLEDGE_CONTEXT_CACHE_KEY,
-      CompanyContextService.LEGACY_KNOWLEDGE_CONTEXT_CACHE_KEY,
+      `${CompanyContextService.KNOWLEDGE_CONTEXT_CACHE_KEY_PREFIX}:${companyId}`,
+      `${CompanyContextService.LEGACY_KNOWLEDGE_CONTEXT_CACHE_KEY_PREFIX}:${companyId}`,
     ]);
     return mapped;
   }
 
-  async saveContext(data: SaveCompanyContextDto): Promise<CompanyContextRecord> {
-    const current = await this.getContext();
+  async saveContext(data: SaveCompanyContextDto, companyId: string): Promise<CompanyContextRecord> {
+    const current = await this.getContext(companyId);
     const latitude = this.normalizeCoordinate(data.latitude, current.latitude);
     const longitude = this.normalizeCoordinate(data.longitude, current.longitude);
     const coordinatesWereProvided = data.latitude !== undefined || data.longitude !== undefined;
@@ -50,9 +49,9 @@ export class CompanyContextService implements OnModuleInit {
     );
 
     const record = await this.prisma.companyContext.upsert({
-      where: { id: CompanyContextService.CONTEXT_ID },
+      where: { companyId },
       create: {
-        id: CompanyContextService.CONTEXT_ID,
+        companyId,
         companyName: this.normalizeText(data.companyName, current.companyName),
         description: this.normalizeText(data.description, current.description),
         phone: this.normalizeText(data.phone, current.phone),
@@ -101,13 +100,13 @@ export class CompanyContextService implements OnModuleInit {
     return this.mapRecord(record);
   }
 
-  async buildAgentContext(): Promise<string> {
-    const context = await this.getContext();
+  async buildAgentContext(companyId: string): Promise<string> {
+    const context = await this.getContext(companyId);
     return this.buildCompanyContext(context);
   }
 
-  async buildAgentContextForMessage(message: string): Promise<string> {
-    const context = await this.getContext();
+  async buildAgentContextForMessage(companyId: string, message: string): Promise<string> {
+    const context = await this.getContext(companyId);
     return this.buildCompanyContext(context);
   }
 
@@ -203,11 +202,11 @@ export class CompanyContextService implements OnModuleInit {
     return blocks.join('\n');
   }
 
-  private ensureContext() {
+  private ensureContext(companyId: string) {
     return this.prisma.companyContext.upsert({
-      where: { id: CompanyContextService.CONTEXT_ID },
+      where: { companyId },
       create: {
-        id: CompanyContextService.CONTEXT_ID,
+        companyId,
         companyName: DEFAULT_COMPANY_CONTEXT.companyName,
         description: DEFAULT_COMPANY_CONTEXT.description,
         phone: DEFAULT_COMPANY_CONTEXT.phone,

@@ -1,23 +1,26 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Req } from '@nestjs/common';
 import { CreateInstanceDto } from './dto/create-instance.dto';
 import { SetWebhookDto } from './dto/set-webhook.dto';
 import { UpdateInstanceDto } from './dto/update-instance.dto';
 import { WhatsAppService } from './whatsapp.service';
+import { AuthenticatedRequest } from '../auth/auth.types';
 
 @Controller('whatsapp')
 export class WhatsAppChannelController {
   constructor(private readonly whatsAppService: WhatsAppService) {}
 
   @Post('create')
-  createInstance(@Body() body: CreateInstanceDto) {
-    return this.whatsAppService.createInstance(body.instanceName, {
-      phone: body.phone,
-    });
+  createInstance(@Req() req: AuthenticatedRequest, @Body() body: CreateInstanceDto) {
+    return this.whatsAppService.createInstance(
+      body.instanceName,
+      { phone: body.phone },
+      req.user!.activeCompanyId,
+    );
   }
 
   @Get('list')
-  getInstances() {
-    return this.whatsAppService.getInstances();
+  getInstances(@Req() req: AuthenticatedRequest) {
+    return this.whatsAppService.getInstances(req.user!.activeCompanyId);
   }
 
   @Get('qr/:name')

@@ -8,6 +8,7 @@ import {
   ParseIntPipe,
   Post,
   Put,
+  Req,
   UploadedFiles,
   UseInterceptors,
 } from '@nestjs/common';
@@ -15,6 +16,7 @@ import { FilesInterceptor } from '@nestjs/platform-express';
 import { ProductsService } from './products.service';
 import { StorageService } from '../storage/storage.service';
 import { CreateProductDto, UpdateProductDto } from './dto/product.dto';
+import { AuthenticatedRequest } from '../auth/auth.types';
 
 @Controller('products')
 export class ProductsController {
@@ -24,18 +26,18 @@ export class ProductsController {
   ) {}
 
   @Get()
-  findAll() {
-    return this.productsService.findAll();
+  findAll(@Req() req: AuthenticatedRequest) {
+    return this.productsService.findAll(req.user!.activeCompanyId);
   }
 
   @Get('active')
-  findActive() {
-    return this.productsService.findActive();
+  findActive(@Req() req: AuthenticatedRequest) {
+    return this.productsService.findActive(req.user!.activeCompanyId);
   }
 
   @Get(':id')
-  findOne(@Param('id', ParseIntPipe) id: number) {
-    return this.productsService.findOne(id);
+  findOne(@Req() req: AuthenticatedRequest, @Param('id', ParseIntPipe) id: number) {
+    return this.productsService.findOne(req.user!.activeCompanyId, id);
   }
 
   @Post('upload-media')
@@ -62,17 +64,21 @@ export class ProductsController {
   }
 
   @Post()
-  create(@Body() dto: CreateProductDto) {
-    return this.productsService.create(dto);
+  create(@Req() req: AuthenticatedRequest, @Body() dto: CreateProductDto) {
+    return this.productsService.create(req.user!.activeCompanyId, dto);
   }
 
   @Put(':id')
-  update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateProductDto) {
-    return this.productsService.update(id, dto);
+  update(
+    @Req() req: AuthenticatedRequest,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateProductDto,
+  ) {
+    return this.productsService.update(req.user!.activeCompanyId, id, dto);
   }
 
   @Delete(':id')
-  remove(@Param('id', ParseIntPipe) id: number) {
-    return this.productsService.remove(id);
+  remove(@Req() req: AuthenticatedRequest, @Param('id', ParseIntPipe) id: number) {
+    return this.productsService.remove(req.user!.activeCompanyId, id);
   }
 }

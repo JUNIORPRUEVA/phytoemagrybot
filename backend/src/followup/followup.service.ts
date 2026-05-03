@@ -75,9 +75,11 @@ export class FollowupService implements OnModuleInit {
     contactId: string;
     outboundAddress?: string | null;
     reply: string;
+    companyId?: string;
   }): Promise<void> {
     const contactId = this.normalizeContactId(params.contactId);
-    const config = await this.getFollowupConfig();
+    const companyId = params.companyId;
+    const config = await this.getFollowupConfig(companyId);
 
     if (!config.enabled) {
       await this.deactivate(contactId, 'disabled');
@@ -89,42 +91,44 @@ export class FollowupService implements OnModuleInit {
       return;
     }
 
-    const context = await this.memoryService.getConversationContext(contactId, 10);
+    const context = companyId
+      ? await this.memoryService.getConversationContext(companyId, contactId, 10)
+      : { clientMemory: { contactId, objections: [], status: 'nuevo' as const, name: null, objective: null, interest: null, lastIntent: null, personalData: {}, updatedAt: null, notes: null, expiresAt: null }, messages: [], summary: { summary: null } };
     if (this.shouldSuppressFollowup(context.clientMemory, context.messages)) {
       await this.deactivate(contactId, 'suppressed');
       return;
     }
 
+    const upsertData = {
+      outboundAddress: this.normalizeOutboundAddress(params.outboundAddress, contactId),
+      lastMessageFrom: 'bot',
+      lastMessageAt: new Date(),
+      followupStep: 0,
+      isActive: true as const,
+      nextFollowupAt: this.computeNextFollowupAt(0, new Date(), config),
+      lastFollowupMessage: params.reply.trim() || null,
+    };
+
+    if (!companyId) {
+      this.logger.warn(JSON.stringify({ event: 'followup_register_bot_reply_no_company', contactId }));
+      return;
+    }
+
     await this.prisma.conversationFollowup.upsert({
-      where: { contactId },
-      create: {
-        contactId,
-        outboundAddress: this.normalizeOutboundAddress(params.outboundAddress, contactId),
-        lastMessageFrom: 'bot',
-        lastMessageAt: new Date(),
-        followupStep: 0,
-        isActive: true,
-        nextFollowupAt: this.computeNextFollowupAt(0, new Date(), config),
-        lastFollowupMessage: params.reply.trim() || null,
-      },
-      update: {
-        outboundAddress: this.normalizeOutboundAddress(params.outboundAddress, contactId),
-        lastMessageFrom: 'bot',
-        lastMessageAt: new Date(),
-        followupStep: 0,
-        isActive: true,
-        nextFollowupAt: this.computeNextFollowupAt(0, new Date(), config),
-        lastFollowupMessage: params.reply.trim() || null,
-      },
+      where: { companyId_contactId: { companyId, contactId } },
+      create: { ...upsertData, contactId, companyId },
+      update: upsertData,
     });
   }
 
-  async registerUserReply(contactId: string): Promise<void> {
+  async registerUserReply(contactId: string, companyId?: string): Promise<void> {
     const normalizedContactId = this.normalizeContactId(contactId);
-    const config = await this.getFollowupConfig();
+    const config = await this.getFollowupConfig(companyId);
 
     await this.prisma.conversationFollowup.updateMany({
-      where: { contactId: normalizedContactId },
+      where: companyId
+        ? { contactId: normalizedContactId, companyId }
+        : { contactId: normalizedContactId },
       data: {
         lastMessageFrom: 'user',
         lastMessageAt: new Date(),
@@ -134,11 +138,13 @@ export class FollowupService implements OnModuleInit {
     });
   }
 
-  async getFollowupState(contactId: string) {
+  async getFollowupState(contactId: string, companyId?: string) {
     const normalizedContactId = this.normalizeContactId(contactId);
-    const followup = await this.prisma.conversationFollowup.findUnique({
-      where: { contactId: normalizedContactId },
-    });
+    const followup = companyId
+      ? await this.prisma.conversationFollowup.findFirst({
+          where: { contactId: normalizedContactId, companyId },
+        })
+      : null;
 
     return this.toFollowupSnapshot(normalizedContactId, followup);
   }
@@ -148,9 +154,10 @@ export class FollowupService implements OnModuleInit {
     outboundAddress?: string | null;
     reply?: string | null;
     nextFollowupAt?: Date | null;
+    companyId?: string;
   }) {
     const contactId = this.normalizeContactId(params.contactId);
-    const config = await this.getFollowupConfig();
+    const config = await this.getFollowupConfig(params.companyId);
 
     if (!config.enabled) {
       throw new BadRequestException('Followups are disabled in bot settings');
@@ -162,18 +169,24 @@ export class FollowupService implements OnModuleInit {
     }
 
     const normalizedReply = params.reply?.trim() || null;
+    const paramCompanyId = params.companyId;
+    const followupWhere = paramCompanyId
+      ? { companyId_contactId: { companyId: paramCompanyId, contactId } }
+      : { id: -1 as number }; // fallback — should always have companyId
+    const followupCreate = {
+      contactId,
+      companyId: paramCompanyId ?? '',
+      outboundAddress: this.normalizeOutboundAddress(params.outboundAddress, contactId),
+      lastMessageFrom: 'bot',
+      lastMessageAt: new Date(),
+      followupStep: 0,
+      isActive: true,
+      nextFollowupAt,
+      lastFollowupMessage: normalizedReply,
+    };
     const followup = await this.prisma.conversationFollowup.upsert({
-      where: { contactId },
-      create: {
-        contactId,
-        outboundAddress: this.normalizeOutboundAddress(params.outboundAddress, contactId),
-        lastMessageFrom: 'bot',
-        lastMessageAt: new Date(),
-        followupStep: 0,
-        isActive: true,
-        nextFollowupAt,
-        lastFollowupMessage: normalizedReply,
-      },
+      where: followupWhere,
+      create: followupCreate,
       update: {
         outboundAddress: this.normalizeOutboundAddress(params.outboundAddress, contactId),
         lastMessageFrom: 'bot',
@@ -207,6 +220,7 @@ export class FollowupService implements OnModuleInit {
       contactId,
       role: 'assistant',
       content: message,
+      companyId: (params as { companyId?: string }).companyId ?? '',
     });
 
     if (params.scheduleFollowup ?? true) {
@@ -229,11 +243,6 @@ export class FollowupService implements OnModuleInit {
   }
 
   async processDueFollowups(): Promise<void> {
-    const config = await this.getFollowupConfig();
-    if (!config.enabled) {
-      return;
-    }
-
     const now = new Date();
     const due = await this.prisma.conversationFollowup.findMany({
       where: {
@@ -246,13 +255,19 @@ export class FollowupService implements OnModuleInit {
     });
 
     for (const item of due) {
-      await this.processSingleFollowup(item, config);
+      const companyId: string | null = (item as { companyId?: string | null }).companyId ?? null;
+      const config = await this.getFollowupConfig(companyId ?? undefined);
+      if (!config.enabled) {
+        continue;
+      }
+      await this.processSingleFollowup(item, config, companyId ?? undefined);
     }
   }
 
   private async processSingleFollowup(
     followup: ConversationFollowup,
     config: FollowupConfig,
+    companyId?: string,
   ): Promise<void> {
     if (followup.followupStep >= config.maxFollowups) {
       await this.deactivate(followup.contactId, 'max_reached');
@@ -264,27 +279,30 @@ export class FollowupService implements OnModuleInit {
       return;
     }
 
-    const memoryContext = await this.memoryService.getConversationContext(followup.contactId, 10);
+    const memoryContext = companyId
+      ? await this.memoryService.getConversationContext(companyId, followup.contactId, 10)
+      : { clientMemory: { contactId: followup.contactId, objections: [], status: 'nuevo' as const, name: null, objective: null, interest: null, lastIntent: null, personalData: {}, updatedAt: null, notes: null, expiresAt: null }, messages: [], summary: { contactId: followup.contactId, summary: null, updatedAt: null, expiresAt: null } };
     if (this.shouldSuppressFollowup(memoryContext.clientMemory, memoryContext.messages)) {
       await this.deactivate(followup.contactId, 'suppressed');
       return;
     }
 
     const nextStep = followup.followupStep + 1;
-    const message = await this.generateFollowupMessage(followup, nextStep, memoryContext);
+    const message = await this.generateFollowupMessage(followup, nextStep, memoryContext, companyId);
     const outboundAddress = this.normalizeOutboundAddress(followup.outboundAddress, followup.contactId);
 
     try {
-      await this.sendFollowupText(outboundAddress, message);
+      await this.sendFollowupText(outboundAddress, message, companyId);
       await this.memoryService.saveMessage({
         contactId: followup.contactId,
         role: 'assistant',
         content: message,
+        companyId: companyId ?? '',
       });
 
       const reachedMax = nextStep >= config.maxFollowups;
       await this.prisma.conversationFollowup.update({
-        where: { contactId: followup.contactId },
+        where: { id: followup.id },
         data: {
           lastMessageFrom: 'bot',
           lastMessageAt: new Date(),
@@ -308,7 +326,7 @@ export class FollowupService implements OnModuleInit {
       );
 
       await this.prisma.conversationFollowup.update({
-        where: { contactId: followup.contactId },
+        where: { id: followup.id },
         data: {
           nextFollowupAt: new Date(Date.now() + 5 * 60 * 1000),
         },
@@ -320,10 +338,12 @@ export class FollowupService implements OnModuleInit {
     followup: ConversationFollowup,
     step: number,
     memoryContext: Awaited<ReturnType<MemoryService['getConversationContext']>>,
+    companyId?: string,
   ): Promise<string> {
-    const config = await this.clientConfigService.getConfig();
-    const botConfig = await this.botConfigService.getConfig();
-    const companyContext = await this.companyContextService.buildAgentContext();
+    const resolvedCompanyId = companyId ?? '';
+    const config = await this.clientConfigService.getConfig(resolvedCompanyId);
+    const botConfig = await this.botConfigService.getConfig(resolvedCompanyId);
+    const companyContext = await this.companyContextService.buildAgentContext(resolvedCompanyId);
     const history = memoryContext.messages.slice(-8);
     const leadStage = this.resolveLeadStage(memoryContext.clientMemory, history);
     const replyObjective = this.resolveReplyObjective(step, leadStage);
@@ -634,8 +654,9 @@ export class FollowupService implements OnModuleInit {
     );
   }
 
-  private async sendFollowupText(outboundAddress: string, text: string): Promise<void> {
-    const config = await this.clientConfigService.getConfig();
+  private async sendFollowupText(outboundAddress: string, text: string, companyId?: string): Promise<void> {
+    const resolvedCompanyId = companyId ?? '';
+    const config = await this.clientConfigService.getConfig(resolvedCompanyId);
     const apiBaseUrl = config.whatsappSettings?.apiBaseUrl?.trim() || '';
     const apiKey = config.whatsappSettings?.apiKey?.trim() || '';
     const instanceName = config.whatsappSettings?.instanceName?.trim() || '';
@@ -701,8 +722,11 @@ export class FollowupService implements OnModuleInit {
     return `${contactId.replace(/\D+/g, '')}@s.whatsapp.net`;
   }
 
-  private async getFollowupConfig(): Promise<FollowupConfig> {
-    const config = await this.clientConfigService.getConfig();
+  private async getFollowupConfig(companyId?: string): Promise<FollowupConfig> {
+    const resolvedCompanyId: string = companyId ?? await this.prisma.whatsAppInstance
+      .findFirst({ orderBy: { createdAt: 'asc' }, select: { companyId: true } })
+      .then((r): string => r?.companyId || '');
+    const config = await this.clientConfigService.getConfig(resolvedCompanyId);
     const settings = config.botSettings;
 
     return {

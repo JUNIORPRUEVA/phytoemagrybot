@@ -11,9 +11,8 @@ import {
 
 @Injectable()
 export class BotConfigService implements OnModuleInit {
-  private static readonly CONFIG_ID = 1;
-  private static readonly KNOWLEDGE_CONTEXT_CACHE_KEY = 'bot:knowledge-context:v1';
-  private static readonly LEGACY_KNOWLEDGE_CONTEXT_CACHE_KEY = 'bot:knowledge-context:v2';
+  private static readonly KNOWLEDGE_CONTEXT_CACHE_KEY_PREFIX = 'bot:knowledge-context:v1';
+  private static readonly LEGACY_KNOWLEDGE_CONTEXT_CACHE_KEY_PREFIX = 'bot:knowledge-context:v2';
 
   constructor(
     private readonly prisma: PrismaService,
@@ -21,20 +20,20 @@ export class BotConfigService implements OnModuleInit {
   ) {}
 
   async onModuleInit(): Promise<void> {
-    await this.ensureConfig();
+    // No-op: per-company seeding is done when a company is created
   }
 
-  async getConfig(): Promise<BotConfigRecord> {
-    return this.ensureConfig();
+  async getConfig(companyId: string): Promise<BotConfigRecord> {
+    return this.ensureConfig(companyId);
   }
 
-  async saveConfig(data: SaveBotConfigDto): Promise<BotConfigRecord> {
-    const current = await this.ensureConfig();
+  async saveConfig(data: SaveBotConfigDto, companyId: string): Promise<BotConfigRecord> {
+    const current = await this.ensureConfig(companyId);
 
     const config = await this.prisma.botConfig.upsert({
-      where: { id: BotConfigService.CONFIG_ID },
+      where: { companyId },
       create: {
-        id: BotConfigService.CONFIG_ID,
+        companyId,
         promptBase: data.promptBase?.trim() || current.promptBase,
         promptShort: data.promptShort?.trim() || current.promptShort,
         promptHuman: data.promptHuman?.trim() || current.promptHuman,
@@ -49,8 +48,8 @@ export class BotConfigService implements OnModuleInit {
     });
 
     await this.redisService.deleteMany([
-      BotConfigService.KNOWLEDGE_CONTEXT_CACHE_KEY,
-      BotConfigService.LEGACY_KNOWLEDGE_CONTEXT_CACHE_KEY,
+      `${BotConfigService.KNOWLEDGE_CONTEXT_CACHE_KEY_PREFIX}:${companyId}`,
+      `${BotConfigService.LEGACY_KNOWLEDGE_CONTEXT_CACHE_KEY_PREFIX}:${companyId}`,
     ]);
     return config;
   }
@@ -62,11 +61,11 @@ export class BotConfigService implements OnModuleInit {
       .join('\n\n');
   }
 
-  private async ensureConfig(): Promise<BotConfigRecord> {
+  private async ensureConfig(companyId: string): Promise<BotConfigRecord> {
     const config = await this.prisma.botConfig.upsert({
-      where: { id: BotConfigService.CONFIG_ID },
+      where: { companyId },
       create: {
-        id: BotConfigService.CONFIG_ID,
+        companyId,
         ...DEFAULT_BOT_PROMPT_CONFIG,
       },
       update: {},
@@ -77,15 +76,15 @@ export class BotConfigService implements OnModuleInit {
     }
 
     const synced = await this.prisma.botConfig.update({
-      where: { id: BotConfigService.CONFIG_ID },
+      where: { companyId },
       data: {
         ...DEFAULT_BOT_PROMPT_CONFIG,
       },
     });
 
     await this.redisService.deleteMany([
-      BotConfigService.KNOWLEDGE_CONTEXT_CACHE_KEY,
-      BotConfigService.LEGACY_KNOWLEDGE_CONTEXT_CACHE_KEY,
+      `${BotConfigService.KNOWLEDGE_CONTEXT_CACHE_KEY_PREFIX}:${companyId}`,
+      `${BotConfigService.LEGACY_KNOWLEDGE_CONTEXT_CACHE_KEY_PREFIX}:${companyId}`,
     ]);
     return synced;
   }

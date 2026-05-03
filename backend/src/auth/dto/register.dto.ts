@@ -18,4 +18,14 @@ export class RegisterDto {
   @MinLength(8)
   @MaxLength(120)
   password!: string;
+
+  @IsString()
+  @MinLength(2)
+  @MaxLength(120)
+  companyName!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(30)
+  companyPhone?: string;
 }

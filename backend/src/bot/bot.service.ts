@@ -39,6 +39,7 @@ export class BotService {
   private readonly logger = new Logger(BotService.name);
 
   private static readonly COMPANY_TOOL_NAME = 'consultar_info_empresa';
+  private static readonly RETURNING_CUSTOMER_GAP_MS = 3 * 60 * 60 * 1000;
 
   constructor(
     private readonly aiService: AiService,
@@ -53,6 +54,7 @@ export class BotService {
   async processIncomingMessage(
     contactId: string,
     message: string,
+    companyId: string,
     metadata?: {
       messageType?: 'text' | 'audio' | 'image';
       transcript?: string | null;
@@ -71,28 +73,35 @@ export class BotService {
       JSON.stringify({ event: 'bot_message_received', contactId: normalizedContactId }),
     );
 
-    const config = await this.clientConfigService.getConfig();
-    const botConfig = await this.botConfigService.getConfig();
+    const config = await this.clientConfigService.getConfig(companyId);
+    const botConfig = await this.botConfigService.getConfig(companyId);
 
     await this.memoryService.saveMessage({
       contactId: normalizedContactId,
       role: 'user',
       content: normalizedMessage,
+      companyId,
     });
 
     const memoryWindow = config.aiSettings?.memoryWindow ?? 6;
     const memoryContext = await this.memoryService.getConversationContext(
+      companyId,
       normalizedContactId,
       memoryWindow,
     );
     const history: StoredMessage[] = memoryContext.messages.filter(
       (m) => !(m.role === 'user' && m.content === normalizedMessage),
     );
+    const previousInteractionAt = this.getPreviousInteractionAt(
+      history,
+      memoryContext.summary.updatedAt,
+      memoryContext.clientMemory.updatedAt,
+    );
 
     const lastAssistantFromHistory = [...history].reverse().find((m) => m.role === 'assistant');
     const isShortReply = this.isShortContinuation(this.normalizeForIntent(normalizedMessage));
     const lastAssistantMessage = lastAssistantFromHistory ?? (isShortReply
-      ? await this.memoryService.getLastAssistantMessage(normalizedContactId)
+      ? await this.memoryService.getLastAssistantMessage(companyId, normalizedContactId)
       : null);
     const continuation = this.buildContinuationContext(
       normalizedMessage,
@@ -106,6 +115,7 @@ export class BotService {
       botConfig,
       memoryContext.clientMemory,
       memoryContext.summary,
+      previousInteractionAt,
     );
 
     this.logger.log(
@@ -167,7 +177,7 @@ export class BotService {
           tools: openAiTools,
           toolChoice,
           executeToolCall: (toolName, args) =>
-            this.toolsExecutor.execute(toolName, args, normalizedContactId, toolsConfig),
+            this.toolsExecutor.execute(toolName, args, normalizedContactId, toolsConfig, companyId),
         })
       : await this.aiService.generateSimpleReply({
           openaiKey: config.openaiKey,
@@ -194,6 +204,7 @@ export class BotService {
       contactId: normalizedContactId,
       role: 'assistant',
       content: finalReply,
+      companyId,
     });
 
     const hotLead = this.detectHotLead(normalizedMessage) || continuation.inferredIntent === 'compra';
@@ -254,7 +265,7 @@ export class BotService {
       try {
         let result: BotReplyResult | undefined;
         for (const msg of scenario.messages) {
-          result = await this.processIncomingMessage(scenario.contactId, msg);
+          result = await this.processIncomingMessage(scenario.contactId, msg, '');
         }
         if (!result) throw new Error('No result');
         results.push({
@@ -305,6 +316,7 @@ export class BotService {
     botConfig: Awaited<ReturnType<BotConfigService['getConfig']>>,
     clientMemory?: import('../memory/memory.types').ClientMemorySnapshot,
     conversationSummary?: import('../memory/memory.types').ConversationSummarySnapshot,
+    previousInteractionAt?: Date | null,
   ): Promise<string> {
     const instructions = this.promptComposerService.buildInstructionsBlock(config, botConfig);
     const products = [
@@ -324,7 +336,11 @@ export class BotService {
       '- Usa consultar_info_empresa cuando el cliente pregunte por ubicación, horario, cuentas de pago, teléfonos o fotos.',
       'No inventes dirección, GPS, horarios, cuentas ni teléfonos si no consultaste la tool.',
     ].join('\n');
-    const memory = this.buildMemoryBlock(clientMemory, conversationSummary);
+    const memory = this.buildMemoryBlock(
+      clientMemory,
+      conversationSummary,
+      previousInteractionAt,
+    );
 
     const blocks: string[] = [
       '[INSTRUCCIONES]',
@@ -345,6 +361,7 @@ export class BotService {
   private buildMemoryBlock(
     clientMemory?: import('../memory/memory.types').ClientMemorySnapshot,
     conversationSummary?: import('../memory/memory.types').ConversationSummarySnapshot,
+    previousInteractionAt?: Date | null,
   ): string {
     const lines: string[] = [];
 
@@ -385,7 +402,45 @@ export class BotService {
       lines.push(`\nResumen de conversación previa:\n${conversationSummary.summary}`);
     }
 
+    if (previousInteractionAt) {
+      const elapsedMs = Date.now() - previousInteractionAt.getTime();
+      if (elapsedMs >= BotService.RETURNING_CUSTOMER_GAP_MS) {
+        const elapsedHours = Math.floor(elapsedMs / (60 * 60 * 1000));
+        lines.push(
+          `\nContexto de reencuentro: el cliente está retomando la conversación después de ${elapsedHours} hora${elapsedHours === 1 ? '' : 's'} o más. Si saludas, usa una reentrada breve y confiable como "hola de nuevo"; si el tema está claro, responde directo. No uses "en qué te puedo ayudar" ni variantes.`,
+        );
+      } else {
+        lines.push(
+          '\nContexto reciente: el cliente ya venía conversando hace poco. Continúa el hilo sin reiniciar ni usar frases como "en qué te puedo ayudar".',
+        );
+      }
+    }
+
     return lines.join('\n');
+  }
+
+  private getPreviousInteractionAt(
+    history: StoredMessage[],
+    summaryUpdatedAt?: Date | null,
+    clientMemoryUpdatedAt?: Date | null,
+  ): Date | null {
+    const timestamps = history
+      .map((message) => message.createdAt ?? null)
+      .filter((value): value is Date => value instanceof Date)
+      .map((value) => value.getTime());
+
+    if (summaryUpdatedAt instanceof Date) {
+      timestamps.push(summaryUpdatedAt.getTime());
+    }
+    if (clientMemoryUpdatedAt instanceof Date) {
+      timestamps.push(clientMemoryUpdatedAt.getTime());
+    }
+
+    if (timestamps.length === 0) {
+      return null;
+    }
+
+    return new Date(Math.max(...timestamps));
   }
 
   private buildProductsBlock(
@@ -624,7 +679,7 @@ export class BotService {
 
     if (continuation.polarity === 'negative') {
       return this.isGenericOrRepeatedContinuationReply(content, continuation)
-        ? 'Dale, sin problema. Si luego quieres retomarlo, aquí estoy para ayudarte.'
+        ? 'Dale, sin problema. Cuando quieras retomarlo, me escribes con confianza.'
         : content;
     }
 
@@ -647,7 +702,7 @@ export class BotService {
       return 'Dale. Para darte el total exacto, dime cuántas unidades quieres cotizar.';
     }
 
-    return 'Claro, seguimos con eso. Dime cuál dato quieres que te confirme primero.';
+    return 'Claro, seguimos con eso. Te confirmo lo que necesites para avanzar.';
   }
 
   private isGenericOrRepeatedContinuationReply(
@@ -655,7 +710,7 @@ export class BotService {
     continuation: ContinuationContext,
   ): boolean {
     const normalized = this.normalizeForIntent(content);
-    if (/en que puedo ayudarte|como puedo ayudarte|hay algo mas|te gustaria saber mas|quieres saber mas/.test(normalized)) {
+    if (/(en que|como) (te )?pued(o|a) (ayudar(te)?|servir(te)?|orientar(te)?)|hay algo mas|te gustaria saber mas|quieres saber mas/.test(normalized)) {
       return true;
     }
 

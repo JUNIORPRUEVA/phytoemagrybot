@@ -13,6 +13,77 @@ enum UserRole {
   soporte
 }
 
+enum CompanyStatus {
+  active
+  suspended
+  trial
+  cancelled
+}
+
+enum CompanyUserRole {
+  owner
+  admin
+  manager
+  seller
+  support
+  viewer
+}
+
+// ─── COMPANY (tenant root) ──────────────────────────────────────────────────
+
+model Company {
+  id          String        @id @default(uuid()) @db.Uuid
+  name        String
+  slug        String        @unique
+  legalName   String?       @map("legal_name")
+  rnc         String?
+  phone       String?
+  email       String?
+  logoUrl     String?       @map("logo_url")
+  address     String?
+  status      CompanyStatus @default(trial)
+  createdAt   DateTime      @default(now()) @map("created_at")
+  updatedAt   DateTime      @updatedAt @map("updated_at")
+
+  companyUsers     CompanyUser[]
+  configs          Config[]
+  botConfigs       BotConfig[]
+  companyContexts  CompanyContext[]
+  products         Product[]
+  orders           Order[]
+  whatsappInstances WhatsAppInstance[]
+  mediaFiles       MediaFile[]
+  conversationMessages ConversationMessage[]
+  conversationMemories ConversationMemory[]
+  clientMemories   ClientMemory[]
+  conversationSummaries ConversationSummary[]
+  contactConversationSummaries ContactConversationSummary[]
+  contactStates    ContactState[]
+  conversationFollowups ConversationFollowup[]
+
+  @@map("companies")
+}
+
+model CompanyUser {
+  id        String          @id @default(uuid()) @db.Uuid
+  companyId String          @map("company_id") @db.Uuid
+  userId    String          @map("user_id") @db.Uuid
+  role      CompanyUserRole @default(viewer)
+  isActive  Boolean         @default(true) @map("is_active")
+  createdAt DateTime        @default(now()) @map("created_at")
+  updatedAt DateTime        @updatedAt @map("updated_at")
+
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, userId])
+  @@index([userId])
+  @@index([companyId])
+  @@map("company_users")
+}
+
+// ─── USER ───────────────────────────────────────────────────────────────────
+
 model Client {
   id             String                  @id @default(cuid())
   name           String
@@ -37,11 +108,14 @@ model User {
   updatedAt    DateTime  @updatedAt @map("updated_at")
   deletedAt    DateTime? @map("deleted_at")
 
+  companyUsers CompanyUser[]
+
   @@map("users")
 }
 
 model Config {
-  id             Int      @id
+  id             Int      @id @default(autoincrement())
+  companyId      String   @map("company_id") @db.Uuid
   openaiKey      String   @default("") @map("openai_key")
   elevenlabsKey  String?  @map("elevenlabs_key")
   promptBase     String   @default("Eres un asistente profesional de WhatsApp. Responde con claridad, foco comercial y tono amable.") @map("prompt_base")
@@ -52,6 +126,10 @@ model Config {
   botSettings    BotSettings?
   whatsappSettings WhatsAppSettings?
 
+  company        Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId])
+  @@index([companyId])
   @@map("config")
 }
 
@@ -87,7 +165,8 @@ model BotSettings {
 }
 
 model BotConfig {
-  id          Int      @id @default(1)
+  id          Int      @id @default(autoincrement())
+  companyId   String   @map("company_id") @db.Uuid
   promptBase  String   @map("prompt_base")
   promptShort String   @map("prompt_short")
   promptHuman String   @map("prompt_human")
@@ -95,11 +174,16 @@ model BotConfig {
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
 
+  company     Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId])
+  @@index([companyId])
   @@map("bot_config")
 }
 
 model CompanyContext {
-  id              Int      @id @default(1)
+  id              Int      @id @default(autoincrement())
+  companyId       String   @map("company_id") @db.Uuid
   companyName     String   @default("") @map("company_name")
   description     String   @default("")
   phone           String   @default("")
@@ -115,6 +199,10 @@ model CompanyContext {
   createdAt       DateTime @default(now()) @map("created_at")
   updatedAt       DateTime @updatedAt @map("updated_at")
 
+  company         Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId])
+  @@index([companyId])
   @@map("company_context")
 }
 
@@ -136,29 +224,36 @@ model WhatsAppSettings {
 
 model ConversationMemory {
   id        String   @id @default(cuid())
+  companyId String   @map("company_id") @db.Uuid
   contactId String   @map("contact_id")
   role      String
   content   String
   createdAt DateTime @default(now()) @map("created_at")
 
-  @@index([contactId, createdAt])
+  company   Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([companyId, contactId, createdAt])
   @@map("conversation_memory")
 }
 
 model ConversationMessage {
   id        Int      @id @default(autoincrement())
+  companyId String   @map("company_id") @db.Uuid
   contactId String   @map("contact_id")
   role      String
   content   String
   createdAt DateTime @default(now()) @map("created_at")
 
-  @@index([contactId, createdAt])
+  company   Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([companyId, contactId, createdAt])
   @@map("conversation_messages")
 }
 
 model ClientMemory {
   id           Int      @id @default(autoincrement())
-  contactId    String   @unique @map("contact_id")
+  companyId    String   @map("company_id") @db.Uuid
+  contactId    String   @map("contact_id")
   name         String?
   objective    String?
   interest     String?
@@ -170,24 +265,34 @@ model ClientMemory {
   expiresAt    DateTime @map("expires_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
 
+  company      Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, contactId])
   @@index([expiresAt])
+  @@index([companyId])
   @@map("client_memory")
 }
 
 model ConversationSummary {
   id         Int      @id @default(autoincrement())
-  contactId  String   @unique @map("contact_id")
+  companyId  String   @map("company_id") @db.Uuid
+  contactId  String   @map("contact_id")
   summary    String
   expiresAt  DateTime @map("expires_at")
   updatedAt  DateTime @updatedAt @map("updated_at")
 
+  company    Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, contactId])
   @@index([expiresAt])
+  @@index([companyId])
   @@map("conversation_summaries")
 }
 
 model ContactState {
   id                  Int      @id @default(autoincrement())
-  contactId           String   @unique @map("contact_id")
+  companyId           String   @map("company_id") @db.Uuid
+  contactId           String   @map("contact_id")
   name                String?
   currentIntent       String?  @map("current_intent")
   stage               String   @default("curioso")
@@ -198,25 +303,33 @@ model ContactState {
   createdAt           DateTime @default(now()) @map("created_at")
   updatedAt           DateTime @updatedAt @map("updated_at")
 
-  @@index([stage])
-  @@index([lastInteractionAt])
+  company             Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, contactId])
+  @@index([companyId, stage])
+  @@index([companyId, lastInteractionAt])
   @@map("contact_state")
 }
 
 model ContactConversationSummary {
   id           Int      @id @default(autoincrement())
-  contactId    String   @unique @map("contact_id")
+  companyId    String   @map("company_id") @db.Uuid
+  contactId    String   @map("contact_id")
   summaryText  String   @map("summary_text")
   keyFactsJson Json     @default("{}") @map("key_facts_json")
   lastMessageId String? @map("last_message_id")
   updatedAt    DateTime @updatedAt @map("updated_at")
 
-  @@index([updatedAt])
+  company      Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, contactId])
+  @@index([companyId, updatedAt])
   @@map("conversation_summary")
 }
 
 model ConversationFollowup {
   id                Int      @id @default(autoincrement())
+  companyId         String   @map("company_id") @db.Uuid
   contactId         String   @map("contact_id")
   outboundAddress   String?  @map("outbound_address")
   lastMessageFrom   String   @map("last_message_from")
@@ -228,37 +341,48 @@ model ConversationFollowup {
   createdAt         DateTime @default(now()) @map("created_at")
   updatedAt         DateTime @updatedAt @map("updated_at")
 
-  @@unique([contactId])
-  @@index([isActive, nextFollowupAt])
-  @@index([contactId, lastMessageAt])
+  company           Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, contactId])
+  @@index([companyId, isActive, nextFollowupAt])
+  @@index([companyId, contactId, lastMessageAt])
   @@map("conversation_followup")
 }
 
 model WhatsAppInstance {
-  id        Int      @id @default(autoincrement())
-  name      String   @unique
-  displayName String? @map("display_name")
-  status    String
-  phone     String?
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
+  id          Int      @id @default(autoincrement())
+  companyId   String   @map("company_id") @db.Uuid
+  name        String   @unique
+  displayName String?  @map("display_name")
+  status      String
+  phone       String?
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
 
+  company     Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([companyId])
   @@map("whatsapp_instances")
 }
 
 model MediaFile {
   id          Int      @id @default(autoincrement())
+  companyId   String   @map("company_id") @db.Uuid
   title       String
   description String?
   fileUrl     String   @map("file_url")
   fileType    String   @map("file_type")
   createdAt   DateTime @default(now()) @map("created_at")
 
+  company     Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([companyId])
   @@map("media_files")
 }
 
 model Product {
   id                   Int      @id @default(autoincrement())
+  companyId            String   @map("company_id") @db.Uuid
   titulo               String
   descripcionCorta     String?  @map("descripcion_corta")
   descripcionCompleta  String?  @map("descripcion_completa")
@@ -272,22 +396,28 @@ model Product {
   createdAt            DateTime @default(now()) @map("created_at")
   updatedAt            DateTime @updatedAt @map("updated_at")
 
-  @@index([activo])
+  company              Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([companyId, activo])
+  @@index([companyId])
   @@map("products")
 }
 
 model Order {
-  id          Int      @id @default(autoincrement())
-  contactId   String   @map("contact_id")
-  productosJson Json   @map("productos_json")
-  estado      String   @default("pendiente")
-  total       Decimal? @db.Decimal(10, 2)
-  direccion   String?
-  notas       String?
-  createdAt   DateTime @default(now()) @map("created_at")
-  updatedAt   DateTime @updatedAt @map("updated_at")
+  id            Int      @id @default(autoincrement())
+  companyId     String   @map("company_id") @db.Uuid
+  contactId     String   @map("contact_id")
+  productosJson Json     @map("productos_json")
+  estado        String   @default("pendiente")
+  total         Decimal? @db.Decimal(10, 2)
+  direccion     String?
+  notas         String?
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
 
-  @@index([contactId])
-  @@index([estado])
+  company       Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([companyId, contactId])
+  @@index([companyId, estado])
   @@map("orders")
 }
