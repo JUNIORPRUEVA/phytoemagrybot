@@ -3550,3 +3550,71 @@ test('determineSendMode forces text for location and map/link replies', () => {
 
   assert.equal(decision, 'text');
 });
+test('normalizeWebhookPayload returns null for @lid remoteJid when sender is instancePhone (no mapping)', () => {
+  const service = createService();
+  const result = service.normalizeWebhookPayload({
+    event: 'messages.upsert',
+    data: {
+      key: { remoteJid: '69132011749577@lid', fromMe: false, id: 'msg1' },
+      pushName: 'Cliente Test',
+      message: { conversation: 'hola' },
+    },
+    sender: '18295344286@s.whatsapp.net',
+  }, '18295344286');
+  assert.equal(result, null);
+});
+
+test('normalizeWebhookPayload resolves @lid when remoteJidAlt is present in key', () => {
+  const service = createService();
+  const result = service.normalizeWebhookPayload({
+    event: 'messages.upsert',
+    data: {
+      key: {
+        remoteJid: '69132011749577@lid',
+        remoteJidAlt: '18090000000@s.whatsapp.net',
+        fromMe: false,
+        id: 'msg2',
+      },
+      pushName: 'Cliente Conocido',
+      message: { conversation: 'hola de nuevo' },
+    },
+    sender: '18295344286@s.whatsapp.net',
+  }, '18295344286');
+  assert.notEqual(result, null);
+  assert.equal(result?.number, '18090000000');
+  assert.equal(result?.outboundAddress, '18090000000@s.whatsapp.net');
+});
+
+test('normalizeWebhookPayload returns null for group @g.us with @lid participant and no mapping', () => {
+  const service = createService();
+  const result = service.normalizeWebhookPayload({
+    event: 'messages.upsert',
+    data: {
+      key: {
+        remoteJid: '120363382457717265@g.us',
+        participant: '69132011749577@lid',
+        fromMe: false,
+        id: 'msg3',
+      },
+      pushName: 'Alguien',
+      message: { conversation: 'mensaje de grupo' },
+    },
+    sender: '18295344286@s.whatsapp.net',
+  }, '18295344286');
+  assert.equal(result, null);
+});
+
+test('normalizeWebhookPayload processes normal @s.whatsapp.net remoteJid correctly', () => {
+  const service = createService();
+  const result = service.normalizeWebhookPayload({
+    event: 'messages.upsert',
+    data: {
+      key: { remoteJid: '18090000000@s.whatsapp.net', fromMe: false, id: 'msg4' },
+      pushName: 'Cliente Normal',
+      message: { conversation: 'hola normal' },
+    },
+  }, '18295344286');
+  assert.notEqual(result, null);
+  assert.equal(result?.number, '18090000000');
+  assert.equal(result?.outboundAddress, '18090000000@s.whatsapp.net');
+});

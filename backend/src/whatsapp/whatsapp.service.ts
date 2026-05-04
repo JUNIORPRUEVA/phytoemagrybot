@@ -445,7 +445,7 @@ export class WhatsAppService implements OnModuleInit {
           base64: true,
         },
       });
-      console.log('Webhook configurado correctamente');
+      this.logger.log(JSON.stringify({ event: 'whatsapp_webhook_set_success', instanceName, webhook: resolvedWebhook }));
 
       const remoteWebhook = await this.getEvolutionWebhookMetadata(instanceName);
       const webhookVerified = this.isWebhookVerified(remoteWebhook, resolvedWebhook);
@@ -734,7 +734,6 @@ export class WhatsAppService implements OnModuleInit {
     this.logWebhookStage('validated', trace, {
       webhookSecretConfigured: Boolean(resolved.whatsapp.webhookSecret?.trim()),
     });
-    await this.rememberSenderJidMapping(payload, effectiveInstanceName);
 
     if (rawKey.fromMe === true || rawData.fromMe === true) {
       this.logWebhookStage('ignored', trace, { reason: 'from_me' });
@@ -753,6 +752,7 @@ export class WhatsAppService implements OnModuleInit {
     }
 
     const instancePhone = await this.getInstancePhoneNumber(resolved.whatsapp.instanceName);
+    await this.rememberSenderJidMapping(payload, effectiveInstanceName, instancePhone ?? undefined);
     payload = await this.enrichWebhookPayloadFromKnownLid(payload, effectiveInstanceName);
     payload = await this.enrichWebhookPayloadFromEvolution(payload, effectiveInstanceName);
     payload = this.attachWebhookRoutingMetadata(payload, instancePhone);
@@ -3069,7 +3069,7 @@ export class WhatsAppService implements OnModuleInit {
         data: { status, phone },
       });
     } catch {
-      // Instance not found in local DB — skip auto-creation.
+      // Instance not found in local DB ï¿½ skip auto-creation.
       // Instances must be created explicitly via createInstance() with a valid companyId.
       return null;
     }
@@ -3195,6 +3195,20 @@ export class WhatsAppService implements OnModuleInit {
 
     const resolvedRecipient = this.resolveSenderJid(payload, data, key, instancePhone);
     if (!resolvedRecipient.trim()) {
+      const failedRemoteJid = remoteJid || this.asString(key.remoteJid) || '';
+      if (failedRemoteJid.includes('@lid')) {
+        this.logger.warn(
+          JSON.stringify({
+            event: 'lid_resolution_failed',
+            remoteJid: failedRemoteJid,
+            pushName: this.asString(data.pushName) || null,
+            participant: this.asString(key.participant) || this.asString(data.participant) || null,
+            topLevelSender: this.asString(payload.sender) || null,
+            instancePhone: instancePhone ?? null,
+            note: 'LID JID no pudo resolverse a un numero real. Mensaje ignorado hasta que haya mapping.',
+          }),
+        );
+      }
       this.logger.warn(
         JSON.stringify({
           event: 'whatsapp_recipient_resolution_failed',
@@ -3695,6 +3709,7 @@ export class WhatsAppService implements OnModuleInit {
   private async rememberSenderJidMapping(
     payload: JsonRecord,
     instanceName: string,
+    instancePhone?: string,
   ): Promise<void> {
     if (
       !instanceName.trim() ||
@@ -3708,7 +3723,7 @@ export class WhatsAppService implements OnModuleInit {
     const key = this.asRecord(data.key);
     const messageId = this.asString(key.id) ?? this.asString(data.messageId) ?? '';
     const remoteJid = this.asString(key.remoteJid) || this.asString(data.remoteJid) || '';
-    const resolvedRealJid = this.resolveKnownRealJid(payload, data, key);
+    const resolvedRealJid = this.resolveKnownRealJid(payload, data, key, instancePhone);
 
     if (remoteJid.includes('@lid') && resolvedRealJid) {
       await this.storeMappedSenderJid(instanceName, remoteJid, resolvedRealJid);
@@ -3755,7 +3770,11 @@ export class WhatsAppService implements OnModuleInit {
     payload: JsonRecord,
     data: JsonRecord,
     key: JsonRecord,
+    instancePhone?: string,
   ): string {
+    // IMPORTANT: filter out the instance's own phone number so the bot
+    // never stores itself as the "real" client JID for an @lid mapping.
+    const normalizedInstancePhone = this.normalizeNumber(instancePhone || '');
     const candidates = [
       this.asString(key.remoteJidAlt),
       this.asString(data.remoteJidAlt),
@@ -3776,7 +3795,16 @@ export class WhatsAppService implements OnModuleInit {
       this.asString(data.remoteJid),
     ].filter((value): value is string => Boolean(value?.trim()));
 
-    return candidates.find((value) => value.includes('@s.whatsapp.net')) || '';
+    return (
+      candidates.find((value) => {
+        if (!value.includes('@s.whatsapp.net')) return false;
+        // Never use the bot's own number as the client JID.
+        if (normalizedInstancePhone && this.normalizeNumber(value) === normalizedInstancePhone) {
+          return false;
+        }
+        return true;
+      }) || ''
+    );
   }
 
   private async getMappedSenderJid(
@@ -3795,13 +3823,50 @@ export class WhatsAppService implements OnModuleInit {
       this.getLidJidMappingKey(instanceName, lidJid),
     );
 
-    return mappedJid?.includes('@s.whatsapp.net') ? mappedJid : null;
+    if (mappedJid?.includes('@s.whatsapp.net')) {
+      return mappedJid;
+    }
+
+    // Redis miss ï¿½ fall back to persistent DB mapping.
+    const dbMapping = await this.getJidMappingFromDb(instanceName, lidJid);
+    if (dbMapping) {
+      void this.redisService
+        .set(
+          this.getLidJidMappingKey(instanceName, lidJid),
+          dbMapping,
+          WhatsAppService.LID_JID_MAPPING_TTL_SECONDS,
+        )
+        .catch(() => undefined);
+      return dbMapping;
+    }
+
+    return null;
+  }
+
+  private async getJidMappingFromDb(
+    instanceName: string,
+    lidJid: string,
+  ): Promise<string | null> {
+    if (!instanceName.trim() || !lidJid.trim() || !(this.prisma as any)?.whatsAppJidMapping?.findFirst) {
+      return null;
+    }
+
+    try {
+      const record = await (this.prisma as any).whatsAppJidMapping.findFirst({
+        where: { instanceName, lidJid },
+        select: { phoneJid: true },
+      });
+      return record?.phoneJid?.includes('@s.whatsapp.net') ? record.phoneJid : null;
+    } catch {
+      return null;
+    }
   }
 
   private async storeMappedSenderJid(
     instanceName: string,
     lidJid: string,
     realJid: string,
+    pushName?: string,
   ): Promise<void> {
     if (
       !instanceName.trim() ||
@@ -3818,6 +3883,9 @@ export class WhatsAppService implements OnModuleInit {
       WhatsAppService.LID_JID_MAPPING_TTL_SECONDS,
     );
 
+    // Persist to DB for durability across Redis restarts.
+    void this.storeJidMappingToDb(instanceName, lidJid, realJid, pushName).catch(() => undefined);
+
     this.logger.log(
       JSON.stringify({
         event: 'whatsapp_lid_mapping_learned',
@@ -3827,6 +3895,35 @@ export class WhatsAppService implements OnModuleInit {
       }),
     );
   }
+
+  private async storeJidMappingToDb(
+    instanceName: string,
+    lidJid: string,
+    phoneJid: string,
+    pushName?: string,
+  ): Promise<void> {
+    if (!(this.prisma as any)?.whatsAppJidMapping?.upsert || !(this.prisma as any)?.whatsAppInstance?.findUnique) {
+      return;
+    }
+
+    try {
+      const instance = await (this.prisma as any).whatsAppInstance.findUnique({
+        where: { name: instanceName },
+        select: { companyId: true },
+      });
+      if (!instance?.companyId) return;
+
+      const phoneNumber = this.normalizeNumber(phoneJid);
+      await (this.prisma as any).whatsAppJidMapping.upsert({
+        where: { companyId_instanceName_lidJid: { companyId: instance.companyId, instanceName, lidJid } },
+        update: { phoneJid, phoneNumber, ...(pushName ? { pushName } : {}) },
+        create: { companyId: instance.companyId, instanceName, lidJid, phoneJid, phoneNumber, pushName: pushName ?? null },
+      });
+    } catch {
+      // Best-effort ï¿½ DB errors must never block message processing.
+    }
+  }
+
 
   private pickBestEvolutionContact(
     records: unknown[],

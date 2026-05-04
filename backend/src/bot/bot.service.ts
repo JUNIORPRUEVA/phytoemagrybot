@@ -54,7 +54,7 @@ export class BotService {
   async processIncomingMessage(
     contactId: string,
     message: string,
-    companyId: string,
+    companyId?: string,
     metadata?: {
       messageType?: 'text' | 'audio' | 'image';
       transcript?: string | null;
@@ -73,19 +73,21 @@ export class BotService {
       JSON.stringify({ event: 'bot_message_received', contactId: normalizedContactId }),
     );
 
-    const config = await this.clientConfigService.getConfig(companyId);
-    const botConfig = await this.botConfigService.getConfig(companyId);
+    const effectiveCompanyId = companyId ?? '';
+
+    const config = await this.clientConfigService.getConfig(effectiveCompanyId);
+    const botConfig = await this.botConfigService.getConfig(effectiveCompanyId);
 
     await this.memoryService.saveMessage({
       contactId: normalizedContactId,
       role: 'user',
       content: normalizedMessage,
-      companyId,
+      companyId: effectiveCompanyId,
     });
 
     const memoryWindow = config.aiSettings?.memoryWindow ?? 6;
     const memoryContext = await this.memoryService.getConversationContext(
-      companyId,
+      effectiveCompanyId,
       normalizedContactId,
       memoryWindow,
     );
@@ -101,7 +103,7 @@ export class BotService {
     const lastAssistantFromHistory = [...history].reverse().find((m) => m.role === 'assistant');
     const isShortReply = this.isShortContinuation(this.normalizeForIntent(normalizedMessage));
     const lastAssistantMessage = lastAssistantFromHistory ?? (isShortReply
-      ? await this.memoryService.getLastAssistantMessage(companyId, normalizedContactId)
+      ? await this.memoryService.getLastAssistantMessage(effectiveCompanyId, normalizedContactId)
       : null);
     const continuation = this.buildContinuationContext(
       normalizedMessage,
@@ -177,7 +179,7 @@ export class BotService {
           tools: openAiTools,
           toolChoice,
           executeToolCall: (toolName, args) =>
-            this.toolsExecutor.execute(toolName, args, normalizedContactId, toolsConfig, companyId),
+            this.toolsExecutor.execute(toolName, args, normalizedContactId, toolsConfig, effectiveCompanyId),
         })
       : await this.aiService.generateSimpleReply({
           openaiKey: config.openaiKey,
@@ -204,7 +206,7 @@ export class BotService {
       contactId: normalizedContactId,
       role: 'assistant',
       content: finalReply,
-      companyId,
+      companyId: effectiveCompanyId,
     });
 
     const hotLead = this.detectHotLead(normalizedMessage) || continuation.inferredIntent === 'compra';
@@ -265,7 +267,7 @@ export class BotService {
       try {
         let result: BotReplyResult | undefined;
         for (const msg of scenario.messages) {
-          result = await this.processIncomingMessage(scenario.contactId, msg, '');
+          result = await this.processIncomingMessage(scenario.contactId, msg);
         }
         if (!result) throw new Error('No result');
         results.push({

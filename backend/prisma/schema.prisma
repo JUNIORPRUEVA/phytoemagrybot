@@ -52,6 +52,7 @@ model Company {
   products         Product[]
   orders           Order[]
   whatsappInstances WhatsAppInstance[]
+  whatsappJidMappings WhatsAppJidMapping[]
   mediaFiles       MediaFile[]
   conversationMessages ConversationMessage[]
   conversationMemories ConversationMemory[]
@@ -363,6 +364,24 @@ model WhatsAppInstance {
 
   @@index([companyId])
   @@map("whatsapp_instances")
+}
+
+model WhatsAppJidMapping {
+  id           Int      @id @default(autoincrement())
+  companyId    String   @map("company_id") @db.Uuid
+  instanceName String   @map("instance_name")
+  lidJid       String   @map("lid_jid")
+  phoneJid     String   @map("phone_jid")
+  phoneNumber  String   @map("phone_number")
+  pushName     String?  @map("push_name")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  company      Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, instanceName, lidJid])
+  @@index([companyId, phoneNumber])
+  @@map("whatsapp_jid_mappings")
 }
 
 model MediaFile {
