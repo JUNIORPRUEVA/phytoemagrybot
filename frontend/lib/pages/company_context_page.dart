@@ -10,12 +10,14 @@ class CompanyContextPage extends StatefulWidget {
     super.key,
     required this.apiService,
     required this.onConfigUpdated,
+    this.onContextSaved,
     this.onRequestBack,
     this.onMainViewChanged,
   });
 
   final ApiService apiService;
   final VoidCallback onConfigUpdated;
+  final VoidCallback? onContextSaved;
   final VoidCallback? onRequestBack;
   final ValueChanged<bool>? onMainViewChanged;
 
@@ -224,8 +226,20 @@ class _CompanyContextPageState extends State<CompanyContextPage>
 
     try {
       final companyName = _companyNameController.text.trim();
+      final description = _descriptionController.text.trim();
+      final phone = _phoneController.text.trim();
+      final address = _addressController.text.trim();
       if (companyName.isEmpty) {
         throw Exception('El nombre de la empresa es obligatorio.');
+      }
+      if (description.isEmpty) {
+        throw Exception('La descripcion de la empresa es obligatoria.');
+      }
+      if (phone.isEmpty) {
+        throw Exception('El telefono de la empresa es obligatorio.');
+      }
+      if (address.isEmpty) {
+        throw Exception('La direccion de la empresa es obligatoria.');
       }
 
       for (final row in _workingHours.where((row) => row.open)) {
@@ -234,12 +248,12 @@ class _CompanyContextPageState extends State<CompanyContextPage>
 
       final savedContext = await widget.apiService.saveCompanyContext(
         companyName: companyName,
-        description: _descriptionController.text.trim(),
-        phone: _phoneController.text.trim(),
+        description: description,
+        phone: phone,
         whatsapp: _whatsappController.text.trim().isEmpty
-            ? _phoneController.text.trim()
+            ? phone
             : _whatsappController.text.trim(),
-        address: _addressController.text.trim(),
+        address: address,
         googleMapsLink: _mapsLinkController.text.trim(),
         latitude: _parseCoordinate(_latitudeController.text),
         longitude: _parseCoordinate(_longitudeController.text),
@@ -259,7 +273,7 @@ class _CompanyContextPageState extends State<CompanyContextPage>
 
       final savedBranding = await widget.apiService.saveBrandingSettings(
         companyName: companyName,
-        companyDetails: _descriptionController.text.trim(),
+        companyDetails: description,
         companyLogoUrl: _logoUrlController.text.trim(),
         companyPrimaryColor: _primaryColorController.text.trim(),
         companySecondaryColor: _secondaryColorController.text.trim(),
@@ -272,6 +286,7 @@ class _CompanyContextPageState extends State<CompanyContextPage>
       _applyContext(savedContext);
       _applyBranding(savedBranding);
       widget.onConfigUpdated();
+      widget.onContextSaved?.call();
       _showMessage('Informacion de Empresa guardada.');
     } catch (error) {
       if (mounted) {

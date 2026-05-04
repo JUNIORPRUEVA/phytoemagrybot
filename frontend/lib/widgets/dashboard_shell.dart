@@ -24,6 +24,8 @@ class DashboardShell extends StatefulWidget {
     required this.currentUser,
     required this.authService,
     required this.onLogout,
+    this.requireCompanySetup = false,
+    this.onCompanySetupCompleted,
     ApiService? apiService,
   }) : _apiService = apiService;
 
@@ -31,6 +33,8 @@ class DashboardShell extends StatefulWidget {
   final AuthService authService;
   final AuthUserData currentUser;
   final Future<void> Function() onLogout;
+  final bool requireCompanySetup;
+  final VoidCallback? onCompanySetupCompleted;
 
   @override
   State<DashboardShell> createState() => _DashboardShellState();
@@ -55,6 +59,7 @@ class _DashboardShellState extends State<DashboardShell> {
       GlobalKey<State<ConfigPage>>();
   late final ApiService _apiService;
   late Future<ClientConfigData> _overviewFuture;
+  late bool _isCompanySetupLocked;
 
   static const List<int> _mobileBottomNavIndices = <int>[_galleryPageIndex, _promptPageIndex];
   static const int _mobileMainPageIndex = _promptPageIndex;
@@ -62,8 +67,20 @@ class _DashboardShellState extends State<DashboardShell> {
   @override
   void initState() {
     super.initState();
+    _isCompanySetupLocked = widget.requireCompanySetup;
     _apiService = widget._apiService ?? ApiService();
     _overviewFuture = _apiService.getConfig();
+    if (_isCompanySetupLocked) {
+      _selectedIndex = _companyPageIndex;
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant DashboardShell oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!widget.requireCompanySetup && _isCompanySetupLocked) {
+      _isCompanySetupLocked = false;
+    }
   }
 
   void _refreshOverview() {
@@ -125,6 +142,20 @@ class _DashboardShellState extends State<DashboardShell> {
     }
   }
 
+  void _handleCompanySetupSaved() {
+    if (!_isCompanySetupLocked) {
+      return;
+    }
+
+    setState(() {
+      _isCompanySetupLocked = false;
+      _selectedIndex = _promptPageIndex;
+      _mobileLastPrimaryPageIndex = _promptPageIndex;
+    });
+    widget.onCompanySetupCompleted?.call();
+    _showMessage('Informacion de empresa guardada. Ya puedes usar el panel completo.');
+  }
+
   Future<void> _handleOverflowDeleteAllConversations() async {
     final ok = await _confirmDangerAction(
       'Esto borrara todas las conversaciones guardadas (mensajes, resumen y estado). No borra la memoria del cliente (perfil).',
@@ -174,6 +205,7 @@ class _DashboardShellState extends State<DashboardShell> {
   @override
   Widget build(BuildContext context) {
     final isAdmin = widget.currentUser.isAdmin;
+    final isLocked = _isCompanySetupLocked;
     final pages = <Widget>[
       BotPromptConfigPage(
         key: _promptPageKey,
@@ -196,6 +228,7 @@ class _DashboardShellState extends State<DashboardShell> {
         key: _companyPageKey,
         apiService: _apiService,
         onConfigUpdated: _refreshOverview,
+        onContextSaved: _handleCompanySetupSaved,
         onMainViewChanged: (_) {
           if (mounted) {
             setState(() {});
@@ -237,10 +270,13 @@ class _DashboardShellState extends State<DashboardShell> {
     final int pageCount = pages.length;
     final int navCount = <int>[labels.length, icons.length, pageCount]
         .reduce((int a, int b) => a < b ? a : b);
-    final int safeSelectedIndex = _selectedIndex >= 0 && _selectedIndex < pageCount
-        ? _selectedIndex
+    final int computedSelectedIndex = isLocked ? _companyPageIndex : _selectedIndex;
+    final int safeSelectedIndex = computedSelectedIndex >= 0 && computedSelectedIndex < pageCount
+      ? computedSelectedIndex
         : _mobileMainPageIndex;
-    final mobileDrawerIndices = <int>[
+    final mobileDrawerIndices = isLocked
+        ? <int>[]
+        : <int>[
       if (isAdmin) _usersPageIndex,
       _companyPageIndex,
       _configPageIndex,
@@ -398,6 +434,9 @@ class _DashboardShellState extends State<DashboardShell> {
                           }
                         },
                         itemBuilder: (context) {
+                          if (isLocked) {
+                            return const <PopupMenuEntry<_DashboardOverflowAction>>[];
+                          }
                           final items = <PopupMenuEntry<_DashboardOverflowAction>>[
                             const PopupMenuItem<_DashboardOverflowAction>(
                               value: _DashboardOverflowAction.reload,
@@ -439,7 +478,9 @@ class _DashboardShellState extends State<DashboardShell> {
               ],
             ),
       bottomNavigationBar: isMobile
-          ? NavigationBar(
+          ? (isLocked
+                ? null
+                : NavigationBar(
               selectedIndex: mobileNavIndex < 0 ? 0 : mobileNavIndex,
               height: 72,
               labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
@@ -454,7 +495,7 @@ class _DashboardShellState extends State<DashboardShell> {
                     ),
                   )
                   .toList(),
-            )
+            ))
           : _AppFooter(overviewFuture: _overviewFuture),
       floatingActionButton: isMobile && safeSelectedIndex == _promptPageIndex
           ? FloatingActionButton.extended(
@@ -475,6 +516,28 @@ class _DashboardShellState extends State<DashboardShell> {
           builder: (context, connectionStatus, _) {
             return Column(
               children: <Widget>[
+                if (isLocked)
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    color: const Color(0xFF78350F),
+                    child: const Row(
+                      children: <Widget>[
+                        Icon(Icons.lock_outline_rounded, color: Colors.white),
+                        SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            'Debes completar y guardar la informacion de la empresa para continuar.',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 if (connectionStatus.isKnown && !connectionStatus.isOnline)
                   _OfflineBanner(message: connectionStatus.message),
                 Expanded(
@@ -514,7 +577,7 @@ class _DashboardShellState extends State<DashboardShell> {
                                 _IconNavButton(
                                   label: labels[index],
                                   icon: icons[index],
-                                  selected: _selectedIndex == index,
+                                  selected: safeSelectedIndex == index,
                                   onTap: () => _selectPage(index),
                                 ),
                                 if (index < labels.length - 1)
@@ -595,6 +658,14 @@ class _DashboardShellState extends State<DashboardShell> {
   }
 
   void _selectPage(int index) {
+    if (_isCompanySetupLocked && index != _companyPageIndex) {
+      _showMessage(
+        'Primero guarda la informacion de la empresa para desbloquear el resto del panel.',
+        isError: true,
+      );
+      return;
+    }
+
     setState(() {
       final int nextIndex = index < 0 ? _mobileMainPageIndex : index;
       if (_mobileBottomNavIndices.contains(nextIndex)) {

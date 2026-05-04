@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import 'pages/login_page.dart';
-import 'pages/onboarding_start_page.dart';
 import 'pages/register_page.dart';
 import 'services/app_settings_service.dart';
 import 'services/auth_service.dart';
@@ -336,18 +335,13 @@ class _DashboardAppState extends State<DashboardApp> {
 
           if (_sessionController.isAuthenticated &&
               _sessionController.currentUser != null) {
-            if (_sessionController.mustCompleteOnboarding) {
-              return OnboardingStartPage(
-                companyName: _sessionController.activeCompany?.name ?? 'tu empresa',
-                onContinue: _sessionController.completeOnboarding,
-              );
-            }
-
             return DashboardShell(
               apiService: _apiService,
               authService: _authService,
               currentUser: _sessionController.currentUser!,
               onLogout: _sessionController.logout,
+              requireCompanySetup: _sessionController.mustCompleteOnboarding,
+              onCompanySetupCompleted: _sessionController.completeOnboarding,
             );
           }
 

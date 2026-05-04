@@ -12,7 +12,11 @@ class LoginPage extends StatefulWidget {
 
   final bool isBusy;
   final String? errorMessage;
-  final Future<void> Function({required String identifier, required String password}) onSubmit;
+  final Future<void> Function({
+    required String identifier,
+    required String password,
+  })
+  onSubmit;
   final VoidCallback onShowRegister;
   final VoidCallback? onEditBackendUrl;
 
@@ -115,7 +119,10 @@ class _LoginPageState extends State<LoginPage> {
                   ? const SizedBox(
                       width: 18,
                       height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2.4, color: Colors.white),
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2.4,
+                        color: Colors.white,
+                      ),
                     )
                   : const Text('Iniciar sesión'),
             ),
@@ -134,6 +141,7 @@ class AuthScaffold extends StatelessWidget {
     required this.child,
     this.footer,
     this.headerAction,
+    this.topIcon,
   });
 
   final String eyebrow;
@@ -142,9 +150,12 @@ class AuthScaffold extends StatelessWidget {
   final Widget child;
   final Widget? footer;
   final Widget? headerAction;
+  final Widget? topIcon;
 
   @override
   Widget build(BuildContext context) {
+    final hasEyebrow = eyebrow.trim().isNotEmpty;
+
     return Scaffold(
       body: Container(
         decoration: const BoxDecoration(
@@ -158,11 +169,11 @@ class AuthScaffold extends StatelessWidget {
           child: SingleChildScrollView(
             padding: const EdgeInsets.all(24),
             child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 430),
+              constraints: const BoxConstraints(maxWidth: 420),
               child: Container(
                 decoration: BoxDecoration(
                   color: Colors.white,
-                  borderRadius: BorderRadius.circular(30),
+                  borderRadius: BorderRadius.circular(26),
                   border: Border.all(color: const Color(0xFFDCE7F5)),
                   boxShadow: const <BoxShadow>[
                     BoxShadow(
@@ -173,7 +184,7 @@ class AuthScaffold extends StatelessWidget {
                   ],
                 ),
                 child: Padding(
-                  padding: const EdgeInsets.fromLTRB(34, 42, 34, 34),
+                  padding: const EdgeInsets.fromLTRB(26, 28, 26, 26),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: <Widget>[
@@ -183,35 +194,47 @@ class AuthScaffold extends StatelessWidget {
                           Expanded(
                             child: Column(
                               children: <Widget>[
-                                Text(
-                                  eyebrow.toUpperCase(),
-                                  textAlign: TextAlign.center,
-                                  style: const TextStyle(
-                                    color: Color(0xFF2563EB),
-                                    fontWeight: FontWeight.w800,
-                                    letterSpacing: 1.2,
-                                    fontSize: 12,
+                                if (topIcon != null) ...<Widget>[
+                                  Center(child: topIcon!),
+                                  const SizedBox(height: 16),
+                                ],
+                                if (hasEyebrow) ...<Widget>[
+                                  Text(
+                                    eyebrow.toUpperCase(),
+                                    textAlign: TextAlign.center,
+                                    style: const TextStyle(
+                                      color: Color(0xFF2563EB),
+                                      fontWeight: FontWeight.w700,
+                                      letterSpacing: 1.4,
+                                      fontSize: 11,
+                                    ),
                                   ),
-                                ),
-                                const SizedBox(height: 14),
+                                  const SizedBox(height: 10),
+                                ],
                                 Text(
                                   title,
                                   textAlign: TextAlign.center,
-                                  style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                                    fontSize: 38,
-                                    fontWeight: FontWeight.w700,
-                                    color: const Color(0xFF1E2235),
-                                  ),
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .headlineMedium
+                                      ?.copyWith(
+                                        fontSize: 26,
+                                        fontWeight: FontWeight.w600,
+                                        color: const Color(0xFF0F172A),
+                                        letterSpacing: -0.3,
+                                      ),
                                 ),
-                                if (subtitle?.trim().isNotEmpty ?? false) ...<Widget>[
+                                if (subtitle?.trim().isNotEmpty ??
+                                    false) ...<Widget>[
                                   const SizedBox(height: 14),
                                   Text(
                                     subtitle!,
                                     textAlign: TextAlign.center,
-                                    style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                                      color: const Color(0xFF5B6476),
-                                      height: 1.6,
-                                    ),
+                                    style: Theme.of(context).textTheme.bodyLarge
+                                        ?.copyWith(
+                                          color: const Color(0xFF5B6476),
+                                          height: 1.6,
+                                        ),
                                   ),
                                 ],
                               ],
@@ -223,10 +246,10 @@ class AuthScaffold extends StatelessWidget {
                           ],
                         ],
                       ),
-                      const SizedBox(height: 34),
+                      const SizedBox(height: 22),
                       child,
                       if (footer != null) ...<Widget>[
-                        const SizedBox(height: 14),
+                        const SizedBox(height: 10),
                         footer!,
                       ],
                     ],

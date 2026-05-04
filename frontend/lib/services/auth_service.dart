@@ -292,7 +292,7 @@ class SessionController extends ChangeNotifier {
       final session = await authService.getSessionProfile();
       _currentUser = session.user;
       _activeCompany = session.company;
-      _mustCompleteOnboarding = false;
+      _mustCompleteOnboarding = await _mustCompleteCompanySetup();
       _errorMessage = null;
       _status = SessionStatus.authenticated;
     } catch (_) {
@@ -320,7 +320,7 @@ class SessionController extends ChangeNotifier {
       _applyToken(session.token);
       _currentUser = session.user;
       _activeCompany = session.company;
-      _mustCompleteOnboarding = false;
+      _mustCompleteOnboarding = await _mustCompleteCompanySetup();
       _errorMessage = null;
       _status = SessionStatus.authenticated;
     } catch (error) {
@@ -354,7 +354,7 @@ class SessionController extends ChangeNotifier {
       _applyToken(session.token);
       _currentUser = session.user;
       _activeCompany = session.company;
-      _mustCompleteOnboarding = true;
+      _mustCompleteOnboarding = await _mustCompleteCompanySetup();
       _errorMessage = null;
       _status = SessionStatus.authenticated;
     } catch (error) {
@@ -414,6 +414,26 @@ class SessionController extends ChangeNotifier {
   void _setBusy(bool value) {
     _isBusy = value;
     notifyListeners();
+  }
+
+  Future<bool> _mustCompleteCompanySetup() async {
+    try {
+      final context = await apiService.getCompanyContext();
+      return !_isCompanyContextComplete(context);
+    } catch (_) {
+      // Do not lock the whole app if the backend check is temporarily unavailable.
+      return false;
+    }
+  }
+
+  bool _isCompanyContextComplete(CompanyContextData context) {
+    final hasCompanyName = context.companyName.trim().isNotEmpty;
+    final hasDescription = context.description.trim().isNotEmpty;
+    final hasPhone = context.phone.trim().isNotEmpty;
+    final hasWhatsapp = context.whatsapp.trim().isNotEmpty || hasPhone;
+    final hasAddress = context.address.trim().isNotEmpty;
+
+    return hasCompanyName && hasDescription && hasPhone && hasWhatsapp && hasAddress;
   }
 
   String _cleanError(Object error) {

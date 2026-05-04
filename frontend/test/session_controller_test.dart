@@ -70,7 +70,7 @@ class _FakeAuthService extends AuthService {
   final _MemoryStorage storage;
   String? lastAppliedToken;
   bool logoutCalled = false;
-  bool failGetUser = false;
+  bool failGetSessionProfile = false;
 
   @override
   void setSessionToken(String? token) {
@@ -97,18 +97,21 @@ class _FakeAuthService extends AuthService {
   }
 
   @override
-  Future<AuthUserData> getUser() async {
-    if (failGetUser) {
+  Future<AuthSessionData> getSessionProfile() async {
+    if (failGetSessionProfile) {
       throw Exception('Token expirado');
     }
 
-    return const AuthUserData(
-      id: 'user-1',
-      name: 'Admin Demo',
-      email: 'admin@phyto.com',
-      phone: '8095551234',
-      role: 'admin',
-      isActive: true,
+    return const AuthSessionData(
+      token: '',
+      user: AuthUserData(
+        id: 'user-1',
+        name: 'Admin Demo',
+        email: 'admin@phyto.com',
+        phone: '8095551234',
+        role: 'admin',
+        isActive: true,
+      ),
     );
   }
 
@@ -119,7 +122,7 @@ class _FakeAuthService extends AuthService {
 }
 
 class _SpyApiService extends ApiService {
-  _SpyApiService()
+  _SpyApiService({this.contextComplete = false})
     : super(
         baseUrl: 'https://example.com',
         apiClient: ApiClient(
@@ -128,6 +131,7 @@ class _SpyApiService extends ApiService {
         ),
       );
 
+  final bool contextComplete;
   String? lastAppliedToken;
   bool cleared = false;
 
@@ -142,6 +146,29 @@ class _SpyApiService extends ApiService {
     cleared = true;
     lastAppliedToken = null;
     super.clearSessionToken();
+  }
+
+  @override
+  Future<CompanyContextData> getCompanyContext() async {
+    if (!contextComplete) {
+      return CompanyContextData.empty();
+    }
+
+    return const CompanyContextData(
+      id: 1,
+      companyName: 'Phyto Emagry',
+      description: 'Suplementos naturales para control de peso.',
+      phone: '8095551234',
+      whatsapp: '8095551234',
+      address: 'Av. Principal 123',
+      latitude: null,
+      longitude: null,
+      googleMapsLink: '',
+      workingHoursJson: <Map<String, dynamic>>[],
+      bankAccountsJson: <CompanyBankAccountData>[],
+      imagesJson: <CompanyImageData>[],
+      usageRulesJson: <String, dynamic>{},
+    );
   }
 }
 
@@ -167,6 +194,28 @@ void main() {
       expect(await storage.readToken('session_token'), 'jwt-token-123');
       expect(authService.lastAppliedToken, 'jwt-token-123');
       expect(apiService.lastAppliedToken, 'jwt-token-123');
+      expect(controller.mustCompleteOnboarding, isTrue);
+    },
+  );
+
+  test(
+    'session controller does not require onboarding when company context is complete',
+    () async {
+      final storage = _MemoryStorage();
+      final authService = _FakeAuthService(storage: storage);
+      final apiService = _SpyApiService(contextComplete: true);
+      final controller = SessionController(
+        apiService: apiService,
+        authService: authService,
+      );
+
+      await controller.login(
+        identifier: 'admin@phyto.com',
+        password: 'SuperSecreta1',
+      );
+
+      expect(controller.isAuthenticated, isTrue);
+      expect(controller.mustCompleteOnboarding, isFalse);
     },
   );
 
@@ -197,7 +246,7 @@ void main() {
       final storage = _MemoryStorage();
       await storage.writeToken('session_token', 'expired-token');
       final authService = _FakeAuthService(storage: storage)
-        ..failGetUser = true;
+        ..failGetSessionProfile = true;
       final apiService = _SpyApiService();
       final controller = SessionController(
         apiService: apiService,
