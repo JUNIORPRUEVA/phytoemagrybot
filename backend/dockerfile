@@ -30,9 +30,10 @@ RUN apk add --no-cache openssl ffmpeg
 
 COPY package*.json ./
 COPY prisma ./prisma
+COPY scripts/resolve-known-failed-migrations.js ./scripts/resolve-known-failed-migrations.js
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
 
 EXPOSE 3000
 
-CMD ["sh", "-c", "npx prisma migrate deploy && node dist/main.js"]
+CMD ["sh", "-c", "npm run prisma:recover && npx prisma migrate deploy && node dist/main.js"]

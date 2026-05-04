@@ -10,6 +10,7 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
+    "prisma:recover": "node scripts/resolve-known-failed-migrations.js",
     "db:audit": "node -r ts-node/register scripts/db-audit.ts",
     "db:compare": "node -r ts-node/register scripts/db-compare.ts",
     "db:migrate:local-to-cloud": "node -r ts-node/register scripts/migrate-local-to-cloud.ts",
