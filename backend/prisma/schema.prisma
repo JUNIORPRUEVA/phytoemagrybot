@@ -52,7 +52,6 @@ model Company {
   products         Product[]
   orders           Order[]
   whatsappInstances WhatsAppInstance[]
-  whatsappJidMappings WhatsAppJidMapping[]
   mediaFiles       MediaFile[]
   conversationMessages ConversationMessage[]
   conversationMemories ConversationMemory[]
@@ -376,8 +375,6 @@ model WhatsAppJidMapping {
   pushName     String?  @map("push_name")
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
-
-  company      Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
   @@unique([companyId, instanceName, lidJid])
   @@index([companyId, phoneNumber])
